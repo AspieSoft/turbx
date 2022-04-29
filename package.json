@@ -2,7 +2,7 @@
   "name": "@aspiesoft/turbx",
   "version": "0.0.1-alpha.1",
   "description": "A Fast and Easy To Use View Engine, Compiled With Regex",
-  "main": "index.js",
+  "main": "index.min.js",
   "scripts": {
     "test": "nodemon test/run.js",
     "build": "node build.js"
