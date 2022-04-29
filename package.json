@@ -4,7 +4,8 @@
   "description": "A Fast and Easy To Use View Engine, Compiled With Regex",
   "main": "index.js",
   "scripts": {
-    "test": "nodemon test/run.js"
+    "test": "nodemon test/run.js",
+    "build": "node build.js"
   },
   "author": "AspieSoft",
   "license": "MIT",
