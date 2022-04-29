@@ -1,7 +1,5 @@
 if(process.argv.includes('--github')){
-  // require('./index.min');
-  require('./index');
-
+  require('./index.min');
   setTimeout(function(){
     process.exit(0);
   }, 5000);

@@ -1,3 +1,4 @@
+.gitignore
 .github
 node_modules
 test
