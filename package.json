@@ -8,6 +8,9 @@
   },
   "author": "AspieSoft",
   "license": "MIT",
+  "engines": {
+    "node": ">=10.0.0"
+  },
   "dependencies": {
     "@aspiesoft/multi-task-queue": "^1.2.0",
     "@aspiesoft/obj-memory-cache": "^0.2.5",
