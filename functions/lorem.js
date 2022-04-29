@@ -15,11 +15,11 @@ function main({runFunc, getOpt}) {
   return {
     name: ['lorem', 'ipsum', 'lorem-ipsum', 'text'],
     func: function (args, content, opts, level, file) {
-      let arg1 = args[0]?.replace(/^(["'`])(.*)\1$/, '');
-      let arg2 = args[1]?.replace(/^(["'`])(.*)\1$/, '');
+      let arg1 = args[0]/* ?.replace(/^(["'`])(.*)\1$/, '') */;
+      let arg2 = args[1]/* ?.replace(/^(["'`])(.*)\1$/, '') */;
 
-      // if(arg1){arg1 = arg1.replace(/^(["'`])(.*)\1$/, '');}
-      // if(arg2){arg2 = arg2.replace(/^(["'`])(.*)\1$/, '');}
+      if(arg1){arg1 = arg1.replace(/^(["'`])(.*)\1$/, '');}
+      if(arg2){arg2 = arg2.replace(/^(["'`])(.*)\1$/, '');}
 
       let mode = 0;
       if (typeof arg1 === 'string' && arg1.match(/^w(ords?|)$/i)) {
@@ -55,8 +55,8 @@ function main({runFunc, getOpt}) {
     },
 
     'lorem-p': function (args, content, opts, level, file) {
-      let arg1 = args[0]?.replace(/^(["'`])(.*)\1$/, '');
-      // if(arg1){arg1 = arg1.replace(/^(["'`])(.*)\1$/, '');}
+      let arg1 = args[0]/* ?.replace(/^(["'`])(.*)\1$/, '') */;
+      if(arg1){arg1 = arg1.replace(/^(["'`])(.*)\1$/, '');}
 
       if (typeof arg1 === 'string' && arg1.match(/([0-9]+)/)) {
         arg1 = Number(arg1);
@@ -76,8 +76,8 @@ function main({runFunc, getOpt}) {
     paragraph: 'lorem-p',
 
     'lorem-s': function (args, content, opts, level, file) {
-      let arg1 = args[0]?.replace(/^(["'`])(.*)\1$/, '');
-      // if(arg1){arg1 = arg1.replace(/^(["'`])(.*)\1$/, '');}
+      let arg1 = args[0]/* ?.replace(/^(["'`])(.*)\1$/, '') */;
+      if(arg1){arg1 = arg1.replace(/^(["'`])(.*)\1$/, '');}
 
       if (typeof arg1 === 'string' && arg1.match(/([0-9]+)/)) {
         arg1 = Number(arg1);
@@ -97,8 +97,8 @@ function main({runFunc, getOpt}) {
     sentence: 'lorem-s',
 
     'lorem-w': function (args, content, opts, level, file) {
-      let arg1 = args[0]?.replace(/^(["'`])(.*)\1$/, '');
-      // if(arg1){arg1 = arg1.replace(/^(["'`])(.*)\1$/, '');}
+      let arg1 = args[0]/* ?.replace(/^(["'`])(.*)\1$/, '') */;
+      if(arg1){arg1 = arg1.replace(/^(["'`])(.*)\1$/, '');}
 
       if (typeof arg1 === 'string' && arg1.match(/([0-9]+)/)) {
         arg1 = Number(arg1);
