@@ -1,0 +1,57 @@
+<h1>Hello World</h1>
+
+'test'
+
+<!--comment-->
+
+/* comment 1 */
+
+// comment 2
+
+test
+
+<Input type="text" name="test"/>
+
+<a {{{href="url"}}}>Link</a>
+
+<script>
+  console.log('this is a js script test: ' + OPTS.test)
+</script>
+
+<style>
+  body {
+    background: lightblue;
+  }
+</style>
+
+<Component test="5">
+  This Is A Test
+  <h1>This HTML Should Be Escaped</h1>
+</Component>
+
+<Component test=8 {{a="b"}}/>
+
+<_if test = "1">
+  <h2>Test 1</h2>
+<_elif test = "2"/>
+  <h2>Test 2</h2>
+<_else/>
+  <h2>Test 0</h2>
+</_if>
+
+
+<_if !test0>
+  <h3>false</h3>
+</_if>
+
+<_if test1>
+  <h3>true</h3>
+</_if>
+
+<br><br>
+<_lorem 5 w/>
+<br><br>
+
+<_each>
+
+</_each>

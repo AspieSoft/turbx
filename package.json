@@ -1,0 +1,20 @@
+{
+  "name": "turbx",
+  "version": "0.0.1-alpha.0",
+  "description": "A Fast and Easy To Use View Engine, Compiled With Regex",
+  "main": "index.js",
+  "scripts": {
+    "test": "nodemon test.js"
+  },
+  "author": "AspieSoft",
+  "license": "MIT",
+  "dependencies": {
+    "@aspiesoft/multi-task-queue": "^1.2.0",
+    "@aspiesoft/obj-memory-cache": "^0.2.5",
+    "lorem-ipsum": "^2.0.4",
+    "validator": "^13.7.0"
+  },
+  "devDependencies": {
+    "express": "^4.18.0"
+  }
+}
