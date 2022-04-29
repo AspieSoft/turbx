@@ -1,6 +1,6 @@
 {
   "name": "@aspiesoft/turbx",
-  "version": "0.0.1-alpha.2",
+  "version": "0.0.1-alpha.3",
   "description": "A Fast and Easy To Use View Engine, Compiled With Regex",
   "main": "index.min.js",
   "scripts": {
