@@ -55,7 +55,7 @@ const OPTS = {};
 const emptyRes = JSON.stringify({html: '', scripts: [], args: []});
 function getTemplateFile(path, opts, cb, component = false){
   taskQueue(path, async function(){
-    const data = localCache.get('template_file_cache:' + path) /* ?? undefined */;
+    const data = localCache.get('template_file_cache:' + path) ?? undefined;
     if(data || data === ''){
       cb(data);
       return;
