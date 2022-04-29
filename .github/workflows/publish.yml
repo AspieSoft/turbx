@@ -12,7 +12,7 @@ jobs:
         with:
           node-version: 12
       - run: npm ci
-      - run: node test/index.js
+      - run: node test/run.js --github
 
   publish-npm:
     needs: test

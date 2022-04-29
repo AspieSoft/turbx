@@ -1,7 +1,7 @@
 const express = require('express')
 const app = express()
 const {join} = require('path')
-const tml = require('./index')
+const tml = require('../index')
 
 app.engine('xhtml', tml(app, {template: 'layout', timeout: '3s'}));
 app.set('views', join(__dirname, 'views'));
