@@ -146,6 +146,8 @@ function engine(path, opts, cb){
 
   path = path.replace(OPTS.root, '').replace(/^[\\\/]+/, '');
 
+  opts.settings.filename = path;
+
   getTemplateFile(path, opts, async (data) => {
     if(data === emptyRes){
       return cb(new Error('View Not Found!'), '');
@@ -224,6 +226,8 @@ function preCompile(file){
     });
   }
 
+
+  //todo: compile scripts in go
   const scripts = [];
   file = file.replace(/<(script|js|style|css|less|markdown|md|text|txt)(.*?)>(.*?)<\/\1>/gsi, (_, tag, args, content) => {
     tag = tag.toLowerCase();
@@ -759,6 +763,8 @@ function isSecureMode(opts){
 
 
 function setOpts(opts){
+  let before = opts.before;
+  let after = opts.after;
   opts = clean(opts);
   let root = opts.views || 'views';
 
@@ -789,12 +795,12 @@ function setOpts(opts){
   OPTS.lazyCache = opts.lazyCache || '12h';
   OPTS.timeout = opts.timeout || '30s';
 
-  if(typeof opts.before === 'function'){
-    OPTS.before = opts.before;
+  if(typeof before === 'function'){
+    OPTS.before = before;
   }
 
-  if(typeof opts.after === 'function'){
-    OPTS.after = opts.after;
+  if(typeof after === 'function'){
+    OPTS.after = after;
   }
 
   if(typeof opts.static === 'string'){
