@@ -186,8 +186,8 @@ function engine(path, opts, cb){
 }
 
 
-function preCompile(file){
-  file = file.replace(/%!|!%/g, (s) => {
+function encodeEncoding(html){
+  return html.replace(/%!|!%/g, (s) => {
     if(s === '%!'){
       return '%!o!%';
     }else if(s === '!%'){
@@ -195,6 +195,22 @@ function preCompile(file){
     }
     return '';
   });
+}
+
+function decodeEncoding(html){
+  return html.replace(/%!([oc])!%/g, (_, s) => {
+    if(s === 'o'){
+      return '%!';
+    }else if(s === 'c'){
+      return '!%';
+    }
+    return '';
+  });
+}
+
+
+function preCompile(file){
+  file = encodeEncoding(file);
 
   const stringList = [];
   file = file.replace(/(['"`])((?:\\[\\'"`]|.)*?)\1|<!--.*?-->|\/\*.*?\*\/|(?:\/\/|#!).*?\r?\n/gs, (_, tag, str) => {
@@ -375,15 +391,7 @@ function preCompile(file){
 
   file = decompStrings(file);
 
-  file = file.replace(/%!([oc])!%/g, (_, t) => {
-    if(t === 'o'){
-      return '%!';
-    }else if(t === 'c'){
-      return '!%';
-    }
-    return '';
-  });
-
+  file = decodeEncoding(file);
 
   // pre compile and minify
 
@@ -401,7 +409,9 @@ async function compile(file, opts, includeTemplate = false){
     opts = {...OPTS.opts, ...opts};
   }
 
-  file = JSON.parse(file);
+  if(typeof file === 'string'){
+    file = JSON.parse(file);
+  }
 
 
   if(includeTemplate){
@@ -615,6 +625,12 @@ async function runFunctions(file, opts, level = 0){
 
       if(['string', 'number', 'boolean'].includes(typeof res) && !Number.isNaN(res)){
         return await runFunctions({html: res.toString(), scripts: file.scripts, args: file.args}, opts, level + 1);
+      }else if(Array.isArray(res)){
+        let html = '';
+        for(let i = 0; i < res.length; i++){
+          html += await runFunctions({html: res[i].html.toString(), scripts: file.scripts, args: file.args}, res[i].opts, level + 1);
+        }
+        return html;
       }
       return '';
     }
@@ -627,6 +643,12 @@ async function runFunctions(file, opts, level = 0){
       let cont = await func(args, content, opts, level + 1, {scripts: file.scripts, args: file.args});
       if(['string', 'number', 'boolean'].includes(typeof cont) && !Number.isNaN(cont)){
         return await runFunctions({html: cont.toString(), scripts: file.scripts, args: file.args}, opts, level + 1);
+      }else if(Array.isArray(cont)){
+        let html = '';
+        for(let i = 0; i < cont.length; i++){
+          html += await runFunctions({html: cont[i].html.toString(), scripts: file.scripts, args: file.args}, cont[i].opts, level + 1);
+        }
+        return html;
       }
     }
 
@@ -642,8 +664,21 @@ async function runFunctions(file, opts, level = 0){
     let res = undefined;
     const compOpts = {...opts, ...args};
     getTemplateFile(tag, compOpts, async (file) => {
+      file = JSON.parse(file);
+
+      let bodyTags = [];
+
+      file.html = encodeEncoding(file.html).replace(/<body\/>|{{{?body}}}?/gsi, (tag) => {
+        return `%!${bodyTags.push(tag)-1}!%`;
+      });
+
       let html = await compile(file, compOpts);
-      res = html.replace(/<body\/>|{{{body}}}/si, content).replace(/{{body}}/si, escapeHTML(content));
+
+      res = decodeEncoding(html.replace(/%!([0-9]+)!%/g, (_, i) => {
+        return bodyTags[i].replace(/<body\/>|{{{body}}}/si, encodeEncoding(content)).replace(/{{body}}/si, encodeEncoding(escapeHTML(content)));
+      }));
+
+      // res = html.replace(/<body\/>|{{{body}}}/si, content).replace(/{{body}}/si, escapeHTML(content));
     }, true);
 
     while(res === undefined){
@@ -696,6 +731,12 @@ async function runFunctions(file, opts, level = 0){
 
       if(['string', 'number', 'boolean'].includes(typeof res) && !Number.isNaN(res)){
         return await runFunctions({html: res.toString(), scripts: file.scripts, args: file.args}, opts, level + 1);
+      }else if(Array.isArray(res)){
+        let html = '';
+        for(let i = 0; i < res.length; i++){
+          html += await runFunctions({html: res[i].html.toString(), scripts: file.scripts, args: file.args}, res[i].opts, level + 1);
+        }
+        return html;
       }
       return '';
     }
@@ -708,6 +749,12 @@ async function runFunctions(file, opts, level = 0){
       let cont = await func(args, null, opts, level + 1, {scripts: file.scripts, args: file.args});
       if(['string', 'number', 'boolean'].includes(typeof cont) && !Number.isNaN(cont)){
         return await runFunctions({html: cont.toString(), scripts: file.scripts, args: file.args}, opts, level + 1);
+      }else if(Array.isArray(cont)){
+        let html = '';
+        for(let i = 0; i < cont.length; i++){
+          html += await runFunctions({html: cont[i].html.toString(), scripts: file.scripts, args: file.args}, cont[i].opts, level + 1);
+        }
+        return html;
       }
     }
 

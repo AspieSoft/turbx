@@ -51,7 +51,13 @@ test
 <br><br>
 <_lorem 5 w/>
 <br><br>
+<br><br>
 
-<_each>
-
+<_each obj as item of key in i>
+  {{key}} - {{item}} - {{i}}
+  <br>
+  <_each obj as item of key in i>
+    <span style="color: red;">{{key}} - {{item}} - {{i}}</span>
+    <br>
+  </_each>
 </_each>

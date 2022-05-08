@@ -70,6 +70,12 @@ app.get('/', function (req, res) {
     test0: false,
     test1: true,
     url: 'https://www.aspiesoft.com',
+    arr: [1, 2, 3],
+    obj: {
+      test1: 'this is test 1',
+      test2: 'this is test 2',
+      test3: 'this is test 3',
+    },
   });
 });
 

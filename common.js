@@ -3,12 +3,29 @@ const validator = require('validator');
 
 function escapeHTML(str){
   //todo: escape HTML
-  return str;
+  return str.replace(/[<>&]/g, (e) => {
+    switch (e) {
+      case '<':
+        return '&lt;';
+      case '>':
+        return '&gt;';
+      case '&':
+        return '&amp;';
+      default:
+        return '';
+    }
+  }).replace(/&amp;(amp;)*/g, '&amp;');
 }
 
 function escapeHTMLArgs(str){
   //todo: escape HTML Args in quotes
-  return str;
+  return str.replace(/([\\"'`])/g, '\\$1');
+  /* return str.replace(/(\\*)(["'`])/g, (_, b, q) => {
+    if(b.length % 2 === 0){
+      return b + '\\' + q;
+    }
+    return b + q;
+  }); */
 }
 
 function compileMD(str){
