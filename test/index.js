@@ -76,6 +76,7 @@ app.get('/', function (req, res) {
       test2: 'this is test 2',
       test3: 'this is test 3',
     },
+    testKey: 'test1',
   });
 });
 

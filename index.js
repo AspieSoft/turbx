@@ -662,11 +662,11 @@ async function runFunctions(file, opts, level = 0){
     content = await runFunctions({html: content, scripts: file.scripts, args: file.args}, opts, level + 1);
 
     let res = undefined;
-    const compOpts = {...opts, ...args};
+    const compOpts = {...opts, ...args, body: content};
     getTemplateFile(tag, compOpts, async (file) => {
       file = JSON.parse(file);
 
-      let bodyTags = [];
+      /* let bodyTags = [];
 
       file.html = encodeEncoding(file.html).replace(/<body\/>|{{{?body}}}?/gsi, (tag) => {
         return `%!${bodyTags.push(tag)-1}!%`;
@@ -676,7 +676,9 @@ async function runFunctions(file, opts, level = 0){
 
       res = decodeEncoding(html.replace(/%!([0-9]+)!%/g, (_, i) => {
         return bodyTags[i].replace(/<body\/>|{{{body}}}/si, encodeEncoding(content)).replace(/{{body}}/si, encodeEncoding(escapeHTML(content)));
-      }));
+      })); */
+
+      res = await compile(file, compOpts);
 
       // res = html.replace(/<body\/>|{{{body}}}/si, content).replace(/{{body}}/si, escapeHTML(content));
     }, true);
