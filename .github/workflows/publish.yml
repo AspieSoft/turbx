@@ -2,6 +2,8 @@ name: Publish
 
 on:
   workflow_dispatch:
+    branches:
+      - master
 
 jobs:
   test:
@@ -11,8 +13,10 @@ jobs:
       - uses: actions/setup-node@v3
         with:
           node-version: 12
-      - run: npm ci
-      - run: node test/run.js --github
+      - run: |
+          npm ci
+          npm run build
+          node test/run.js --github
 
   publish-npm:
     needs: test
@@ -24,7 +28,9 @@ jobs:
           node-version: 12
           registry-url: https://registry.npmjs.org/
           scope: aspiesoft
-      - run: npm publish --access public
+      - run: |
+          npm run build
+          npm publish --access public
         env:
           NODE_AUTH_TOKEN: ${{secrets.NPM_TOKEN}}
 
@@ -38,7 +44,11 @@ jobs:
           node-version: 12
           registry-url: https://npm.pkg.github.com/
           scope: aspiesoft
-      - run: npm publish
+        env:
+          NODE_AUTH_TOKEN: ${{secrets.GITHUB_TOKEN}}
+      - run: |
+          npm run build
+          npm publish
         env:
           AUTHOR_EMAIL: aspiesoftweb@gmail.com
           AUTHOR_NAME: aspiesoft
@@ -57,6 +67,7 @@ jobs:
         run: |
           sed -i 's/"name":\s"@aspiesoft\//"name":"/g' package.json
           sed -i 's/"name":\s"@aspiesoft\//"name":"/g' package-lock.json
-      - run: npm publish
+          npm run build
+          npm publish
         env:
           NODE_AUTH_TOKEN: ${{secrets.NPM_TOKEN}}

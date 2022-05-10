@@ -1,16 +1,20 @@
 {
   "name": "@aspiesoft/turbx",
-  "version": "0.0.4",
+  "version": "0.0.5",
   "description": "A Fast and Easy To Use View Engine, Compiled With Regex",
+  "author": "AspieSoft",
+  "license": "MIT",
   "main": "index.min.js",
   "scripts": {
     "test": "nodemon test/run.js",
     "build": "node build.js"
   },
-  "author": "AspieSoft",
-  "license": "MIT",
   "engines": {
     "node": ">=12.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git://github.com/aspiesoft/turbx"
   },
   "dependencies": {
     "@aspiesoft/multi-task-queue": "^1.2.0",
