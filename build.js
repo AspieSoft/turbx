@@ -67,10 +67,10 @@ async function minifyFile(file){
   });
   fs.writeFileSync(join(__dirname, 'test/index.min.js'), testFile);
 
-  require('./test/index.min');
+  // require('./test/index.min');
 
-  setTimeout(function(){
+  /* setTimeout(function(){
     process.exit(0);
-  }, 3000);
+  }, 3000); */
 
 })();

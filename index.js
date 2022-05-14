@@ -766,7 +766,7 @@ async function runFunctions(file, opts, level = 0){
 
   // handle {{text}} and {{{html}}} vars
 
-  file.html = file.html.replace(/({{{?)(.*?)(}}}?)/gs, (_, esc, args, ) => {
+  file.html = file.html.replace(/({{{?)(.*?)(}}}?)/gs, (_, esc, args, esc2) => {
     args = args.split('=');
     if(args.length === 2){
       let quote = '';
