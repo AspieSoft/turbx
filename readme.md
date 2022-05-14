@@ -8,7 +8,7 @@
 ![npm](https://img.shields.io/npm/dw/turbx)
 ![npm](https://img.shields.io/npm/dm/turbx)
 
-[![paypal](https://img.shields.io/badge/buy%20me%20a%20coffee-paypal-blue)](https://buymeacoffee.aspiesoft.com)
+[![square](https://img.shields.io/badge/buy%20me%20a%20coffee-square-blue)](https://buymeacoffee.aspiesoft.com)
 
 A Fast and Easy To Use View Engine, Compiled With Regex.
 

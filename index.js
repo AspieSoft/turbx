@@ -213,7 +213,7 @@ function preCompile(file){
   file = encodeEncoding(file);
 
   const stringList = [];
-  file = file.replace(/(['"`])((?:\\[\\'"`]|.)*?)\1|<!--.*?-->|\/\*.*?\*\/|(?:\/\/|#!).*?\r?\n/gs, (_, tag, str) => {
+  file = file.replace(/(['"`])((?:\\[\\'"`]|.)*?)\1|<!--.*?-->|\/\*.*?\*\/|(?<!:)(?:\/\/|#!).*?\r?\n/gs, (_, tag, str) => {
     if(!tag || !str){
       return '';
     }
@@ -226,7 +226,7 @@ function preCompile(file){
         return stringList[i].str;
       }else if(num === true){
         let str = stringList[i].str;
-        if(str.match(/^[0-9]+(\.[0-9]+|)$/)){
+        if(str.match(/^-?[0-9]+(\.[0-9]+|)$/)){
           return str;
         }
         return stringList[i].tag + str + stringList[i].tag
@@ -766,7 +766,7 @@ async function runFunctions(file, opts, level = 0){
 
   // handle {{text}} and {{{html}}} vars
 
-  file.html = file.html.replace(/({{{?)(.*?)}}}?/gs, (_, esc, args) => {
+  file.html = file.html.replace(/({{{?)(.*?)(}}}?)/gs, (_, esc, args, ) => {
     args = args.split('=');
     if(args.length === 2){
       let quote = '';
@@ -776,13 +776,15 @@ async function runFunctions(file, opts, level = 0){
       });
       let argValue = getOpt(opts, argName);
       if(args[0].trim() === ''){
+        argName = argName.split('|')[0].split(/\.|(\[.*?\])/).filter(a => a && !a.match(/^[0-9]+|\[.*\]$/));
+        argName = argName[argName.length-1];
         return argName + '=' + quote + escapeHTMLArgs(argValue) + quote;
       }
       return args[0].trim() + '=' + quote + escapeHTMLArgs(argValue) + quote;
     }
-    
+
     let res = getOpt(opts, args[0].trim());
-    if(esc === '{{'){
+    if(esc === '{{' || esc2 === '}}'){
       res = escapeHTML(res);
     }
     return res;

@@ -60,7 +60,7 @@ func preCompile(file string){
 
 
 	decodeStrings := func(b []byte, num int) []byte {
-		regIsNumber := regexp.MustCompile(`^[0-9]+(\.[0-9]+|)$`)
+		regIsNumber := regexp.MustCompile(`^-?[0-9]+(\.[0-9]+|)$`)
 
 		regDecodeStrings := regexp.MustCompile(`%!([0-9]+)!%`)
 		b = regDecodeStrings.ReplaceAllFunc(b, func(b []byte) []byte {

@@ -60,7 +60,7 @@ function main({ runFunc, getOpt }) {
             if (!Number.isNaN(Number(arg1))) {
               arg1 = Number(arg1);
             }
-          } else if (arg1.match(/^[0-9]+(\.[0-9]+|)$/)) {
+          } else if (arg1.match(/^-?[0-9]+(\.[0-9]+|)$/)) {
             arg1 = Number(arg1);
           } else {
             arg1 = getOpt(opts, arg1, false);
@@ -81,11 +81,11 @@ function main({ runFunc, getOpt }) {
           if (!Number.isNaN(Number(arg1))) {
             arg1 = Number(arg1);
           }
-        } else if (arg1.match(/^[0-9]+(\.[0-9]+|)$/)) {
+        } else if (arg1.match(/^-?[0-9]+(\.[0-9]+|)$/)) {
           arg1 = Number(arg1);
         } else {
           arg1 = getOpt(opts, arg1, false);
-          if (typeof arg1 === 'string' && arg1.match(/^[0-9]+(\.[0-9]+|)$/)) {
+          if (typeof arg1 === 'string' && arg1.match(/^-?[0-9]+(\.[0-9]+|)$/)) {
             arg1 = Number(arg1);
           }
         }
@@ -97,11 +97,11 @@ function main({ runFunc, getOpt }) {
           if (!Number.isNaN(Number(arg2))) {
             arg2 = Number(arg2);
           }
-        } else if (arg2.match(/^[0-9]+(\.[0-9]+|)$/)) {
+        } else if (arg2.match(/^-?[0-9]+(\.[0-9]+|)$/)) {
           arg2 = Number(arg2);
         } else {
           arg2 = getOpt(opts, arg2, false);
-          if (typeof arg2 === 'string' && arg2.match(/^[0-9]+(\.[0-9]+|)$/)) {
+          if (typeof arg2 === 'string' && arg2.match(/^-?[0-9]+(\.[0-9]+|)$/)) {
             arg2 = Number(arg2);
           }
         }

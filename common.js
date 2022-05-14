@@ -241,7 +241,7 @@ function getOpt(opts, arg, stringOutput = true){
     return '';
   }
 
-  arg = arg.split('|');
+  arg = arg.split('|').map(a => a.trim());
   for(let i = 0; i < arg.length; i++){
     let value = arg[i].split(/\.|(\[.*?\])/).filter(s => (typeof s === 'string' && s.trim() !== '')).reduce((obj, key) => {
       if(typeof obj !== 'object' || obj instanceof RegExp){
@@ -253,10 +253,14 @@ function getOpt(opts, arg, stringOutput = true){
         // get [var] object input
         key = key.replace(/^\[(.*)\]$/, '$1');
         if(key.match(/^(['"`])(.*)\1$/)){
-          key = key.replace(/^(['"`])(.*)\1$/, '$1');
+          key = key.replace(/^(['"`])(.*)\1$/, '$2');
         }else{
           key = getOpt(opts, key);
         }
+      }
+
+      if(key.match(/^(['"`])(.*)\1$/)){
+        return key.replace(/^(['"`])(.*)\1$/, '$2');
       }
 
       return obj[key];
