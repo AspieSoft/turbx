@@ -151,3 +151,17 @@ app.use(function(req, res, next){
 </html>
 
 ```
+
+## Additional Features
+
+```js
+
+// add basic rate limiting
+turbx.rateLimit(app, {opts}, 100 /* requests */ '1m' /* per minute */, '1h' /* kick rule breakers for 1 hour */);
+
+// auto render views as pages
+turbx.renderPages(app, {opts});
+// also recognizes folders with an index.xhtml file
+// ignores the components folder and tries to ignore root files named after error codes (or files an "error" folder)
+
+```

@@ -52,6 +52,7 @@ function log(){
 
 app.engine('xhtml', turbx(app, {
   template: 'layout',
+  components: 'components',
   timeout: '3s',
   before: function(_, opts){
     opts.startTime = new Date().getTime();
@@ -62,6 +63,11 @@ app.engine('xhtml', turbx(app, {
 }));
 app.set('views', join(__dirname, 'views'));
 app.set('view engine', 'xhtml');
+
+
+// firewall rate limiting
+turbx.rateLimit();
+
 
 app.get('/', function (req, res) {
   res.render('index', {
@@ -80,7 +86,11 @@ app.get('/', function (req, res) {
   });
 });
 
+
 // auto set all views to public pages
-turbx.renderPages();
+turbx.renderPages({
+  test: 1,
+});
+
 
 app.listen(3000)
