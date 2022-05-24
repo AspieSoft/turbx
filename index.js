@@ -281,7 +281,7 @@ function preCompile(file){
     }else if(tag === 'css' || tag === 'less'){
       tag = 'style';
     }
-
+    
     args = decompStrings(args);
 
     if(tag === 'script'){

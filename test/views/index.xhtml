@@ -1,5 +1,7 @@
 <h1>Hello World</h1>
 
+%!encoding!%
+
 'test'
 
 <!--comment-->
@@ -62,7 +64,7 @@ https://www.aspiesoft.com
     <span style="color: red;">{{key}} - {{item}} - {{i}}</span>
     <br>
   </_each>
-</_each>
+</_each a="b">
 
 <br><br>
 
@@ -78,3 +80,15 @@ https://www.aspiesoft.com
 
 <br><br>
 
+{{"string"}}
+
+{{{"test"}}
+
+<div class={{var|"default"}}></div>
+
+<div {{class="var|'default'"}}></div>
+
+<div {{="var|'default'"}}></div>
+<div {{"var|'default'"}}></div>
+
+<div class="a" b c="2"></div>
