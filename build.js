@@ -111,6 +111,9 @@ let finished = 0;
     'functions.js',
     'common.js',
     'index.js',
+    
+    'index.new.js',
+    'index.new.backup.js',
   ];
 
   async function minifyDir(dir){

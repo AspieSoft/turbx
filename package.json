@@ -1,12 +1,12 @@
 {
   "name": "@aspiesoft/turbx",
-  "version": "0.0.11",
+  "version": "0.0.12",
   "description": "A Fast and Easy To Use View Engine, Compiled With Regex",
   "author": "AspieSoft",
   "license": "MIT",
   "main": "index.min.js",
   "scripts": {
-    "test": "nodemon test/run.js",
+    "test": "nodemon -e \"js,go\" test/run.js",
     "build": "node build.js"
   },
   "engines": {

@@ -173,27 +173,27 @@ function toTimeMillis(str){
   if(typeof str === 'number'){return Number(str);}
   if(!str || typeof str !== 'string' || str.trim() === ''){return NaN;}
   if(str.endsWith('h')){
-      return toNumber(str)*3600000;
+    return toNumber(str)*3600000;
   }else if(str.endsWith('m')){
-      return toNumber(str)*60000;
+    return toNumber(str)*60000;
   }else if(str.endsWith('s')){
-      return toNumber(str)*1000;
+    return toNumber(str)*1000;
   }else if(str.endsWith('D')){
-      return toNumber(str)*86400000;
+    return toNumber(str)*86400000;
   }else if(str.endsWith('M')){
-      return toNumber(str)*2628000000;
+    return toNumber(str)*2628000000;
   }else if(str.endsWith('Y')){
-      return toNumber(str)*31536000000;
+    return toNumber(str)*31536000000;
   }else if(str.endsWith('DE')){
-      return toNumber(str)*315360000000;
+    return toNumber(str)*315360000000;
   }else if(str.endsWith('C') || this.endsWith('CE')){
-      return toNumber(str)*3153600000000;
+    return toNumber(str)*3153600000000;
   }else if(str.endsWith('ms')){
-      return toNumber(str);
+    return toNumber(str);
   }else if(str.endsWith('us') || this.endsWith('mic')){
-      return toNumber(str)*0.001;
+    return toNumber(str)*0.001;
   }else if(str.endsWith('ns')){
-      return toNumber(str)*0.000001;
+    return toNumber(str)*0.000001;
   }
   return toNumber(str);
 }
