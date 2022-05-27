@@ -231,6 +231,26 @@ async function asyncReplace(str, re, cb, global = undefined){
   return str;
 }
 
+function loadedMiddleware(app, search){
+  let stack = [];
+  if(app.stack){
+    stack = stack.concat(app.stack)
+  }
+  if(app._router && app._router.stack){
+    stack = stack.concat(app._router.stack)
+  }
+
+  const using = [];
+  for(let i = 0; i < stack.length; i++){
+    let ind = search.indexOf(stack[i].name);
+    if(ind !== -1){
+      using.push(search.splice(ind, 1)[0]);
+    }
+  }
+
+  return using;
+}
+
 
 function getOpt(opts, arg, stringOutput = true){
   if(['number', 'boolean'].includes(typeof arg)){
@@ -299,5 +319,6 @@ module.exports = {
   toTimeMillis,
   toNumber,
   asyncReplace,
+  loadedMiddleware,
   getOpt,
 };

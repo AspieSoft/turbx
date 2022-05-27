@@ -157,7 +157,8 @@ app.use(function(req, res, next){
 ```js
 
 // add basic rate limiting
-turbx.rateLimit(app, {opts}, 100 /* requests */ '1m' /* per minute */, '1h' /* kick rule breakers for 1 hour */);
+// this function uses the express-device-rate-limit module made my AspieSoft
+turbx.rateLimit(app, {opts /* for express-device-rate-limit module */});
 
 // auto render views as pages
 turbx.renderPages(app, {opts});

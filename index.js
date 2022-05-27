@@ -4,8 +4,7 @@ const crypto = require('crypto');
 const memoryCache = require('@aspiesoft/obj-memory-cache');
 const multiTaskQueue = require('@aspiesoft/multi-task-queue');
 
-const bodyParser = requireOptional('body-parser');
-const device = requireOptional('express-device');
+const deviceRateLimit = requireOptional('express-device-rate-limit');
 
 function requireOptional(path){
   try {
@@ -1004,157 +1003,30 @@ function expressFallbackPages(app, opts){
   });
 }
 
-function expressRateLimit(app, opts, limit, time, kickTime){
-  let setStr = 0;
-  for(let i = 0; i < 3; i++){
-    if(typeof arguments[i] === 'function'){
-      app = arguments[i];
-    }else if(typeof arguments[i] === 'object'){
-      opts = arguments[i];
-    }else if(typeof arguments[i] === 'number'){
-      limit = arguments[i];
-    }else if(typeof arguments[i] === 'string'){
-      if(setStr === 0){
-        time = arguments[i];
-      }else if(setStr === 1){
-        kickTime = arguments[i];
-      }
-      setStr++;
-    }
-  }
-
+function expressRateLimit(app, opts){
+  if(typeof app === 'object'){[app, opts] = [opts, app];}
   if(typeof app !== 'function'){app = ExpressApp;}
   if(typeof app !== 'function'){return;}
   if(typeof opts !== 'object'){opts = {};}
-  if(typeof limit !== 'number'){limit = 100;}
-  if(typeof time !== 'string'){time = '1m';}
-  if(typeof kickTime !== 'string'){kickTime = '1h';}
 
-  limit *= 5;
-
-  const CallListIP = {};
-  const LimitTime = {};
-
-  setInterval(() => {
-    let keys = Object.keys(CallListIP);
-    for(let i = 0; i < keys.length; i++){
-      delete CallListIP[keys[i]];
-    }
-
-    keys = Object.keys(LimitTime);
-    for(let i = 0; i < keys.length; i++){
-      if(new Date().getTime() > LimitTime[keys[i]]){
-        delete LimitTime[keys[i]];
+  const rateLimit = deviceRateLimit({
+    err: function(req, res){
+      let page = join(OPTS.root, 'error/429.' + OPTS.ext);
+      if(fs.existsSync(page)){
+        res.status(429).render('error/429', opts);
+        return;
       }
-    }
-  }, toTimeMillis(time));
-
-  if(device){
-    app.use(device.capture());
-  }
-
-  function renderErr(res, err, msg){
-    let page = join(OPTS.root, 'error/' + err + '.' + OPTS.ext);
-    if(fs.existsSync(page)){
-      res.status(err).render('error/' + err, opts);
-      return;
-    }
-    page = join(OPTS.root, err + '.' + OPTS.ext);
-    if(fs.existsSync(page)){
-      res.status(err).render(err.toString(), opts);
-      return;
-    }
-    res.status(err).send('<h1>Error ' + err + '</h1><h2>' + msg + '</h2>').end();
-  }
-
-  app.use((req, res, next) => {
-    const ip = clean(req.ip);
-    if(ip === 'localhost' || ip === '127.0.0.1' || ip === '::1'){
-      next();
-      return;
-    }
-
-    let effect = 5;
-
-    let uOS = 'other';
-    let uAgent = req.header('User-Agent');
-    if(uAgent.match(/\blinux\b/i)){
-      uOS = 'linux';
-      effect += 3;
-    }else if(uAgent.match(/\bwindows\b/i)){
-      uOS = 'windows';
-    }else if(uAgent.match(/\b(apple|mac)\b/i)){
-      uOS = 'apple';
-      effect += 1;
-    }else if(uAgent.match(/\bchrom(e|ium)\s*os\b/i)){
-      uOS = 'chrome';
-      effect -= 1;
-    }else if(uAgent.match(/\bandroid\b/i)){
-      uOS = 'android';
-      effect -= 2;
-    }else if(uAgent.match(/\bios\b/i)){
-      uOS = 'ios';
-      effect -= 3;
-    }
-
-    if(device){
-      let type = req.device.type;
-      if(uOS !== 'other' && type === 'bot'){
-        effect *= 1.2;
-      }else if(type === 'phone'){
-        effect -= 1;
-      }else if(type === 'tv'){
-        effect -= 2;
-      }else if(type === 'car'){
-        effect -= 3;
+      page = join(OPTS.root, err + '.' + OPTS.ext);
+      if(fs.existsSync(page)){
+        res.status(429).render('429', opts);
+        return;
       }
-    }
-
-    if(effect < 1){
-      effect = 1;
-    }
-
-    let uID = undefined;
-    if(ip.includes('::')){
-      // ipv6
-      uID = ip.replace(/^(.*?::.*?)::.*$/, '$1');
-      uID += ':' + uOS;
-      if(device){
-        uID += ':' + req.device.type + ':' + req.device.name;
-      }
-    }else if(ip.match(/^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/)){
-      // ipv4
-      uID = ip.replace(/^([0-9]+\.[0-9]+\.[0-9]+)\.[0-9]+$/, '$1');
-      uID += ':' + uOS;
-      if(device){
-        uID += ':' + req.device.type;
-      }
-      effect += 1;
-    }else{
-      uID = ip;
-      effect += 2;
-    }
-
-    try {
-      if(!CallListIP[uID]){
-        CallListIP[uID] = 0;
-      }
-      CallListIP[uID] += effect;
-    } catch(e) {}
-
-    if(new Date().getTime() > LimitTime[uID]){
-      renderErr(res, 429, 'Too Many Requests');
-      return;
-    }
-
-    if(CallListIP[uID] > limit){
-      LimitTime[uID] = (new Date().getTime()) + toTimeMillis(kickTime);
-      renderErr(res, 429, 'Too Many Requests');
-      return;
-    }
-
-    next();
+      res.status(429).send('<h1>Error 429</h1><h2>Too Many Requests</h2>').end();
+    },
+    ...opts,
   });
+
+  rateLimit.all(app);
 }
 
 

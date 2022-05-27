@@ -1,6 +1,6 @@
 {
   "name": "@aspiesoft/turbx",
-  "version": "0.0.12",
+  "version": "0.0.13",
   "description": "A Fast and Easy To Use View Engine, Compiled With Regex",
   "author": "AspieSoft",
   "license": "MIT",
@@ -36,6 +36,6 @@
     "terser": "^5.13.1"
   },
   "optionalDependencies": {
-    "express-device": "^0.4.2"
+    "express-device-rate-limit": "^1.0.1"
   }
 }

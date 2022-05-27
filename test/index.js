@@ -1,7 +1,7 @@
 const express = require('express')
 const app = express()
 const {join} = require('path')
-const turbx = require('../index')
+const turbx = require('../index.new')
 
 function log(){
   let args = [];
