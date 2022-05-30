@@ -13,7 +13,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/GRbit/go-pcre"
+	"github.com/AspieSoft/go-regex"
 )
 
 type stringObj struct {
@@ -36,30 +36,23 @@ type fileData struct {
 
 var varType map[string]reflect.Type
 
-var regCache map[string]pcre.Regexp
+var regCache map[string]regex.Regexp = map[string]regex.Regexp{}
 
-var singleTagList map[string]bool
+var singleTagList map[string]bool = map[string]bool{
+	"br": true,
+	"hr": true,
+}
 
-var OPTS map[string]string
-
+var OPTS map[string]string = map[string]string{}
 
 func main() {
 
 	initVarTypes()
 
-	regCache = map[string]pcre.Regexp{}
-
-	singleTagList = map[string]bool{
-		"br": true,
-		"hr": true,
-	}
-
-	OPTS = map[string]string{}
-
 	userInput := make(chan string)
 	go readInput(userInput)
 
-	for true {
+	for {
 		input := <-userInput
 
 		//todo: make seperate method for pre compile, and store pre compiled file in system
@@ -109,7 +102,16 @@ func contains(search []string, value string) bool {
 	return false
 }
 
-func initVarTypes(){
+func containsMap(search map[string][]byte, value []byte) bool {
+	for _, v := range search {
+		if bytes.Equal(v, value) {
+			return true
+		}
+	}
+	return false
+}
+
+func initVarTypes() {
 	varType = map[string]reflect.Type{}
 
 	varType["array"] = reflect.TypeOf([]interface{}{})
@@ -120,8 +122,11 @@ func initVarTypes(){
 	varType["float32"] = reflect.TypeOf(float32(0))
 
 	varType["string"] = reflect.TypeOf("")
-	varType["byteArray"] = reflect.TypeOf([]byte(""))
-	varType["byte"] = reflect.TypeOf(' ')
+	varType["byteArray"] = reflect.TypeOf([]byte{})
+	varType["byte"] = reflect.TypeOf([]byte{0}[0])
+
+	// int 32 returned instead of byte
+	varType["int32"] = reflect.TypeOf(' ')
 }
 
 func readInput(input chan<- string) {
@@ -141,20 +146,20 @@ func getOpt(opts map[string]interface{}, arg string, stringOutput bool) interfac
 	argOpts := strings.Split(arg, "|")
 	for _, arg := range argOpts {
 		res = opts
-		args := regSplit(regRepStr([]byte(arg), `\s+`, []byte("")), `\.|(\[.*?\])`)
+		args := regex.Split(regex.RepStr([]byte(arg), `\s+`, []byte("")), `\.|(\[.*?\])`)
 		for _, a := range args {
-			if regMatch(a, `^%![0-9]+!%$`) {
+			if regex.Match(a, `^%![0-9]+!%$`) {
 				return string(a)
 			}
 
 			if bytes.HasPrefix(a, []byte("[")) && bytes.HasSuffix(a, []byte("]")) {
-				a = a[1:len(a)-2]
-				if reflect.TypeOf(res) != varType["array"] || !regMatch(a, `^[0-9]+$`) {
+				a = a[1 : len(a)-2]
+				if reflect.TypeOf(res) != varType["array"] || !regex.Match(a, `^[0-9]+$`) {
 					a = []byte(getOpt(opts, string(a), true).(string))
 				}
 			}
 
-			if reflect.TypeOf(res) == varType["array"] && regMatch(a, `^[0-9]+$`) {
+			if reflect.TypeOf(res) == varType["array"] && regex.Match(a, `^[0-9]+$`) {
 				i, err := strconv.Atoi(string(a))
 				if err == nil && reflect.TypeOf(res) == varType["array"] && len(res.([]interface{})) > i {
 					res = res.([]interface{})[i]
@@ -171,13 +176,12 @@ func getOpt(opts map[string]interface{}, arg string, stringOutput bool) interfac
 			}
 		}
 
-		
 		if res != nil && res != false {
 			if stringOutput {
 				if t := reflect.TypeOf(res); t != varType["map"] && t != varType["array"] {
 					break
 				}
-			}else{
+			} else {
 				break
 			}
 		}
@@ -185,20 +189,22 @@ func getOpt(opts map[string]interface{}, arg string, stringOutput bool) interfac
 
 	if stringOutput {
 		switch reflect.TypeOf(res) {
-			case varType["string"]:
-				return string(res.(string))
-			case varType["byteArray"]:
-				return string(res.([]byte))
-			case varType["byte"]:
-				return string(res.(byte))
-			case varType["int"]:
-				return strconv.Itoa(res.(int))
-			case varType["float64"]:
-				return strconv.FormatFloat(res.(float64), 'f', -1, 64)
-			case varType["float32"]:
-				return strconv.FormatFloat(float64(res.(float32)), 'f', -1, 32)
-			default:
-				return ""
+		case varType["string"]:
+			return string(res.(string))
+		case varType["byteArray"]:
+			return string(res.([]byte))
+		case varType["byte"]:
+			return string(res.(byte))
+		case varType["int32"]:
+			return string(res.(int32))
+		case varType["int"]:
+			return strconv.Itoa(res.(int))
+		case varType["float64"]:
+			return strconv.FormatFloat(res.(float64), 'f', -1, 64)
+		case varType["float32"]:
+			return strconv.FormatFloat(float64(res.(float32)), 'f', -1, 32)
+		default:
+			return ""
 		}
 	}
 
@@ -321,10 +327,10 @@ func getFile(filePath string, component bool, parents []string) (fileData, error
 	// component current parent
 	if component && parents != nil {
 		par := filepath.Join(parents[len(parents)-1], "..")
-		if strings.HasSuffix(parents[len(parents)-1], "/" + compRoot) {
-			path, err = joinPath(par, filePath + "." + ext)
-		}else{
-			path, err = joinPath(par, compRoot, filePath + "." + ext)
+		if strings.HasSuffix(parents[len(parents)-1], "/"+compRoot) {
+			path, err = joinPath(par, filePath+"."+ext)
+		} else {
+			path, err = joinPath(par, compRoot, filePath+"."+ext)
 		}
 		if err == nil {
 			if contains(parents, path) {
@@ -342,12 +348,12 @@ func getFile(filePath string, component bool, parents []string) (fileData, error
 	if component && parents != nil {
 		par := filepath.Join(parents[0], "..")
 		if strings.HasPrefix(parents[len(parents)-1], par) {
-			path, err = joinPath(par, compRoot, filePath + "." + ext)
+			path, err = joinPath(par, compRoot, filePath+"."+ext)
 			if err == nil {
 				if contains(parents, path) {
 					return fileData{}, errors.New("infinite loop detected")
 				}
-	
+
 				html, err = ioutil.ReadFile(path)
 				if err != nil {
 					html = nil
@@ -358,7 +364,7 @@ func getFile(filePath string, component bool, parents []string) (fileData, error
 
 	// component root
 	if html == nil && component {
-		path, err = joinPath(root, compRoot, filePath + "." + ext)
+		path, err = joinPath(root, compRoot, filePath+"."+ext)
 		if err == nil {
 			if parents != nil && contains(parents, path) {
 				return fileData{}, errors.New("infinite loop detected")
@@ -374,7 +380,7 @@ func getFile(filePath string, component bool, parents []string) (fileData, error
 	// current parent
 	if html == nil && parents != nil {
 		par := filepath.Join(parents[len(parents)-1], "..")
-		path, err = joinPath(par, filePath + "." + ext)
+		path, err = joinPath(par, filePath+"."+ext)
 		if err == nil {
 			if contains(parents, path) {
 				return fileData{}, errors.New("infinite loop detected")
@@ -391,12 +397,12 @@ func getFile(filePath string, component bool, parents []string) (fileData, error
 	if html == nil && parents != nil {
 		par := filepath.Join(parents[0], "..")
 		if strings.HasPrefix(parents[len(parents)-1], par) {
-			path, err = joinPath(par, filePath + "." + ext)
+			path, err = joinPath(par, filePath+"."+ext)
 			if err == nil {
 				if contains(parents, path) {
 					return fileData{}, errors.New("infinite loop detected")
 				}
-	
+
 				html, err = ioutil.ReadFile(path)
 				if err != nil {
 					html = nil
@@ -407,7 +413,7 @@ func getFile(filePath string, component bool, parents []string) (fileData, error
 
 	// root file
 	if html == nil {
-		path, err = joinPath(root, filePath + "." + ext)
+		path, err = joinPath(root, filePath+"."+ext)
 		if err == nil {
 			if parents != nil && contains(parents, path) {
 				return fileData{}, errors.New("infinite loop detected")
@@ -427,7 +433,7 @@ func getFile(filePath string, component bool, parents []string) (fileData, error
 	// add parent
 	if parents != nil {
 		parents = append(parents, path)
-	}else{
+	} else {
 		parents = []string{path}
 	}
 
@@ -452,60 +458,60 @@ func preCompile(html []byte, parents []string) (fileData, error) {
 	stringList := [][]byte{}
 
 	// extract strings and comments
-	html = regRepFunc(html, `(?s)(<!--.*?-->|/\*.*?\*/|\r?\n//.*?\r?\n)|(["'`+"`"+`])((?:\\[\\"'`+"`"+`]|.)*?)\2`, func(data func(int) []byte) []byte {
+	html = regex.RepFunc(html, `(?s)(<!--.*?-->|/\*.*?\*/|\r?\n//.*?\r?\n)|(["'`+"`"+`])((?:\\[\\"'`+"`"+`]|.)*?)\2`, func(data func(int) []byte) []byte {
 		if len(data(1)) != 0 {
 			return []byte("")
 		}
 		objStrings = append(objStrings, stringObj{s: decodeEncoding(data(3)), q: data(2)[0]})
-		return []byte("%!s" + strconv.Itoa(len(objStrings)-1) + "!%")
+		return regex.JoinBytes([]byte("%!s"), len(objStrings)-1, []byte("!%"))
 	})
 
 	decodeStrings := func(html []byte, mode int) []byte {
-		return decodeEncoding(regRepFunc(html, `%!s([0-9]+)!%`, func(data func(int) []byte) []byte {
+		return decodeEncoding(regex.RepFunc(html, `%!s([0-9]+)!%`, func(data func(int) []byte) []byte {
 			i, err := strconv.Atoi(string(data(1)))
 			if err != nil || len(objStrings) <= i {
 				return []byte("")
 			}
 			str := objStrings[i]
 
-			if mode == 1 && regMatch(str.s, `^-?[0-9]+(\.[0-9]+|)$`) {
+			if mode == 1 && regex.Match(str.s, `^-?[0-9]+(\.[0-9]+|)$`) {
 				return str.s
 			} else if mode == 2 {
 				return str.s
 			} else if mode == 3 {
-				if regMatch(str.s, `^-?[0-9]+(\.[0-9]+|)$`) {
+				if regex.Match(str.s, `^-?[0-9]+(\.[0-9]+|)$`) {
 					return str.s
 				} else {
 					stringList = append(stringList, str.s)
-					return []byte("%!" + strconv.Itoa(len(stringList)-1) + "!%")
+					return regex.JoinBytes([]byte("%!"), len(stringList)-1, []byte("!%"))
 				}
 			} else if mode == 4 {
 				stringList = append(stringList, str.s)
-				return []byte("%!" + strconv.Itoa(len(stringList)-1) + "!%")
+				return regex.JoinBytes([]byte("%!"), len(stringList)-1, []byte("!%"))
 			}
 
-			return append(append([]byte{str.q}, str.s...), str.q)
+			return regex.JoinBytes(str.q, str.s, str.q)
 		}))
 	}
 
 	// extract scripts
 	objScripts := []scriptObj{}
-	html = regRepFunc(html, `(?s)<(script|js|style|css|less|markdown|md|text|txt|raw)(\s+.*?|)>(.*?)</\1>`, func(data func(int) []byte) []byte {
+	html = regex.RepFunc(html, `(?s)<(script|js|style|css|less|markdown|md|text|txt|raw)(\s+.*?|)>(.*?)</\1>`, func(data func(int) []byte) []byte {
 		cont := decodeStrings(data(3), 0)
 
 		var tag byte
-		if regMatch(data(1), `^(markdown|md)$`) {
+		if regex.Match(data(1), `^(markdown|md)$`) {
 			tag = 'm'
 			cont = compileMD(cont)
-		} else if regMatch(data(1), `^(text|txt|raw)$`) {
+		} else if regex.Match(data(1), `^(text|txt|raw)$`) {
 			tag = 't'
 			cont = escapeHTML(cont)
 		} else if bytes.Equal(data(1), []byte("raw")) {
 			tag = 'r'
-		} else if regMatch(data(1), `^(script|js)$`) {
+		} else if regex.Match(data(1), `^(script|js)$`) {
 			tag = 'j'
 			cont = compileJS(cont)
-		} else if regMatch(data(1), `^(style|css|less)$`) {
+		} else if regex.Match(data(1), `^(style|css|less)$`) {
 			tag = 'c'
 			cont = compileCSS(cont)
 		}
@@ -521,8 +527,8 @@ func preCompile(html []byte, parents []string) (fileData, error) {
 	// move html args to list
 	argList := []map[string][]byte{}
 	tagIndex := 0
-	html = regRepFunc(html, `(?s)<(/|)([\w_\-\.$!:]+)(\s+.*?|)\s*(/|)>`, func(data func(int) []byte) []byte {
-		argStr := regRepStr(regRepStr(data(3), `^\s+`, []byte("")), `\s+`, []byte(" "))
+	html = regex.RepFunc(html, `(?s)<(/|)([\w_\-\.$!:]+)(\s+.*?|)\s*(/|)>`, func(data func(int) []byte) []byte {
+		argStr := regex.RepStr(regex.RepStr(data(3), `^\s+`, []byte("")), `\s+`, []byte(" "))
 
 		newArgs := map[string][]byte{}
 
@@ -530,28 +536,28 @@ func preCompile(html []byte, parents []string) (fileData, error) {
 		vInd := -1
 
 		if len(argStr) != 0 {
-			if regMatch(data(2), `^_(el(if|se)|if)$`) {
-				argStr = regRepFunc(argStr, `\s*([!<>=]|)\s*(=)|(&)\s*(&)|(\|)\s*(\|)|([<>&|])\s*`, func(data func(int) []byte) []byte {
-					return append(append([]byte(" "), data(0)...), ' ')
+			if regex.Match(data(2), `^_(el(if|se)|if)$`) {
+				argStr = regex.RepFunc(argStr, `\s*([!<>=]|)\s*(=)|(&)\s*(&)|(\|)\s*(\|)|([<>&|])\s*`, func(data func(int) []byte) []byte {
+					return regex.JoinBytes(' ', data(0), ' ')
 				})
-				argStr = regRepStr(argStr, `\s+`, []byte(" "))
+				argStr = regex.RepStr(argStr, `\s+`, []byte(" "))
 			} else {
-				argStr = regRepStr(argStr, `\s*=\s*`, []byte("="))
+				argStr = regex.RepStr(argStr, `\s*=\s*`, []byte("="))
 			}
 
 			args := bytes.Split(argStr, []byte(" "))
 
-			if regMatch(data(2), `^_(el(if|se)|if)$`) {
+			if regex.Match(data(2), `^_(el(if|se)|if)$`) {
 				for _, v := range args {
 					newArgs[strconv.Itoa(ind)] = decodeStrings(v, 3)
 					ind++
 				}
 			} else {
 				for _, v := range args {
-					if regMatch(v, `^\{\{\{?.*?\}\}\}?$`) {
+					if regex.Match(v, `^\{\{\{?.*?\}\}\}?$`) {
 						if bytes.Contains(v, []byte("=")) {
 							esc := true
-							v = regRepFunc(v, `(\{\{\{?)(.*?)(\}\}\}?)`, func(data func(int) []byte) []byte {
+							v = regex.RepFunc(v, `(\{\{\{?)(.*?)(\}\}\}?)`, func(data func(int) []byte) []byte {
 								if bytes.Equal(data(1), []byte("{{{")) || bytes.Equal(data(3), []byte("}}}")) {
 									esc = false
 								}
@@ -565,38 +571,39 @@ func preCompile(html []byte, parents []string) (fileData, error) {
 								keyObj := bytes.Split(key, []byte("."))
 								key = keyObj[len(keyObj)-1]
 
-								newVal := append(append(key, []byte(`=`)...), decodeStrings(val[1], 1)...)
-								newVal = regRepFunc(newVal, `(?s)(['`+"`"+`])((?:\\[\\'`+"`"+`]|.)*?)\1`, func(data func(int) []byte) []byte {
+								// newVal := append(append(key, []byte(`=`)...), decodeStrings(val[1], 1)...)
+								newVal := regex.JoinBytes(key, '=', decodeStrings(val[1], 1))
+								newVal = regex.RepFunc(newVal, `(?s)(['`+"`"+`])((?:\\[\\'`+"`"+`]|.)*?)\1`, func(data func(int) []byte) []byte {
 									stringList = append(stringList, data(2))
-									return []byte("%!" + strconv.Itoa(len(stringList)-1) + "!%")
+									return regex.JoinBytes([]byte("%!"), len(stringList)-1, []byte("!%"))
 								})
 
 								if esc {
-									newArgs[strconv.Itoa(vInd)] = append(append([]byte("{{"), newVal...), []byte("}}")...)
+									newArgs[strconv.Itoa(vInd)] = regex.JoinBytes([]byte("{{"), newVal, []byte("}}"))
 									vInd--
 								} else {
-									newArgs[strconv.Itoa(vInd)] = append(append([]byte("{{{"), newVal...), []byte("}}}")...)
+									newArgs[strconv.Itoa(vInd)] = regex.JoinBytes([]byte("{{{"), newVal, []byte("}}}"))
 									vInd--
 								}
 							} else {
-								decompVal := regRepFunc(decodeStrings(val[1], 1), `(?s)(['`+"`"+`])((?:\\[\\'`+"`"+`]|.)*?)\1`, func(data func(int) []byte) []byte {
+								decompVal := regex.RepFunc(decodeStrings(val[1], 1), `(?s)(['`+"`"+`])((?:\\[\\'`+"`"+`]|.)*?)\1`, func(data func(int) []byte) []byte {
 									stringList = append(stringList, data(2))
-									return []byte("%!" + strconv.Itoa(len(stringList)-1) + "!%")
+									return regex.JoinBytes([]byte("%!"), len(stringList)-1, []byte("!%"))
 								})
-								newVal := append(append(decodeStrings(val[0], 2), []byte(`=`)...), decompVal...)
+								newVal := regex.JoinBytes(decodeStrings(val[0], 2), '=', decompVal)
 
 								if esc {
-									newArgs[strconv.Itoa(vInd)] = append(append([]byte("{{"), newVal...), []byte("}}")...)
+									newArgs[strconv.Itoa(vInd)] = regex.JoinBytes([]byte("{{"), newVal, []byte("}}"))
 									vInd--
 								} else {
-									newArgs[strconv.Itoa(vInd)] = append(append([]byte("{{{"), newVal...), []byte("}}}")...)
+									newArgs[strconv.Itoa(vInd)] = regex.JoinBytes([]byte("{{{"), newVal, []byte("}}}"))
 									vInd--
 								}
 							}
 						} else {
-							decompVal := regRepFunc(decodeStrings(v, 1), `(?s)(['`+"`"+`])((?:\\[\\'`+"`"+`]|.)*?)\1`, func(data func(int) []byte) []byte {
+							decompVal := regex.RepFunc(decodeStrings(v, 1), `(?s)(['`+"`"+`])((?:\\[\\'`+"`"+`]|.)*?)\1`, func(data func(int) []byte) []byte {
 								stringList = append(stringList, data(2))
-								return []byte("%!" + strconv.Itoa(len(stringList)-1) + "!%")
+								return regex.JoinBytes([]byte("%!"), len(stringList)-1, []byte("!%"))
 							})
 
 							newArgs[strconv.Itoa(ind)] = decompVal
@@ -607,10 +614,10 @@ func preCompile(html []byte, parents []string) (fileData, error) {
 
 						decompVal := decodeStrings(val[1], 1)
 
-						if regMatch(decompVal, `^\{\{\{?.*?\}\}\}?$`) {
-							decompVal = regRepFunc(decodeStrings(val[1], 1), `(?s)(['"`+"`"+`])((?:\\[\\'`+"`"+`]|.)*?)\1`, func(data func(int) []byte) []byte {
+						if regex.Match(decompVal, `^\{\{\{?.*?\}\}\}?$`) {
+							decompVal = regex.RepFunc(decodeStrings(val[1], 1), `(?s)(['"`+"`"+`])((?:\\[\\'`+"`"+`]|.)*?)\1`, func(data func(int) []byte) []byte {
 								stringList = append(stringList, data(2))
-								return []byte("%!" + strconv.Itoa(len(stringList)-1) + "!%")
+								return regex.JoinBytes([]byte("%!"), len(stringList)-1, []byte("!%"))
 							})
 						}
 
@@ -623,83 +630,81 @@ func preCompile(html []byte, parents []string) (fileData, error) {
 			}
 		}
 
-
 		// handle non-function and non-component args for putting back
 		var newArgsBasic []byte = nil
-		if !regMatch(data(2), `^[A-Z_]`) {
+		if !regex.Match(data(2), `^[A-Z_]`) {
 			if len(newArgs) > 0 {
 				args1, args2, args3 := []byte{}, []byte{}, []byte{}
 				for key, val := range newArgs {
 					if i, err := strconv.Atoi(key); err == nil {
 						if i < 0 {
-							args2 = append(args2, append([]byte(" "), val...)...)
+							args2 = append(args2, regex.JoinBytes(' ', val)...)
 						} else {
-							args3 = append(args3, append([]byte(" "), val...)...)
+							args3 = append(args3, regex.JoinBytes(' ', val)...)
 						}
 					} else {
-						args1 = append(args1, append([]byte(" "), append(append([]byte(key), '='), val...)...)...)
+						args1 = append(args1, regex.JoinBytes(' ', key, '=', val)...)
 					}
 				}
-				newArgsBasic = append(append(args1, args2...), args3...)
-			}else{
+				newArgsBasic = regex.JoinBytes(args1, args2, args3)
+			} else {
 				newArgsBasic = []byte{}
 			}
 		}
 
-
 		if len(data(4)) != 0 || singleTagList[string(data(2))] {
 			// self closing tag
 			if newArgsBasic != nil {
-				return append(append([]byte("<"), data(2)...), append(newArgsBasic, []byte("/>")...)...)
+				return regex.JoinBytes('<', data(2), newArgsBasic, []byte("/>"))
 			}
 
 			if len(newArgs) > 0 {
 				argList = append(argList, newArgs)
-				return append(append([]byte("<"), data(2)...), []byte(":"+strconv.Itoa(tagIndex)+" "+strconv.Itoa(len(argList)-1)+"/>")...)
+				return regex.JoinBytes('<', data(2), ':', tagIndex, ' ', len(argList)-1, []byte("/>"))
 			}
-			return append(append([]byte("<"), data(2)...), []byte(":"+strconv.Itoa(tagIndex)+"/>")...)
+			return regex.JoinBytes('<', data(2), ':', tagIndex, []byte("/>"))
 		} else if len(data(1)) != 0 {
 			// closing tag
 			if newArgsBasic != nil {
-				return append(append([]byte("<"), data(2)...), append(newArgsBasic, []byte("/>")...)...)
+				return regex.JoinBytes('<', data(2), newArgsBasic, []byte("/>"))
 			}
 
 			if tagIndex > 0 {
 				tagIndex--
 			}
-			return append(append([]byte("</"), data(2)...), []byte(":"+strconv.Itoa(tagIndex)+">")...)
+			return regex.JoinBytes([]byte("</"), data(2), ':', tagIndex, '>')
 		} else {
 			// opening tag
 			if newArgsBasic != nil {
-				return append(append([]byte("<"), data(2)...), append(newArgsBasic, []byte(">")...)...)
+				return regex.JoinBytes('<', data(2), newArgsBasic, '>')
 			}
 
 			tagIndex++
 
 			if len(newArgs) > 0 {
 				argList = append(argList, newArgs)
-				return append(append([]byte("<"), data(2)...), []byte(":"+strconv.Itoa(tagIndex-1)+" "+strconv.Itoa(len(argList)-1)+">")...)
+				return regex.JoinBytes('<', data(2), ':', tagIndex-1, " ", len(argList)-1, '>')
 			}
-			return append(append([]byte("<"), data(2)...), []byte(":"+strconv.Itoa(tagIndex-1)+">")...)
+			return regex.JoinBytes('<', data(2), ':', tagIndex-1, '>')
 		}
 	})
 
 	// move var strings to seperate list
-	html = regRepFunc(html, `(?s)(\{\{\{?)(.*?)(\}\}\}?)`, func(data func(int) []byte) []byte {
+	html = regex.RepFunc(html, `(?s)(\{\{\{?)(.*?)(\}\}\}?)`, func(data func(int) []byte) []byte {
 		esc := true
 		if bytes.Equal(data(1), []byte("{{{")) || bytes.Equal(data(3), []byte("}}}")) {
 			esc = false
 		}
 
-		val := regRepFunc(data(2), `%!s[0-9]+!%`, func(data func(int) []byte) []byte {
+		val := regex.RepFunc(data(2), `%!s[0-9]+!%`, func(data func(int) []byte) []byte {
 			stringList = append(stringList, decodeStrings(data(0), 2))
-			return []byte("%!" + strconv.Itoa(len(stringList)-1) + "!%")
+			return regex.JoinBytes([]byte("%!"), len(stringList)-1, []byte("!%"))
 		})
 
 		if esc {
-			return append(append([]byte("{{"), val...), []byte("}}")...)
+			return regex.JoinBytes([]byte("{{"), val, []byte("}}"))
 		}
-		return append(append([]byte("{{{"), val...), []byte("}}}")...)
+		return regex.JoinBytes([]byte("{{{"), val, []byte("}}}"))
 	})
 
 	html = decodeStrings(html, 0)
@@ -707,7 +712,7 @@ func preCompile(html []byte, parents []string) (fileData, error) {
 
 	// preload components
 	if OPTS["cache_component"] == "embed" {
-		html = regRepFunc(html, `(?s)<([A-Z][\w_\-\.$!:]+):([0-9]+)(\s+[0-9]+|)>(.*?)</\1:\2>`, func(data func(int) []byte) []byte {
+		html = regex.RepFunc(html, `(?s)<([A-Z][\w_\-\.$!:]+):([0-9]+)(\s+[0-9]+|)>(.*?)</\1:\2>`, func(data func(int) []byte) []byte {
 			name := strings.ToLower(string(data(1)))
 			fileData, err := getFile(name, true, parents)
 			if err != nil {
@@ -723,10 +728,7 @@ func preCompile(html []byte, parents []string) (fileData, error) {
 				args = argList[i]
 			}
 
-			//todo: fill component vars with custom args
-			_ = args
-
-			comp := regRepFunc(fileData.html, `%!([0-9]+)!%`, func(data func(int) []byte) []byte {
+			comp := regex.RepFunc(fileData.html, `%!([0-9]+)!%`, func(data func(int) []byte) []byte {
 				i, err := strconv.Atoi(string(data(1)))
 				if err != nil {
 					return []byte("")
@@ -734,10 +736,10 @@ func preCompile(html []byte, parents []string) (fileData, error) {
 
 				stringList = append(stringList, fileData.str[i])
 
-				return []byte("%!" + strconv.Itoa(len(stringList)-1) + "!%")
+				return regex.JoinBytes([]byte("%!"), len(stringList)-1, []byte("!%"))
 			})
 
-			comp = regRepFunc(comp, `(?s)<(!_script|[A-Z_][\w_\-\.$!:]+:[0-9]+)\s+([0-9]+)(/?)>`, func(data func(int) []byte) []byte {
+			comp = regex.RepFunc(comp, `(?s)<(!_script|[A-Z_][\w_\-\.$!:]+:[0-9]+)\s+([0-9]+)(/?)>`, func(data func(int) []byte) []byte {
 				i, err := strconv.Atoi(string(data(2)))
 				if err != nil {
 					return []byte("")
@@ -745,14 +747,35 @@ func preCompile(html []byte, parents []string) (fileData, error) {
 
 				if bytes.Equal(data(1), []byte("!_script")) {
 					objScripts = append(objScripts, fileData.script[i])
-					return append(append([]byte("<"), data(1)...), append([]byte(" " + strconv.Itoa(len(objScripts)-1)), append(data(3), []byte(">")...)...)...)
+					return regex.JoinBytes('<', data(1), ' ', len(objScripts)-1, data(3), '>')
 				}
 
 				argList = append(argList, fileData.args[i])
-				return append(append([]byte("<"), data(1)...), append([]byte(" " + strconv.Itoa(len(argList)-1)), append(data(3), []byte(">")...)...)...)
+				return regex.JoinBytes('<', data(1), ' ', len(argList)-1, data(3), '>')
 			})
 
-			comp = regRepFunc(comp, `(?si)({{{?)\s*body\s*(}}}?)`, func(d func(int) []byte) []byte {
+			comp = regex.RepFunc(comp, `(?s)({{{?)(.*?)(}}}?)`, func(data func(int) []byte) []byte {
+				param := regex.RepFunc(data(2), `\b([\w_\-\$!:]+)\b`, func(d func(int) []byte) []byte {
+					if v, ok := args[string(d(1))]; ok {
+						if regex.Match(v, `^-?[0-9]+(\.[0-9]+|)$`) {
+							return regex.JoinBytes('\'', v, '\'')
+						}
+						return v
+					}
+					return d(0)
+				})
+				if regex.Match(param, `(?s)\s*(["'`+"`"+`])((?:\\[\\"'`+"`"+`]|.)*?)\1\s*`) {
+					return regex.RepFunc(param, `(?s)\s*(["'`+"`"+`])((?:\\[\\"'`+"`"+`]|.)*?)\1\s*`, func(d func(int) []byte) []byte {
+						return d(2)
+					})
+				}
+				if bytes.Equal(data(1), []byte("{{")) || bytes.Equal(data(3), []byte("}}")) {
+					return regex.JoinBytes([]byte("{{"), param, []byte("}}"))
+				}
+				return regex.JoinBytes([]byte("{{{"), param, []byte("}}}"))
+			})
+
+			comp = regex.RepFunc(comp, `(?si)({{{?)\s*body\s*(}}}?)`, func(d func(int) []byte) []byte {
 				if bytes.Equal(d(1), []byte("{{")) || bytes.Equal(d(2), []byte("}}")) {
 					return escapeHTML(data(4))
 				}
@@ -762,7 +785,7 @@ func preCompile(html []byte, parents []string) (fileData, error) {
 			return comp
 		})
 
-		html = regRepFunc(html, `(?s)<([A-Z][\w_\-\.$!:]+):([0-9]+)(\s+[0-9]+|)/>`, func(data func(int) []byte) []byte {
+		html = regex.RepFunc(html, `(?s)<([A-Z][\w_\-\.$!:]+):([0-9]+)(\s+[0-9]+|)/>`, func(data func(int) []byte) []byte {
 			name := strings.ToLower(string(data(1)))
 			fileData, err := getFile(name, true, parents)
 			if err != nil {
@@ -778,10 +801,7 @@ func preCompile(html []byte, parents []string) (fileData, error) {
 				args = argList[i]
 			}
 
-			//todo: fill component vars with custom args (copy from above replace function)
-			_ = args
-
-			comp := regRepFunc(fileData.html, `%!([0-9]+)!%`, func(data func(int) []byte) []byte {
+			comp := regex.RepFunc(fileData.html, `%!([0-9]+)!%`, func(data func(int) []byte) []byte {
 				i, err := strconv.Atoi(string(data(1)))
 				if err != nil {
 					return []byte("")
@@ -789,10 +809,10 @@ func preCompile(html []byte, parents []string) (fileData, error) {
 
 				stringList = append(stringList, fileData.str[i])
 
-				return []byte("%!" + strconv.Itoa(len(stringList)-1) + "!%")
+				return regex.JoinBytes([]byte("%!"), len(stringList)-1, []byte("!%"))
 			})
 
-			comp = regRepFunc(comp, `(?s)<(!_script|[A-Z_][\w_\-\.$!:]+:[0-9]+)\s+([0-9]+)(/?)>`, func(data func(int) []byte) []byte {
+			comp = regex.RepFunc(comp, `(?s)<(!_script|[A-Z_][\w_\-\.$!:]+:[0-9]+)\s+([0-9]+)(/?)>`, func(data func(int) []byte) []byte {
 				i, err := strconv.Atoi(string(data(2)))
 				if err != nil {
 					return []byte("")
@@ -800,17 +820,38 @@ func preCompile(html []byte, parents []string) (fileData, error) {
 
 				if bytes.Equal(data(1), []byte("!_script")) {
 					objScripts = append(objScripts, fileData.script[i])
-					return append(append([]byte("<"), data(1)...), append([]byte(" " + strconv.Itoa(len(objScripts)-1)), append(data(3), []byte(">")...)...)...)
+					return regex.JoinBytes('<', data(1), ' ', len(objScripts)-1, data(3), '>')
 				}
 
 				argList = append(argList, fileData.args[i])
-				return append(append([]byte("<"), data(1)...), append([]byte(" " + strconv.Itoa(len(argList)-1)), append(data(3), []byte(">")...)...)...)
+				return regex.JoinBytes('<', data(1), ' ', len(argList)-1, data(3), '>')
+			})
+
+			comp = regex.RepFunc(comp, `(?s)({{{?)(.*?)(}}}?)`, func(data func(int) []byte) []byte {
+				param := regex.RepFunc(data(2), `\b([\w_\-\$!:]+)\b`, func(d func(int) []byte) []byte {
+					if v, ok := args[string(d(1))]; ok {
+						if regex.Match(v, `^-?[0-9]+(\.[0-9]+|)$`) {
+							return regex.JoinBytes('\'', v, '\'')
+						}
+						return v
+					}
+					return d(0)
+				})
+				if regex.Match(param, `(?s)\s*(["'`+"`"+`])((?:\\[\\"'`+"`"+`]|.)*?)\1\s*`) {
+					return regex.RepFunc(param, `(?s)\s*(["'`+"`"+`])((?:\\[\\"'`+"`"+`]|.)*?)\1\s*`, func(d func(int) []byte) []byte {
+						return d(2)
+					})
+				}
+				if bytes.Equal(data(1), []byte("{{")) || bytes.Equal(data(3), []byte("}}")) {
+					return regex.JoinBytes([]byte("{{"), param, []byte("}}"))
+				}
+				return regex.JoinBytes([]byte("{{{"), param, []byte("}}}"))
 			})
 
 			return comp
 		})
-	}else{
-		go regRepFunc(html, `(?s)<([A-Z][\w_\-\.$!:]+):[0-9]+(\s+[0-9]+|)/?>`, func(data func(int) []byte) []byte {
+	} else if OPTS["cache_component"] != "none" {
+		go regex.RepFunc(html, `(?s)<([A-Z][\w_\-\.$!:]+):[0-9]+(\s+[0-9]+|)/?>`, func(data func(int) []byte) []byte {
 			name := strings.ToLower(string(data(1)))
 			getFile(name, true, parents)
 			return []byte("")
@@ -822,13 +863,15 @@ func preCompile(html []byte, parents []string) (fileData, error) {
 
 func compile(file fileData, opts map[string]interface{}) []byte {
 
-	// fmt.Println(string(file.html))
+	//todo: compile file to html
+
+	fmt.Println(string(file.html))
 
 	return []byte("")
 }
 
 func escapeHTML(html []byte) []byte {
-	html = regRepFunc(html, `[<>&]`, func(data func(int) []byte) []byte {
+	html = regex.RepFunc(html, `[<>&]`, func(data func(int) []byte) []byte {
 		if bytes.Equal(data(0), []byte("<")) {
 			return []byte("&lt;")
 		} else if bytes.Equal(data(0), []byte(">")) {
@@ -836,11 +879,11 @@ func escapeHTML(html []byte) []byte {
 		}
 		return []byte("&amp;")
 	})
-	return regRepStr(html, `&amp;(amp;)*`, []byte("&amp;"))
+	return regex.RepStr(html, `&amp;(amp;)*`, []byte("&amp;"))
 }
 
 func escapeHTMLArgs(html []byte) []byte {
-	return regRepFunc(html, `[\\"'`+"`"+`]`, func(data func(int) []byte) []byte {
+	return regex.RepFunc(html, `[\\"'`+"`"+`]`, func(data func(int) []byte) []byte {
 		return append([]byte("\\"), data(0)...)
 	})
 }
@@ -858,7 +901,7 @@ func compileMD(md []byte) []byte {
 }
 
 func encodeEncoding(html []byte) []byte {
-	return regRepFunc(html, `%!|!%`, func(data func(int) []byte) []byte {
+	return regex.RepFunc(html, `%!|!%`, func(data func(int) []byte) []byte {
 		if bytes.Equal(data(0), []byte("%!")) {
 			return []byte("%!o!%")
 		}
@@ -867,7 +910,7 @@ func encodeEncoding(html []byte) []byte {
 }
 
 func decodeEncoding(html []byte) []byte {
-	return regRepFunc(html, `%!([oc])!%`, func(data func(int) []byte) []byte {
+	return regex.RepFunc(html, `%!([oc])!%`, func(data func(int) []byte) []byte {
 		if bytes.Equal(data(1), []byte("o")) {
 			return []byte("%!")
 		}
@@ -896,132 +939,4 @@ func decompress(str string) string {
 	r, _ := gzip.NewReader(rdata)
 	s, _ := ioutil.ReadAll(r)
 	return string(s)
-}
-
-func regRepFunc(str []byte, re string, rep func(func(int) []byte) []byte, blank ...bool) []byte {
-	var reg pcre.Regexp
-
-	if val, ok := regCache[re]; ok {
-		reg = val
-	} else {
-		// reg = pcre.MustCompileJIT(re, pcre.UTF8, pcre.CONFIG_JIT)
-		reg = pcre.MustCompile(re, pcre.UTF8)
-		regCache[re] = reg
-	}
-
-	// ind := reg.FindAllIndex(str, pcre.UTF8)
-	ind := reg.FindAllIndex(str, 0)
-
-	res := []byte{}
-	trim := 0
-	for _, pos := range ind {
-		v := str[pos[0]:pos[1]]
-		m := reg.Matcher(v, 0)
-
-		if len(blank) != 0 {
-			r := rep(func(g int) []byte {
-				return m.Group(g)
-			})
-
-			if r == nil {
-				return nil
-			}
-		} else {
-			if trim == 0 {
-				res = append(res, str[:pos[0]]...)
-			} else {
-				res = append(res, str[trim:pos[0]]...)
-			}
-			trim = pos[1]
-
-			r := rep(func(g int) []byte {
-				return m.Group(g)
-			})
-
-			if r == nil {
-				res = append(res, str[trim:]...)
-				return res
-			}
-
-			res = append(res, r...)
-		}
-	}
-
-	if len(blank) != 0 {
-		return nil
-	}
-
-	res = append(res, str[trim:]...)
-
-	return res
-}
-
-func regRepStr(str []byte, re string, rep []byte) []byte {
-	var reg pcre.Regexp
-
-	if val, ok := regCache[re]; ok {
-		reg = val
-	} else {
-		reg = pcre.MustCompileJIT(re, pcre.UTF8, pcre.CONFIG_JIT)
-		regCache[re] = reg
-	}
-
-	// return reg.ReplaceAll(str, rep, pcre.UTF8)
-	return reg.ReplaceAll(str, rep, 0)
-}
-
-func regMatch(str []byte, re string) bool {
-	var reg pcre.Regexp
-
-	if val, ok := regCache[re]; ok {
-		reg = val
-	} else {
-		reg = pcre.MustCompileJIT(re, pcre.UTF8, pcre.CONFIG_JIT)
-		regCache[re] = reg
-	}
-
-	// return reg.Match(str, pcre.UTF8)
-	return reg.Match(str, 0)
-}
-
-func regSplit(str []byte, re string) [][]byte {
-	var reg pcre.Regexp
-
-	if val, ok := regCache[re]; ok {
-		reg = val
-	} else {
-		reg = pcre.MustCompileJIT(re, pcre.UTF8, pcre.CONFIG_JIT)
-		regCache[re] = reg
-	}
-
-	ind := reg.FindAllIndex(str, 0)
-
-	res := [][]byte{}
-	trim := 0
-	for _, pos := range ind {
-		v := str[pos[0]:pos[1]]
-		m := reg.Matcher(v, 0)
-		_ = m
-
-		if trim == 0 {
-			res = append(res, str[:pos[0]])
-		} else {
-			res = append(res, str[trim:pos[0]])
-		}
-		trim = pos[1]
-
-		for i := 1; i <= m.Groups; i++ {
-			g := m.Group(i)
-			if len(g) != 0 {
-				res = append(res, m.Group(i))
-			}
-		}
-	}
-
-	e := str[trim:]
-	if len(e) != 0 {
-		res = append(res, str[trim:])
-	}
-
-	return res
 }
