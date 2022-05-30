@@ -1,14 +1,14 @@
 # Turbx
 
-![npm](https://img.shields.io/npm/v/turbx)
-![Libraries.io dependency status for latest release](https://img.shields.io/librariesio/release/npm/turbx)
-![GitHub top language](https://img.shields.io/github/languages/top/aspiesoft/turbx)
-![NPM](https://img.shields.io/npm/l/turbx)
+![npm version](https://img.shields.io/npm/v/turbx)
+![dependency status](https://img.shields.io/librariesio/release/npm/turbx)
+![gitHub top language](https://img.shields.io/github/languages/top/aspiesoft/turbx)
+![npm license](https://img.shields.io/npm/l/turbx)
 
-![npm](https://img.shields.io/npm/dw/turbx)
-![npm](https://img.shields.io/npm/dm/turbx)
+![npm weekly downloads](https://img.shields.io/npm/dw/turbx)
+![npm monthly downloads](https://img.shields.io/npm/dm/turbx)
 
-[![square](https://img.shields.io/badge/buy%20me%20a%20coffee-square-blue)](https://buymeacoffee.aspiesoft.com)
+[![donation link](https://img.shields.io/badge/buy%20me%20a%20coffee-square-blue)](https://buymeacoffee.aspiesoft.com)
 
 A Fast and Easy To Use View Engine, Compiled With Regex.
 

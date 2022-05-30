@@ -452,11 +452,16 @@ func preCompile(html []byte, parents []string) (fileData, error) {
 	stringList := [][]byte{}
 
 	// extract strings and comments
-	html = regRepFunc(html, `(?s)(<!--.*?-->|/\*.*?\*/|\r?\n//.*?\r?\n)|(["'`+"`"+`])((?:\\[\\"'`+"`"+`]|.)*?)\2`, func(data func(int) []byte) []byte {
-		if len(data(1)) != 0 {
+	html = regRepFunc(html, `(?s)(<!--.*?-->|/\*.*?\*/|\r?\n//.*?\r?\n)|"((?:\\[\\"]|.)*?)"|'((?:\\[\\']|.)*?)'|`+"`((?:\\\\[\\\\`]|.)*?)`", func(data func(int) []byte) []byte {
+		if !bytes.Equal(data(1), []byte("")) {
 			return []byte("")
+		} else if !bytes.Equal(data(2), []byte("")) {
+			objStrings = append(objStrings, stringObj{s: decodeEncoding(data(2)), q: '"'})
+		} else if !bytes.Equal(data(3), []byte("")) {
+			objStrings = append(objStrings, stringObj{s: decodeEncoding(data(3)), q: '\''})
+		} else if !bytes.Equal(data(4), []byte("")) {
+			objStrings = append(objStrings, stringObj{s: decodeEncoding(data(4)), q: '`'})
 		}
-		objStrings = append(objStrings, stringObj{s: decodeEncoding(data(3)), q: data(2)[0]})
 		return []byte("%!s" + strconv.Itoa(len(objStrings)-1) + "!%")
 	})
 
@@ -490,7 +495,8 @@ func preCompile(html []byte, parents []string) (fileData, error) {
 
 	// extract scripts
 	objScripts := []scriptObj{}
-	html = regRepFunc(html, `(?s)<(script|js|style|css|less|markdown|md|text|txt|raw)(\s+.*?|)>(.*?)</\1>`, func(data func(int) []byte) []byte {
+	tags := `script|js|style|css|less|markdown|md|text|txt|raw`
+	html = regRepFunc(html, `(?s)<(`+tags+`)(\s+.*?|)>(.*?)</(`+tags+`)>`, func(data func(int) []byte) []byte {
 		cont := decodeStrings(data(3), 0)
 
 		var tag byte
@@ -519,8 +525,14 @@ func preCompile(html []byte, parents []string) (fileData, error) {
 	})
 
 	// move html args to list
-	argList := []map[string][]byte{}
-	tagIndex := 0
+	/*
+		!	note: if you find a bug with changed html args
+		*	this function moves them to the closing tag to merge opening and closing tag args
+		*	the next function moves them back to the opening tag, but it could be buggy
+	*/
+	fullArgList := []map[string][]byte{}
+	tagIndex := []map[string][]byte{}
+	maxTagIndex := 0
 	html = regRepFunc(html, `(?s)<(/|)([\w_\-\.$!:]+)(\s+.*?|)\s*(/|)>`, func(data func(int) []byte) []byte {
 		argStr := regRepStr(regRepStr(data(3), `^\s+`, []byte("")), `\s+`, []byte(" "))
 
@@ -566,8 +578,12 @@ func preCompile(html []byte, parents []string) (fileData, error) {
 								key = keyObj[len(keyObj)-1]
 
 								newVal := append(append(key, []byte(`=`)...), decodeStrings(val[1], 1)...)
-								newVal = regRepFunc(newVal, `(?s)(['`+"`"+`])((?:\\[\\'`+"`"+`]|.)*?)\1`, func(data func(int) []byte) []byte {
-									stringList = append(stringList, data(2))
+								newVal = regRepFunc(newVal, `(?s)'((?:\\[\\']|.)*?)'|`+"`((?:\\\\[\\\\`]|.)*?)`", func(data func(int) []byte) []byte {
+									if len(data(1)) != 0 {
+										stringList = append(stringList, data(1))
+									} else if len(data(2)) != 0 {
+										stringList = append(stringList, data(2))
+									}
 									return []byte("%!" + strconv.Itoa(len(stringList)-1) + "!%")
 								})
 
@@ -579,8 +595,12 @@ func preCompile(html []byte, parents []string) (fileData, error) {
 									vInd--
 								}
 							} else {
-								decompVal := regRepFunc(decodeStrings(val[1], 1), `(?s)(['`+"`"+`])((?:\\[\\'`+"`"+`]|.)*?)\1`, func(data func(int) []byte) []byte {
-									stringList = append(stringList, data(2))
+								decompVal := regRepFunc(decodeStrings(val[1], 1), `(?s)'((?:\\[\\']|.)*?)'|`+"`((?:\\\\[\\\\`]|.)*?)`", func(data func(int) []byte) []byte {
+									if len(data(1)) != 0 {
+										stringList = append(stringList, data(1))
+									} else if len(data(2)) != 0 {
+										stringList = append(stringList, data(2))
+									}
 									return []byte("%!" + strconv.Itoa(len(stringList)-1) + "!%")
 								})
 								newVal := append(append(decodeStrings(val[0], 2), []byte(`=`)...), decompVal...)
@@ -594,8 +614,12 @@ func preCompile(html []byte, parents []string) (fileData, error) {
 								}
 							}
 						} else {
-							decompVal := regRepFunc(decodeStrings(v, 1), `(?s)(['`+"`"+`])((?:\\[\\'`+"`"+`]|.)*?)\1`, func(data func(int) []byte) []byte {
-								stringList = append(stringList, data(2))
+							decompVal := regRepFunc(decodeStrings(v, 1), `(?s)'((?:\\[\\']|.)*?)'|`+"`((?:\\\\[\\\\`]|.)*?)`", func(data func(int) []byte) []byte {
+								if len(data(1)) != 0 {
+									stringList = append(stringList, data(1))
+								} else if len(data(2)) != 0 {
+									stringList = append(stringList, data(2))
+								}
 								return []byte("%!" + strconv.Itoa(len(stringList)-1) + "!%")
 							})
 
@@ -608,8 +632,12 @@ func preCompile(html []byte, parents []string) (fileData, error) {
 						decompVal := decodeStrings(val[1], 1)
 
 						if regMatch(decompVal, `^\{\{\{?.*?\}\}\}?$`) {
-							decompVal = regRepFunc(decodeStrings(val[1], 1), `(?s)(['"`+"`"+`])((?:\\[\\'`+"`"+`]|.)*?)\1`, func(data func(int) []byte) []byte {
-								stringList = append(stringList, data(2))
+							decompVal = regRepFunc(decodeStrings(val[1], 1), `(?s)'((?:\\[\\']|.)*?)'|"((?:\\[\\"]|.)*?)"|`+"`((?:\\\\[\\\\`]|.)*?)`", func(data func(int) []byte) []byte {
+								if len(data(1)) != 0 {
+									stringList = append(stringList, data(1))
+								} else if len(data(2)) != 0 {
+									stringList = append(stringList, data(2))
+								}
 								return []byte("%!" + strconv.Itoa(len(stringList)-1) + "!%")
 							})
 						}
@@ -623,65 +651,124 @@ func preCompile(html []byte, parents []string) (fileData, error) {
 			}
 		}
 
-
-		// handle non-function and non-component args for putting back
-		var newArgsBasic []byte = nil
-		if !regMatch(data(2), `^[A-Z_]`) {
-			if len(newArgs) > 0 {
-				args1, args2, args3 := []byte{}, []byte{}, []byte{}
-				for key, val := range newArgs {
-					if i, err := strconv.Atoi(key); err == nil {
-						if i < 0 {
-							args2 = append(args2, append([]byte(" "), val...)...)
-						} else {
-							args3 = append(args3, append([]byte(" "), val...)...)
-						}
-					} else {
-						args1 = append(args1, append([]byte(" "), append(append([]byte(key), '='), val...)...)...)
-					}
-				}
-				newArgsBasic = append(append(args1, args2...), args3...)
-			}else{
-				newArgsBasic = []byte{}
-			}
-		}
-
-
 		if len(data(4)) != 0 || singleTagList[string(data(2))] {
 			// self closing tag
-			if newArgsBasic != nil {
-				return append(append([]byte("<"), data(2)...), append(newArgsBasic, []byte("/>")...)...)
-			}
-
 			if len(newArgs) > 0 {
-				argList = append(argList, newArgs)
-				return append(append([]byte("<"), data(2)...), []byte(":"+strconv.Itoa(tagIndex)+" "+strconv.Itoa(len(argList)-1)+"/>")...)
+				fullArgList = append(fullArgList, newArgs)
+				return append(append([]byte("<"), data(2)...), []byte(":"+strconv.Itoa(len(tagIndex))+" "+strconv.Itoa(len(fullArgList)-1)+"/>")...)
 			}
-			return append(append([]byte("<"), data(2)...), []byte(":"+strconv.Itoa(tagIndex)+"/>")...)
+			return append(append([]byte("<"), data(2)...), []byte(":"+strconv.Itoa(len(tagIndex))+"/>")...)
 		} else if len(data(1)) != 0 {
 			// closing tag
-			if newArgsBasic != nil {
-				return append(append([]byte("<"), data(2)...), append(newArgsBasic, []byte("/>")...)...)
-			}
+			if len(tagIndex) > 0 {
+				firstArgs := tagIndex[len(tagIndex)-1]
+				tagIndex = tagIndex[:len(tagIndex)-1]
 
-			if tagIndex > 0 {
-				tagIndex--
+				// merge open tag args
+				for key, val := range firstArgs {
+					if i, err := strconv.Atoi(key); err == nil {
+						if i < 0 {
+							i += vInd
+						} else {
+							i += ind
+						}
+						s := strconv.Itoa(i)
+						if _, ok := newArgs[s]; !ok {
+							newArgs[s] = val
+						}
+					} else {
+						if _, ok := newArgs[key]; !ok {
+							newArgs[key] = val
+						}
+					}
+				}
+
+				if len(newArgs) > 0 {
+					fullArgList = append(fullArgList, newArgs)
+					return append(append([]byte("</"), data(2)...), []byte(":"+strconv.Itoa(len(tagIndex))+" "+strconv.Itoa(len(fullArgList)-1)+">")...)
+				}
+				return append(append([]byte("</"), data(2)...), []byte(":"+strconv.Itoa(len(tagIndex))+">")...)
 			}
-			return append(append([]byte("</"), data(2)...), []byte(":"+strconv.Itoa(tagIndex)+">")...)
 		} else {
 			// opening tag
-			if newArgsBasic != nil {
-				return append(append([]byte("<"), data(2)...), append(newArgsBasic, []byte(">")...)...)
+			tagIndex = append(tagIndex, newArgs)
+			l := len(tagIndex)
+			if l > maxTagIndex {
+				maxTagIndex = l
 			}
-
-			tagIndex++
-
-			if len(newArgs) > 0 {
-				argList = append(argList, newArgs)
-				return append(append([]byte("<"), data(2)...), []byte(":"+strconv.Itoa(tagIndex-1)+" "+strconv.Itoa(len(argList)-1)+">")...)
-			}
-			return append(append([]byte("<"), data(2)...), []byte(":"+strconv.Itoa(tagIndex-1)+">")...)
+			return append(append([]byte("<"), data(2)...), []byte(":"+strconv.Itoa(l-1)+">")...)
 		}
+
+		return []byte("")
+	})
+
+	// fix arg pos
+	/*
+		!	note: this function could be buggy
+		*	this is that next function previously mentioned in the above functions comment
+		*	this moves the args reference back from the closing tag, to the opening tag
+		*	this is not the most efficient method, but it runs
+		* if you can merge this function with the above function, that may fix a bug, or improve performance
+	*/
+	for i := 0; i < maxTagIndex; i++ {
+		iStr := strconv.Itoa(i)
+		html = regRepFunc(html, `(?s)<([\w_\-\.$!:]+):`+iStr+`>(.*?)</([\w_\-\.$!:]+):`+iStr+`(\s+[0-9]+|)>`, func(data func(int) []byte) []byte {
+			if !bytes.Equal(data(1), data(3)) || len(data(4)) == 0 {
+				return data(0)
+			}
+			return append(append(append(append(append([]byte("<"), data(1)...), append([]byte(":"+iStr), data(4)...)...), append([]byte(">"), data(2)...)...), append([]byte("</"), data(3)...)...), []byte(":"+iStr+">")...)
+		})
+	}
+
+	// put back non-function and non-component args
+	/*
+		?	note: to improve performance
+		*	if the above 2 functions are merged
+		*	this function may also be able to be merged with them
+	*/
+	argList := []map[string][]byte{}
+	html = regRepFunc(html, `(?s)(</?)([\w_\-\.$!:]+)(:[0-9]+)(\s+[0-9]+|)(/?>)`, func(data func(int) []byte) []byte {
+		iS := bytes.Trim(data(4), " ")
+		i := -1
+		if len(iS) != 0 {
+			var err error
+			i, err = strconv.Atoi(string(iS))
+			if err != nil {
+				if !regMatch(data(2), `^[A-Z_]`) {
+					return append(append(data(1), data(2)...), data(5)...)
+				}
+				return append(append(data(1), data(2)...), append(data(3), data(5)...)...)
+			}
+		}
+
+		if i == -1 || i >= len(fullArgList) {
+			if !regMatch(data(2), `^[A-Z_]`) {
+				return append(append(data(1), data(2)...), data(5)...)
+			}
+			return append(append(data(1), data(2)...), append(data(3), data(5)...)...)
+		}
+
+		if !regMatch(data(2), `^[A-Z_]`) {
+			args1, args2, args3 := []byte{}, []byte{}, []byte{}
+			for key, val := range fullArgList[i] {
+				if i, err := strconv.Atoi(key); err == nil {
+					if i < 0 {
+						args2 = append(args2, append([]byte(" "), val...)...)
+					} else {
+						args3 = append(args3, append([]byte(" "), val...)...)
+					}
+				} else {
+					args1 = append(args1, append([]byte(" "), append(append([]byte(key), '='), val...)...)...)
+				}
+			}
+			args := append(append(args1, args2...), args3...)
+
+			return append(append(data(1), data(2)...), append(args, data(5)...)...)
+		}
+
+		argList = append(argList, fullArgList[i])
+
+		return append(append(append(data(1), data(2)...), data(3)...), append(append([]byte(" "), []byte(strconv.Itoa(len(argList)-1))...), data(5)...)...)
 	})
 
 	// move var strings to seperate list
@@ -710,107 +797,19 @@ func preCompile(html []byte, parents []string) (fileData, error) {
 		html = regRepFunc(html, `(?s)<([A-Z][\w_\-\.$!:]+):([0-9]+)(\s+[0-9]+|)>(.*?)</\1:\2>`, func(data func(int) []byte) []byte {
 			name := strings.ToLower(string(data(1)))
 			fileData, err := getFile(name, true, parents)
-			if err != nil {
-				return data(0)
-			}
+			if err == nil {
+				comp := regRepFunc(fileData.html, `%!([0-9]+)!%`, func(data func(int) []byte) []byte {
 
-			var args map[string][]byte = nil
-			if len(data(3)) > 0 {
-				i, err := strconv.Atoi(string(bytes.Trim(data(3), " ")))
-				if err != nil {
-					return data(0)
-				}
-				args = argList[i]
-			}
 
-			//todo: fill component vars with custom args
-			_ = args
 
-			comp := regRepFunc(fileData.html, `%!([0-9]+)!%`, func(data func(int) []byte) []byte {
-				i, err := strconv.Atoi(string(data(1)))
-				if err != nil {
 					return []byte("")
-				}
-
-				stringList = append(stringList, fileData.str[i])
-
-				return []byte("%!" + strconv.Itoa(len(stringList)-1) + "!%")
-			})
-
-			comp = regRepFunc(comp, `(?s)<(!_script|[A-Z_][\w_\-\.$!:]+:[0-9]+)\s+([0-9]+)(/?)>`, func(data func(int) []byte) []byte {
-				i, err := strconv.Atoi(string(data(2)))
-				if err != nil {
-					return []byte("")
-				}
-
-				if bytes.Equal(data(1), []byte("!_script")) {
-					objScripts = append(objScripts, fileData.script[i])
-					return append(append([]byte("<"), data(1)...), append([]byte(" " + strconv.Itoa(len(objScripts)-1)), append(data(3), []byte(">")...)...)...)
-				}
-
-				argList = append(argList, fileData.args[i])
-				return append(append([]byte("<"), data(1)...), append([]byte(" " + strconv.Itoa(len(argList)-1)), append(data(3), []byte(">")...)...)...)
-			})
-
-			comp = regRepFunc(comp, `(?si)({{{?)\s*body\s*(}}}?)`, func(d func(int) []byte) []byte {
-				if bytes.Equal(d(1), []byte("{{")) || bytes.Equal(d(2), []byte("}}")) {
-					return escapeHTML(data(4))
-				}
-				return data(4)
-			})
-
-			return comp
-		})
-
-		html = regRepFunc(html, `(?s)<([A-Z][\w_\-\.$!:]+):([0-9]+)(\s+[0-9]+|)/>`, func(data func(int) []byte) []byte {
-			name := strings.ToLower(string(data(1)))
-			fileData, err := getFile(name, true, parents)
-			if err != nil {
-				return data(0)
+				})
+				_ = comp
 			}
-
-			var args map[string][]byte = nil
-			if len(data(3)) > 0 {
-				i, err := strconv.Atoi(string(bytes.Trim(data(3), " ")))
-				if err != nil {
-					return data(0)
-				}
-				args = argList[i]
-			}
-
-			//todo: fill component vars with custom args (copy from above replace function)
-			_ = args
-
-			comp := regRepFunc(fileData.html, `%!([0-9]+)!%`, func(data func(int) []byte) []byte {
-				i, err := strconv.Atoi(string(data(1)))
-				if err != nil {
-					return []byte("")
-				}
-
-				stringList = append(stringList, fileData.str[i])
-
-				return []byte("%!" + strconv.Itoa(len(stringList)-1) + "!%")
-			})
-
-			comp = regRepFunc(comp, `(?s)<(!_script|[A-Z_][\w_\-\.$!:]+:[0-9]+)\s+([0-9]+)(/?)>`, func(data func(int) []byte) []byte {
-				i, err := strconv.Atoi(string(data(2)))
-				if err != nil {
-					return []byte("")
-				}
-
-				if bytes.Equal(data(1), []byte("!_script")) {
-					objScripts = append(objScripts, fileData.script[i])
-					return append(append([]byte("<"), data(1)...), append([]byte(" " + strconv.Itoa(len(objScripts)-1)), append(data(3), []byte(">")...)...)...)
-				}
-
-				argList = append(argList, fileData.args[i])
-				return append(append([]byte("<"), data(1)...), append([]byte(" " + strconv.Itoa(len(argList)-1)), append(data(3), []byte(">")...)...)...)
-			})
-
-			return comp
+			return data(0)
 		})
 	}else{
-		go regRepFunc(html, `(?s)<([A-Z][\w_\-\.$!:]+):[0-9]+(\s+[0-9]+|)/?>`, func(data func(int) []byte) []byte {
+		go regRepFunc(html, `(?s)</?([A-Z][\w_\-\.$!:]+):[0-9]+(\s+[0-9]+|)/?>`, func(data func(int) []byte) []byte {
 			name := strings.ToLower(string(data(1)))
 			getFile(name, true, parents)
 			return []byte("")
@@ -904,8 +903,8 @@ func regRepFunc(str []byte, re string, rep func(func(int) []byte) []byte, blank 
 	if val, ok := regCache[re]; ok {
 		reg = val
 	} else {
-		// reg = pcre.MustCompileJIT(re, pcre.UTF8, pcre.CONFIG_JIT)
-		reg = pcre.MustCompile(re, pcre.UTF8)
+		reg = pcre.MustCompileJIT(re, pcre.UTF8, pcre.CONFIG_JIT)
+		// reg = pcre.MustCompile(re, pcre.UTF8)
 		regCache[re] = reg
 	}
 
