@@ -244,7 +244,7 @@ func runCompile(input string) {
 
 	// fmt.Println(file)
 
-	compile(file, opts)
+	compile(file, opts, true)
 
 	//temp
 	// fmt.Println(inputData[0] + ":error")
@@ -861,11 +861,11 @@ func preCompile(html []byte, parents []string) (fileData, error) {
 	return fileData{html: html, args: argList, str: stringList, script: objScripts}, nil
 }
 
-func compile(file fileData, opts map[string]interface{}) []byte {
+func compile(file fileData, opts map[string]interface{}, includeTemplate bool) []byte {
 
 	//todo: compile file to html
 
-	fmt.Println(string(file.html))
+	// fmt.Println(string(file.html))
 
 	return []byte("")
 }
