@@ -214,7 +214,7 @@ func getOpt(opts map[string]interface{}, arg string, stringOutput bool) interfac
 func runPreCompile(input string) {
 	inputData := strings.SplitN(input, ":", 2)
 
-	_, err := getFile(inputData[1], false, nil)
+	_, err := getFile(inputData[1], []string{"component", "import"})
 	if err != nil {
 		fmt.Println(inputData[0] + ":error")
 		return
@@ -234,7 +234,7 @@ func runCompile(input string) {
 		opts = map[string]interface{}{}
 	}
 
-	file, err := getFile(inputData[2], false, nil)
+	file, err := getFile(inputData[2], []string{"component", "import"})
 	if err != nil {
 		fmt.Println(inputData[0] + ":error")
 		return
@@ -244,7 +244,7 @@ func runCompile(input string) {
 
 	// fmt.Println(file)
 
-	compile(file, opts, true)
+	compile(file, opts, true, []string{"component", "import"})
 
 	//temp
 	// fmt.Println(inputData[0] + ":error")
@@ -300,7 +300,11 @@ func runCompile(input string) {
 	fmt.Println(inputData[0] + ":" + string(json)) */
 }
 
-func getFile(filePath string, component bool, parents []string) (fileData, error) {
+func getFile(filePath string, allow []string) (fileData, error) {
+
+	//todo: may make components defined by capital first letters instead
+	//todo: may make seperate function for importing non component files
+	//todo: may add option to restrict specific functions by permissions (with _allow="" key on component)
 
 	// init options
 	root := OPTS["root"]
@@ -323,86 +327,18 @@ func getFile(filePath string, component bool, parents []string) (fileData, error
 	var err error
 
 	// try files
-
-	// component current parent
-	if component && parents != nil {
-		par := filepath.Join(parents[len(parents)-1], "..")
-		if strings.HasSuffix(parents[len(parents)-1], "/"+compRoot) {
-			path, err = joinPath(par, filePath+"."+ext)
-		} else {
-			path, err = joinPath(par, compRoot, filePath+"."+ext)
-		}
-		if err == nil {
-			if contains(parents, path) {
-				return fileData{}, errors.New("infinite loop detected")
-			}
-
-			html, err = ioutil.ReadFile(path)
-			if err != nil {
-				html = nil
-			}
-		}
-	}
-
-	// component root parent
-	if component && parents != nil {
-		par := filepath.Join(parents[0], "..")
-		if strings.HasPrefix(parents[len(parents)-1], par) {
-			path, err = joinPath(par, compRoot, filePath+"."+ext)
-			if err == nil {
-				if contains(parents, path) {
-					return fileData{}, errors.New("infinite loop detected")
-				}
-
-				html, err = ioutil.ReadFile(path)
-				if err != nil {
-					html = nil
-				}
-			}
-		}
-	}
-
-	// component root
-	if html == nil && component {
+	if contains(allow, "component") {
 		path, err = joinPath(root, compRoot, filePath+"."+ext)
 		if err == nil {
-			if parents != nil && contains(parents, path) {
-				return fileData{}, errors.New("infinite loop detected")
-			}
-
 			html, err = ioutil.ReadFile(path)
 			if err != nil {
 				html = nil
 			}
 		}
-	}
 
-	// current parent
-	if html == nil && parents != nil {
-		par := filepath.Join(parents[len(parents)-1], "..")
-		path, err = joinPath(par, filePath+"."+ext)
-		if err == nil {
-			if contains(parents, path) {
-				return fileData{}, errors.New("infinite loop detected")
-			}
-
-			html, err = ioutil.ReadFile(path)
-			if err != nil {
-				html = nil
-			}
-		}
-	}
-
-	// root parent
-	if html == nil && parents != nil {
-		par := filepath.Join(parents[0], "..")
-		if strings.HasPrefix(parents[len(parents)-1], par) {
-			path, err = joinPath(par, filePath+"."+ext)
+		if html == nil {
+			path, err = joinPath(root, filePath+"."+ext)
 			if err == nil {
-				if contains(parents, path) {
-					return fileData{}, errors.New("infinite loop detected")
-				}
-
 				html, err = ioutil.ReadFile(path)
 				if err != nil {
 					html = nil
@@ -411,14 +347,9 @@ func getFile(filePath string, component bool, parents []string) (fileData, error
 		}
 	}
 
-	// root file
-	if html == nil {
+	if html == nil && contains(allow, "import") {
 		path, err = joinPath(root, filePath+"."+ext)
 		if err == nil {
-			if parents != nil && contains(parents, path) {
-				return fileData{}, errors.New("infinite loop detected")
-			}
-
 			html, err = ioutil.ReadFile(path)
 			if err != nil {
 				html = nil
@@ -430,15 +361,8 @@ func getFile(filePath string, component bool, parents []string) (fileData, error
 		return fileData{}, err
 	}
 
-	// add parent
-	if parents != nil {
-		parents = append(parents, path)
-	} else {
-		parents = []string{path}
-	}
-
 	// pre compile
-	file, err := preCompile(html, parents)
+	file, err := preCompile(html, []string{"component", "import"})
 	if err != nil {
 		return fileData{}, err
 	}
@@ -448,7 +372,7 @@ func getFile(filePath string, component bool, parents []string) (fileData, error
 	return file, nil
 }
 
-func preCompile(html []byte, parents []string) (fileData, error) {
+func preCompile(html []byte, allow []string) (fileData, error) {
 	html = append([]byte("\n"), html...)
 	html = append(html, []byte("\n")...)
 
@@ -713,12 +637,8 @@ func preCompile(html []byte, parents []string) (fileData, error) {
 	// preload components
 	if OPTS["cache_component"] == "embed" {
 		html = regex.RepFunc(html, `(?s)<([A-Z][\w_\-\.$!:]+):([0-9]+)(\s+[0-9]+|)>(.*?)</\1:\2>`, func(data func(int) []byte) []byte {
-			name := strings.ToLower(string(data(1)))
-			fileData, err := getFile(name, true, parents)
-			if err != nil {
-				return data(0)
-			}
-
+			name := string(data(1))
+			
 			var args map[string][]byte = nil
 			if len(data(3)) > 0 {
 				i, err := strconv.Atoi(string(bytes.Trim(data(3), " ")))
@@ -726,6 +646,21 @@ func preCompile(html []byte, parents []string) (fileData, error) {
 					return data(0)
 				}
 				args = argList[i]
+			}
+
+			perm := []string{"component", "import"}
+			if args != nil && len(args["_allow"]) > 0 {
+				perm = []string{}
+				for _, v := range strings.Split(string(args["_allow"]), " ") {
+					if contains(allow, v) {
+						perm = append(perm, v)
+					}
+				}
+			}
+			
+			fileData, err := getFile(name, perm)
+			if err != nil {
+				return data(0)
 			}
 
 			comp := regex.RepFunc(fileData.html, `%!([0-9]+)!%`, func(data func(int) []byte) []byte {
@@ -786,11 +721,7 @@ func preCompile(html []byte, parents []string) (fileData, error) {
 		})
 
 		html = regex.RepFunc(html, `(?s)<([A-Z][\w_\-\.$!:]+):([0-9]+)(\s+[0-9]+|)/>`, func(data func(int) []byte) []byte {
-			name := strings.ToLower(string(data(1)))
-			fileData, err := getFile(name, true, parents)
-			if err != nil {
-				return data(0)
-			}
+			name := string(data(1))
 
 			var args map[string][]byte = nil
 			if len(data(3)) > 0 {
@@ -799,6 +730,21 @@ func preCompile(html []byte, parents []string) (fileData, error) {
 					return data(0)
 				}
 				args = argList[i]
+			}
+
+			perm := []string{"component", "import"}
+			if args != nil && len(args["_allow"]) > 0 {
+				perm = []string{}
+				for _, v := range strings.Split(string(args["_allow"]), " ") {
+					if contains(allow, v) {
+						perm = append(perm, v)
+					}
+				}
+			}
+
+			fileData, err := getFile(name, perm)
+			if err != nil {
+				return data(0)
 			}
 
 			comp := regex.RepFunc(fileData.html, `%!([0-9]+)!%`, func(data func(int) []byte) []byte {
@@ -852,8 +798,28 @@ func preCompile(html []byte, parents []string) (fileData, error) {
 		})
 	} else if OPTS["cache_component"] != "none" {
 		go regex.RepFunc(html, `(?s)<([A-Z][\w_\-\.$!:]+):[0-9]+(\s+[0-9]+|)/?>`, func(data func(int) []byte) []byte {
-			name := strings.ToLower(string(data(1)))
-			getFile(name, true, parents)
+			name := string(data(1))
+
+			var args map[string][]byte = nil
+			if len(data(2)) > 0 {
+				i, err := strconv.Atoi(string(bytes.Trim(data(2), " ")))
+				if err != nil {
+					return data(0)
+				}
+				args = argList[i]
+			}
+
+			perm := []string{"component", "import"}
+			if args != nil && len(args["_allow"]) > 0 {
+				perm = []string{}
+				for _, v := range strings.Split(string(args["_allow"]), " ") {
+					if contains(allow, v) {
+						perm = append(perm, v)
+					}
+				}
+			}
+
+			getFile(name, perm)
 			return []byte("")
 		}, true)
 	}
@@ -861,7 +827,7 @@ func preCompile(html []byte, parents []string) (fileData, error) {
 	return fileData{html: html, args: argList, str: stringList, script: objScripts}, nil
 }
 
-func compile(file fileData, opts map[string]interface{}, includeTemplate bool) []byte {
+func compile(file fileData, opts map[string]interface{}, includeTemplate bool, allow []string) []byte {
 
 	//todo: compile file to html
 
