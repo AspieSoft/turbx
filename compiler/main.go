@@ -188,7 +188,7 @@ func getOpt(opts map[string]interface{}, arg string, stringOutput bool) interfac
 	argOpts := strings.Split(arg, "|")
 	for _, arg := range argOpts {
 		res = opts
-		args := regex.Split(regex.RepStr([]byte(arg), `\s+`, []byte("")), `\.|(\[.*?\])`)
+		args := regex.Split(regex.RepStr([]byte(arg), `\s+`, []byte{}), `\.|(\[.*?\])`)
 		for _, a := range args {
 			if regex.Match(a, `^%![0-9]+!%$`) {
 				return string(a)
@@ -490,7 +490,7 @@ func preCompile(html []byte) (fileData, error) {
 	argList := []map[string][]byte{}
 	tagIndex := 0
 	html = regex.RepFunc(html, `(?s)<(/|)(`+regHtmlTag+`+)(\s+.*?|)\s*(/|)>`, func(data func(int) []byte) []byte {
-		argStr := regex.RepStr(regex.RepStr(data(3), `^\s+`, []byte("")), `\s+`, []byte(" "))
+		argStr := regex.RepStr(regex.RepStr(data(3), `^\s+`, []byte{}), `\s+`, []byte(" "))
 
 		newArgs := map[string][]byte{}
 
@@ -685,8 +685,6 @@ func preCompile(html []byte) (fileData, error) {
 
 func compile(file fileData, opts map[string]interface{}, includeTemplate bool, allowImport bool) []byte {
 
-	//todo: compile file to html
-
 	hasLayout := false
 	layoutReady := false
 	var layout []byte = nil
@@ -847,9 +845,60 @@ func compile(file fileData, opts map[string]interface{}, includeTemplate bool, a
 		return []byte{}
 	})
 
-	//todo: compile vars in html args
+	file.html = regex.RepFunc(file.html, `<(`+regHtmlTag+`+)\s+(.*?)\s*(/?)>`, func(data func(int) []byte) []byte {
+		args := bytes.Split(data(2), []byte(" "))
 
-	// if includeTemplate {fmt.Println(string(file.html))}
+		hasChanged := false
+		for i, arg := range args {
+			if regex.Match(arg, `(\{\{\{?)(.*?)(\}\}\}?)`) {
+				hasChanged = true
+
+				var key []byte
+				var argV []byte
+				key = regex.RepFunc(arg, `(\{\{\{?)(.*?)(\}\}\}?)`, func(d func(int) []byte) []byte {
+					esc := true
+					if len(d(1)) == 3 && len(d(3)) == 3 {
+						esc = false
+					}
+
+					val := regex.RepStr(d(2), `(?s)["'\']`, []byte{})
+
+					if bytes.ContainsRune(val, '=') {
+						v := bytes.SplitN(val, []byte("="), 2)
+						argV = []byte(getOpt(opts, string(v[1]), true).(string))
+						if esc {
+							argV = escapeHTMLArgs(argV)
+						}
+
+						return append(v[0], '=')
+					}
+
+					argV = []byte(getOpt(opts, string(val), true).(string))
+					if esc {
+						argV = escapeHTMLArgs(argV)
+					}
+
+					return []byte{}
+				})
+
+				if len(argV) == 0 {
+					args[i] = []byte{}
+				}else{
+					if len(key) == 0 {
+						args[i] = argV
+					} else {
+						args[i] = append(key, argV...)
+					}
+				}
+			}
+		}
+
+		if hasChanged {
+			return regex.JoinBytes('<', data(1), ' ', bytes.Join(args, []byte(" ")), data(3), '>')
+		}
+
+		return data(0)
+	})
 
 	if hasLayout {
 		for !layoutReady {
@@ -857,6 +906,8 @@ func compile(file fileData, opts map[string]interface{}, includeTemplate bool, a
 		}
 		return regex.RepStr(layout, `<BODY/>`, file.html)
 	}
+
+	// if includeTemplate {fmt.Println(string(file.html))}
 
 	//todo: handle other vars
 	//todo: put back scripts
