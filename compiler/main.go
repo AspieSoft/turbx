@@ -12,6 +12,7 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/AspieSoft/go-regex"
 )
@@ -38,10 +39,26 @@ var varType map[string]reflect.Type
 
 var regCache map[string]regex.Regexp = map[string]regex.Regexp{}
 
+var regHtmlTag string = `(?:[\w_\-.$!:][\\/][\w_\-.$!:]|[\w_\-.$!:])`
+
 var singleTagList map[string]bool = map[string]bool{
 	"br": true,
 	"hr": true,
+	"meta": true,
+	"link": true,
+	"input": true,
 }
+
+
+var tagFuncs map[string]interface{} = map[string]interface{} {
+	"if": func(args map[string][]byte, cont []byte, opts map[string]interface{}, level int, file fileData) interface{} {
+		return nil
+	},
+	"each": func(args map[string][]byte, cont []byte, opts map[string]interface{}, level int, file fileData) interface{} {
+		return nil
+	},
+}
+
 
 var OPTS map[string]string = map[string]string{}
 
@@ -111,10 +128,32 @@ func containsMap(search map[string][]byte, value []byte) bool {
 	return false
 }
 
+func toString(res interface{}) string {
+	switch reflect.TypeOf(res) {
+		case varType["string"]:
+			return res.(string)
+		case varType["byteArray"]:
+			return string(res.([]byte))
+		case varType["byte"]:
+			return string(res.(byte))
+		case varType["int32"]:
+			return string(res.(int32))
+		case varType["int"]:
+			return strconv.Itoa(res.(int))
+		case varType["float64"]:
+			return strconv.FormatFloat(res.(float64), 'f', -1, 64)
+		case varType["float32"]:
+			return strconv.FormatFloat(float64(res.(float32)), 'f', -1, 32)
+		default:
+			return ""
+	}
+}
+
 func initVarTypes() {
 	varType = map[string]reflect.Type{}
 
 	varType["array"] = reflect.TypeOf([]interface{}{})
+	varType["arrayByte"] = reflect.TypeOf([][]byte{})
 	varType["map"] = reflect.TypeOf(map[string]interface{}{})
 
 	varType["int"] = reflect.TypeOf(int(0))
@@ -127,6 +166,9 @@ func initVarTypes() {
 
 	// int 32 returned instead of byte
 	varType["int32"] = reflect.TypeOf(' ')
+
+	varType["func"] = reflect.TypeOf(func(){})
+	varType["tagFunc"] = reflect.TypeOf(func(map[string][]byte, []byte, map[string]interface{}, int, fileData) interface{} {return nil})
 }
 
 func readInput(input chan<- string) {
@@ -214,7 +256,7 @@ func getOpt(opts map[string]interface{}, arg string, stringOutput bool) interfac
 func runPreCompile(input string) {
 	inputData := strings.SplitN(input, ":", 2)
 
-	_, err := getFile(inputData[1], []string{"component", "import"})
+	_, err := getFile(inputData[1], false, true)
 	if err != nil {
 		fmt.Println(inputData[0] + ":error")
 		return
@@ -234,7 +276,7 @@ func runCompile(input string) {
 		opts = map[string]interface{}{}
 	}
 
-	file, err := getFile(inputData[2], []string{"component", "import"})
+	file, err := getFile(inputData[2], false, true)
 	if err != nil {
 		fmt.Println(inputData[0] + ":error")
 		return
@@ -244,7 +286,7 @@ func runCompile(input string) {
 
 	// fmt.Println(file)
 
-	compile(file, opts, true, []string{"component", "import"})
+	compile(file, opts, true, true)
 
 	//temp
 	// fmt.Println(inputData[0] + ":error")
@@ -300,11 +342,7 @@ func runCompile(input string) {
 	fmt.Println(inputData[0] + ":" + string(json)) */
 }
 
-func getFile(filePath string, allow []string) (fileData, error) {
-
-	//todo: may make components defined by capital first letters instead
-	//todo: may make seperate function for importing non component files
-	//todo: may add option to restrict specific functions by permissions (with _allow="" key on component)
+func getFile(filePath string, component bool, allowImport bool) (fileData, error) {
 
 	// init options
 	root := OPTS["root"]
@@ -327,7 +365,7 @@ func getFile(filePath string, allow []string) (fileData, error) {
 	var err error
 
 	// try files
-	if contains(allow, "component") {
+	if component {
 		path, err = joinPath(root, compRoot, filePath+"."+ext)
 		if err == nil {
 			html, err = ioutil.ReadFile(path)
@@ -347,7 +385,7 @@ func getFile(filePath string, allow []string) (fileData, error) {
 		}
 	}
 
-	if html == nil && contains(allow, "import") {
+	if html == nil && allowImport {
 		path, err = joinPath(root, filePath+"."+ext)
 		if err == nil {
 			html, err = ioutil.ReadFile(path)
@@ -362,7 +400,7 @@ func getFile(filePath string, allow []string) (fileData, error) {
 	}
 
 	// pre compile
-	file, err := preCompile(html, []string{"component", "import"})
+	file, err := preCompile(html)
 	if err != nil {
 		return fileData{}, err
 	}
@@ -372,7 +410,7 @@ func getFile(filePath string, allow []string) (fileData, error) {
 	return file, nil
 }
 
-func preCompile(html []byte, allow []string) (fileData, error) {
+func preCompile(html []byte) (fileData, error) {
 	html = append([]byte("\n"), html...)
 	html = append(html, []byte("\n")...)
 
@@ -384,7 +422,7 @@ func preCompile(html []byte, allow []string) (fileData, error) {
 	// extract strings and comments
 	html = regex.RepFunc(html, `(?s)(<!--.*?-->|/\*.*?\*/|\r?\n//.*?\r?\n)|(["'`+"`"+`])((?:\\[\\"'`+"`"+`]|.)*?)\2`, func(data func(int) []byte) []byte {
 		if len(data(1)) != 0 {
-			return []byte("")
+			return []byte{}
 		}
 		objStrings = append(objStrings, stringObj{s: decodeEncoding(data(3)), q: data(2)[0]})
 		return regex.JoinBytes([]byte("%!s"), len(objStrings)-1, []byte("!%"))
@@ -394,7 +432,7 @@ func preCompile(html []byte, allow []string) (fileData, error) {
 		return decodeEncoding(regex.RepFunc(html, `%!s([0-9]+)!%`, func(data func(int) []byte) []byte {
 			i, err := strconv.Atoi(string(data(1)))
 			if err != nil || len(objStrings) <= i {
-				return []byte("")
+				return []byte{}
 			}
 			str := objStrings[i]
 
@@ -451,7 +489,7 @@ func preCompile(html []byte, allow []string) (fileData, error) {
 	// move html args to list
 	argList := []map[string][]byte{}
 	tagIndex := 0
-	html = regex.RepFunc(html, `(?s)<(/|)([\w_\-\.$!:]+)(\s+.*?|)\s*(/|)>`, func(data func(int) []byte) []byte {
+	html = regex.RepFunc(html, `(?s)<(/|)(`+regHtmlTag+`+)(\s+.*?|)\s*(/|)>`, func(data func(int) []byte) []byte {
 		argStr := regex.RepStr(regex.RepStr(data(3), `^\s+`, []byte("")), `\s+`, []byte(" "))
 
 		newArgs := map[string][]byte{}
@@ -478,11 +516,11 @@ func preCompile(html []byte, allow []string) (fileData, error) {
 				}
 			} else {
 				for _, v := range args {
-					if regex.Match(v, `^\{\{\{?.*?\}\}\}?$`) {
+					if regex.Match(v, `^(\{\{\{?)(.*?)(\}\}\}?)$`) {
 						if bytes.Contains(v, []byte("=")) {
 							esc := true
-							v = regex.RepFunc(v, `(\{\{\{?)(.*?)(\}\}\}?)`, func(data func(int) []byte) []byte {
-								if bytes.Equal(data(1), []byte("{{{")) || bytes.Equal(data(3), []byte("}}}")) {
+							v = regex.RepFunc(v, `^(\{\{\{?)(.*?)(\}\}\}?)$`, func(data func(int) []byte) []byte {
+								if len(data(1)) == 3 && len(data(3)) == 3 {
 									esc = false
 								}
 								return data(2)
@@ -590,7 +628,7 @@ func preCompile(html []byte, allow []string) (fileData, error) {
 		} else if len(data(1)) != 0 {
 			// closing tag
 			if newArgsBasic != nil {
-				return regex.JoinBytes('<', data(2), newArgsBasic, []byte("/>"))
+				return regex.JoinBytes("</", data(2), newArgsBasic, '>')
 			}
 
 			if tagIndex > 0 {
@@ -616,7 +654,7 @@ func preCompile(html []byte, allow []string) (fileData, error) {
 	// move var strings to seperate list
 	html = regex.RepFunc(html, `(?s)(\{\{\{?)(.*?)(\}\}\}?)`, func(data func(int) []byte) []byte {
 		esc := true
-		if bytes.Equal(data(1), []byte("{{{")) || bytes.Equal(data(3), []byte("}}}")) {
+		if len(data(1)) == 3 && len(data(3)) == 3 {
 			esc = false
 		}
 
@@ -635,205 +673,328 @@ func preCompile(html []byte, allow []string) (fileData, error) {
 	html = decodeEncoding(html)
 
 	// preload components
-	if OPTS["cache_component"] == "embed" {
-		html = regex.RepFunc(html, `(?s)<([A-Z][\w_\-\.$!:]+):([0-9]+)(\s+[0-9]+|)>(.*?)</\1:\2>`, func(data func(int) []byte) []byte {
-			name := string(data(1))
-			
-			var args map[string][]byte = nil
-			if len(data(3)) > 0 {
-				i, err := strconv.Atoi(string(bytes.Trim(data(3), " ")))
-				if err != nil {
-					return data(0)
-				}
-				args = argList[i]
-			}
+	go regex.RepFunc(html, `(?s)<([A-Z]`+regHtmlTag+`+):[0-9]+(\s+[0-9]+|)/?>`, func(data func(int) []byte) []byte {
+		name := string(data(1))
 
-			perm := []string{"component", "import"}
-			if args != nil && len(args["_allow"]) > 0 {
-				perm = []string{}
-				for _, v := range strings.Split(string(args["_allow"]), " ") {
-					if contains(allow, v) {
-						perm = append(perm, v)
-					}
-				}
-			}
-			
-			fileData, err := getFile(name, perm)
-			if err != nil {
-				return data(0)
-			}
-
-			comp := regex.RepFunc(fileData.html, `%!([0-9]+)!%`, func(data func(int) []byte) []byte {
-				i, err := strconv.Atoi(string(data(1)))
-				if err != nil {
-					return []byte("")
-				}
-
-				stringList = append(stringList, fileData.str[i])
-
-				return regex.JoinBytes([]byte("%!"), len(stringList)-1, []byte("!%"))
-			})
-
-			comp = regex.RepFunc(comp, `(?s)<(!_script|[A-Z_][\w_\-\.$!:]+:[0-9]+)\s+([0-9]+)(/?)>`, func(data func(int) []byte) []byte {
-				i, err := strconv.Atoi(string(data(2)))
-				if err != nil {
-					return []byte("")
-				}
-
-				if bytes.Equal(data(1), []byte("!_script")) {
-					objScripts = append(objScripts, fileData.script[i])
-					return regex.JoinBytes('<', data(1), ' ', len(objScripts)-1, data(3), '>')
-				}
-
-				argList = append(argList, fileData.args[i])
-				return regex.JoinBytes('<', data(1), ' ', len(argList)-1, data(3), '>')
-			})
-
-			comp = regex.RepFunc(comp, `(?s)({{{?)(.*?)(}}}?)`, func(data func(int) []byte) []byte {
-				param := regex.RepFunc(data(2), `\b([\w_\-\$!:]+)\b`, func(d func(int) []byte) []byte {
-					if v, ok := args[string(d(1))]; ok {
-						if regex.Match(v, `^-?[0-9]+(\.[0-9]+|)$`) {
-							return regex.JoinBytes('\'', v, '\'')
-						}
-						return v
-					}
-					return d(0)
-				})
-				if regex.Match(param, `(?s)\s*(["'`+"`"+`])((?:\\[\\"'`+"`"+`]|.)*?)\1\s*`) {
-					return regex.RepFunc(param, `(?s)\s*(["'`+"`"+`])((?:\\[\\"'`+"`"+`]|.)*?)\1\s*`, func(d func(int) []byte) []byte {
-						return d(2)
-					})
-				}
-				if bytes.Equal(data(1), []byte("{{")) || bytes.Equal(data(3), []byte("}}")) {
-					return regex.JoinBytes([]byte("{{"), param, []byte("}}"))
-				}
-				return regex.JoinBytes([]byte("{{{"), param, []byte("}}}"))
-			})
-
-			comp = regex.RepFunc(comp, `(?si)({{{?)\s*body\s*(}}}?)`, func(d func(int) []byte) []byte {
-				if bytes.Equal(d(1), []byte("{{")) || bytes.Equal(d(2), []byte("}}")) {
-					return escapeHTML(data(4))
-				}
-				return data(4)
-			})
-
-			return comp
-		})
-
-		html = regex.RepFunc(html, `(?s)<([A-Z][\w_\-\.$!:]+):([0-9]+)(\s+[0-9]+|)/>`, func(data func(int) []byte) []byte {
-			name := string(data(1))
-
-			var args map[string][]byte = nil
-			if len(data(3)) > 0 {
-				i, err := strconv.Atoi(string(bytes.Trim(data(3), " ")))
-				if err != nil {
-					return data(0)
-				}
-				args = argList[i]
-			}
-
-			perm := []string{"component", "import"}
-			if args != nil && len(args["_allow"]) > 0 {
-				perm = []string{}
-				for _, v := range strings.Split(string(args["_allow"]), " ") {
-					if contains(allow, v) {
-						perm = append(perm, v)
-					}
-				}
-			}
-
-			fileData, err := getFile(name, perm)
-			if err != nil {
-				return data(0)
-			}
-
-			comp := regex.RepFunc(fileData.html, `%!([0-9]+)!%`, func(data func(int) []byte) []byte {
-				i, err := strconv.Atoi(string(data(1)))
-				if err != nil {
-					return []byte("")
-				}
-
-				stringList = append(stringList, fileData.str[i])
-
-				return regex.JoinBytes([]byte("%!"), len(stringList)-1, []byte("!%"))
-			})
-
-			comp = regex.RepFunc(comp, `(?s)<(!_script|[A-Z_][\w_\-\.$!:]+:[0-9]+)\s+([0-9]+)(/?)>`, func(data func(int) []byte) []byte {
-				i, err := strconv.Atoi(string(data(2)))
-				if err != nil {
-					return []byte("")
-				}
-
-				if bytes.Equal(data(1), []byte("!_script")) {
-					objScripts = append(objScripts, fileData.script[i])
-					return regex.JoinBytes('<', data(1), ' ', len(objScripts)-1, data(3), '>')
-				}
-
-				argList = append(argList, fileData.args[i])
-				return regex.JoinBytes('<', data(1), ' ', len(argList)-1, data(3), '>')
-			})
-
-			comp = regex.RepFunc(comp, `(?s)({{{?)(.*?)(}}}?)`, func(data func(int) []byte) []byte {
-				param := regex.RepFunc(data(2), `\b([\w_\-\$!:]+)\b`, func(d func(int) []byte) []byte {
-					if v, ok := args[string(d(1))]; ok {
-						if regex.Match(v, `^-?[0-9]+(\.[0-9]+|)$`) {
-							return regex.JoinBytes('\'', v, '\'')
-						}
-						return v
-					}
-					return d(0)
-				})
-				if regex.Match(param, `(?s)\s*(["'`+"`"+`])((?:\\[\\"'`+"`"+`]|.)*?)\1\s*`) {
-					return regex.RepFunc(param, `(?s)\s*(["'`+"`"+`])((?:\\[\\"'`+"`"+`]|.)*?)\1\s*`, func(d func(int) []byte) []byte {
-						return d(2)
-					})
-				}
-				if bytes.Equal(data(1), []byte("{{")) || bytes.Equal(data(3), []byte("}}")) {
-					return regex.JoinBytes([]byte("{{"), param, []byte("}}"))
-				}
-				return regex.JoinBytes([]byte("{{{"), param, []byte("}}}"))
-			})
-
-			return comp
-		})
-	} else if OPTS["cache_component"] != "none" {
-		go regex.RepFunc(html, `(?s)<([A-Z][\w_\-\.$!:]+):[0-9]+(\s+[0-9]+|)/?>`, func(data func(int) []byte) []byte {
-			name := string(data(1))
-
-			var args map[string][]byte = nil
-			if len(data(2)) > 0 {
-				i, err := strconv.Atoi(string(bytes.Trim(data(2), " ")))
-				if err != nil {
-					return data(0)
-				}
-				args = argList[i]
-			}
-
-			perm := []string{"component", "import"}
-			if args != nil && len(args["_allow"]) > 0 {
-				perm = []string{}
-				for _, v := range strings.Split(string(args["_allow"]), " ") {
-					if contains(allow, v) {
-						perm = append(perm, v)
-					}
-				}
-			}
-
-			getFile(name, perm)
-			return []byte("")
-		}, true)
-	}
+		getFile(name, true, true)
+		return []byte{}
+	}, true)
 
 	return fileData{html: html, args: argList, str: stringList, script: objScripts}, nil
 }
 
-func compile(file fileData, opts map[string]interface{}, includeTemplate bool, allow []string) []byte {
+func compile(file fileData, opts map[string]interface{}, includeTemplate bool, allowImport bool) []byte {
 
 	//todo: compile file to html
 
-	// fmt.Println(string(file.html))
+	hasLayout := false
+	layoutReady := false
+	var layout []byte = nil
+	if includeTemplate && (opts["template"] != nil || OPTS["template"] != "") {
+		hasLayout = true
 
-	return []byte("")
+		go (func() {
+			template := "layout"
+			if opts["template"] != nil && reflect.TypeOf(opts["template"]) == varType["string"] {
+				template = opts["template"].(string)
+			} else if OPTS["template"] != "" {
+				template = OPTS["template"]
+			}
+			preLayout, err := getFile(template, false, allowImport)
+			if err != nil {
+				layout = []byte("<BODY/>")
+				return
+			}
+			preLayout.html = regex.RepStr(preLayout.html, `(?i){{{?\s*body\s*}}}?|<body\s*/>`, []byte("<BODY/>"))
+			layout = compile(preLayout, opts, false, allowImport)
+
+			//todo: smartly auto insert body tag if missing
+
+			layoutReady = true
+		})()
+	}
+
+	// handle functions, components, and imports with content
+	file.html = runFuncs(file.html, opts, 0, file, allowImport)
+
+	// handle functions without content
+	file.html = regex.RepFunc(file.html, `(?s)<_([\w_\-.$!]`+regHtmlTag+`*):([0-9]+)(\s+[0-9]+|)/>`, func(data func(int) []byte) []byte {
+
+		// get function
+		var fn func(map[string][]byte, []byte, map[string]interface{}, int, fileData) interface{}
+		funcs := tagFuncs[string(data(1))]
+
+		for reflect.TypeOf(funcs) == varType["string"] {
+			funcs = tagFuncs[funcs.(string)]
+		}
+
+		if reflect.TypeOf(funcs) == varType["tagFunc"] {
+			fn = funcs.(func(map[string][]byte, []byte, map[string]interface{}, int, fileData) interface{})
+			} else {
+			return []byte{}
+		}
+
+		// get args
+		args := map[string][]byte{}
+		argI, err := strconv.Atoi(strings.TrimSpace(string(data(3))))
+		if err == nil {
+			args = file.args[argI]
+		}
+
+		// get level
+		level, err := strconv.Atoi(string(data(2)))
+		if err != nil {
+			level = -1
+		}
+
+		cont := fn(args, []byte{}, opts, level + 1, file)
+
+		if cont == nil {
+			return []byte{}
+		}
+
+		res := []byte{}
+		if reflect.TypeOf(cont) == varType["arrayByte"] {
+			for _, v := range cont.([][]byte) {
+				res = append(res, runFuncs(v, opts, level + 1, file, allowImport)...)
+			}
+		}else{
+			res = runFuncs([]byte(toString(cont)), opts, level + 1, file, allowImport)
+		}
+
+		return res
+	})
+
+	// handle components and imports with content
+	file.html = regex.RepFunc(file.html, `(?s)<([A-Z]|_:)(`+regHtmlTag+`*):[0-9]+(\s+[0-9]+|)/>`, func(data func(int) []byte) []byte {
+
+		// get args
+		args := map[string][]byte{}
+		argI, err := strconv.Atoi(strings.TrimSpace(string(data(3))))
+		if err == nil {
+			args = file.args[argI]
+		}
+
+		canImport := allowImport
+		if args["_noimport"] != nil {
+			canImport = false
+		}
+
+		compOpts := opts
+		for key, val := range args {
+			if regex.Match(val, `^(\{\{\{?)(.*?)(\}\}\}?)$`) {
+				esc := true
+				val = regex.RepFunc(val, `^(\{\{\{?)(.*?)(\}\}\}?)$`, func(d func(int) []byte) []byte {
+					if len(d(1)) == 3 && len(d(3)) == 3 {
+						esc = false
+					}
+					return d(2)
+				})
+
+				if bytes.ContainsRune(val, '=') {
+					arg := strings.SplitN(string(val), "=", 2)
+					v := getOpt(opts, arg[1], false)
+					if esc {
+						vt := reflect.TypeOf(v)
+						if vt == varType["string"] {
+							v = string(escapeHTMLArgs([]byte(v.(string))))
+						}else if vt == varType["byteArray"] {
+							v = escapeHTMLArgs(v.([]byte))
+						}else if vt == varType["byte"] {
+							v = escapeHTMLArgs([]byte{v.(byte)})[0]
+						}
+					}
+					compOpts[arg[0]] = v
+				}else{
+					v := getOpt(opts, string(val), true)
+					if esc {
+						vs := string(escapeHTMLArgs([]byte(v.(string))))
+						if strings.ContainsRune(vs, '=') {
+							arg := strings.SplitN(vs, "=", 2)
+							compOpts[arg[0]] = arg[1]
+						}else{
+							compOpts[vs] = true
+						}
+					}
+				}
+			} else if regex.Match([]byte(key), `^[0-9]+(\.[0-9]+|)$`) {
+				compOpts[string(val)] = true
+			} else {
+				compOpts[key] = val
+			}
+		}
+
+		// if component
+		if len(data(1)) == 1 {
+			fileName := string(append(data(1), data(2)...))
+			comp, err := getFile(fileName, true, canImport)
+			if err != nil {
+				return []byte{}
+			}
+
+			return compile(comp, compOpts, false, canImport)
+		}
+
+		if canImport {
+			comp, err := getFile(string(data(2)), false, canImport)
+			if err != nil {
+				return []byte{}
+			}
+
+			return compile(comp, compOpts, false, canImport)
+		}
+
+		return []byte{}
+	})
+
+	//todo: compile vars in html args
+
+	// if includeTemplate {fmt.Println(string(file.html))}
+
+	if hasLayout {
+		for !layoutReady {
+			time.Sleep(1000)
+		}
+		return regex.RepStr(layout, `<BODY/>`, file.html)
+	}
+
+	//todo: handle other vars
+	//todo: put back scripts
+	//todo: set css and js vars to public opts
+
+	return file.html
+}
+
+func runFuncs(html []byte, opts map[string]interface{}, level int, file fileData, allowImport bool) []byte {
+	levelStr := strconv.Itoa(level)
+
+	// handle functions with content
+	html = regex.RepFunc(html, `(?s)<_([\w_\-.$!]`+regHtmlTag+`*):`+levelStr+`(\s+[0-9]+|)>(.*?)</_\1:`+levelStr+`>`, func(data func(int) []byte) []byte {
+
+		// get function
+		var fn func(map[string][]byte, []byte, map[string]interface{}, int, fileData) interface{}
+		funcs := tagFuncs[string(data(1))]
+
+		for reflect.TypeOf(funcs) == varType["string"] {
+			funcs = tagFuncs[funcs.(string)]
+		}
+
+		if reflect.TypeOf(funcs) == varType["tagFunc"] {
+			fn = funcs.(func(map[string][]byte, []byte, map[string]interface{}, int, fileData) interface{})
+			} else {
+			return []byte{}
+		}
+
+		// get args
+		args := map[string][]byte{}
+		argI, err := strconv.Atoi(strings.TrimSpace(string(data(2))))
+		if err == nil {
+			args = file.args[argI]
+		}
+
+		cont := fn(args, data(3), opts, level + 1, file)
+
+		if cont == nil {
+			return []byte{}
+		}
+
+		res := []byte{}
+		if reflect.TypeOf(cont) == varType["arrayByte"] {
+			for _, v := range cont.([][]byte) {
+				res = append(res, runFuncs(v, opts, level + 1, file, allowImport)...)
+			}
+		}else{
+			res = runFuncs([]byte(toString(cont)), opts, level + 1, file, allowImport)
+		}
+
+		return res
+	})
+
+	// handle components and imports with content
+	html = regex.RepFunc(html, `(?s)<([A-Z]|_:)(`+regHtmlTag+`*):`+levelStr+`(\s+[0-9]+|)>(.*?)</\1\2:`+levelStr+`>`, func(data func(int) []byte) []byte {
+
+		// get args
+		args := map[string][]byte{}
+		argI, err := strconv.Atoi(strings.TrimSpace(string(data(3))))
+		if err == nil {
+			args = file.args[argI]
+		}
+
+		canImport := allowImport
+		if args["_noimport"] != nil {
+			canImport = false
+		}
+
+		compOpts := opts
+		for key, val := range args {
+			if regex.Match(val, `^(\{\{\{?)(.*?)(\}\}\}?)$`) {
+				esc := true
+				val = regex.RepFunc(val, `^(\{\{\{?)(.*?)(\}\}\}?)$`, func(d func(int) []byte) []byte {
+					if len(d(1)) == 3 && len(d(3)) == 3 {
+						esc = false
+					}
+					return d(2)
+				})
+
+				if bytes.ContainsRune(val, '=') {
+					arg := strings.SplitN(string(val), "=", 2)
+					v := getOpt(opts, arg[1], false)
+					if esc {
+						vt := reflect.TypeOf(v)
+						if vt == varType["string"] {
+							v = string(escapeHTMLArgs([]byte(v.(string))))
+						}else if vt == varType["byteArray"] {
+							v = escapeHTMLArgs(v.([]byte))
+						}else if vt == varType["byte"] {
+							v = escapeHTMLArgs([]byte{v.(byte)})[0]
+						}
+					}
+					compOpts[arg[0]] = v
+				}else{
+					v := getOpt(opts, string(val), true)
+					if esc {
+						vs := string(escapeHTMLArgs([]byte(v.(string))))
+						if strings.ContainsRune(vs, '=') {
+							arg := strings.SplitN(vs, "=", 2)
+							compOpts[arg[0]] = arg[1]
+						}else{
+							compOpts[vs] = true
+						}
+					}
+				}
+			} else if regex.Match([]byte(key), `^[0-9]+(\.[0-9]+|)$`) {
+				compOpts[string(val)] = true
+			} else {
+				compOpts[key] = val
+			}
+		}
+
+		compOpts["body"] = data(4)
+
+		// if component
+		if len(data(1)) == 1 {
+			fileName := string(append(data(1), data(2)...))
+			comp, err := getFile(fileName, true, canImport)
+			if err != nil {
+				return []byte{}
+			}
+
+			return compile(comp, compOpts, false, canImport)
+		}
+
+		if canImport {
+			comp, err := getFile(string(data(2)), false, canImport)
+			if err != nil {
+				return []byte{}
+			}
+
+			return compile(comp, compOpts, false, canImport)
+		}
+
+		return []byte{}
+	})
+
+	return html
 }
 
 func escapeHTML(html []byte) []byte {

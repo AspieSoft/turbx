@@ -625,7 +625,7 @@ async function compile(file, opts, includeTemplate = false){
 async function runFunctions(file, opts, level = 0){
   file.html = await asyncReplace(file.html, new RegExp(`<_([\\w_\\-\\.$!:]+):${level}(\\s+[0-9]+|)>(.*?)</_\\1:${level}>`, 'gs'), async (_, tag, arg, content) => {
     let args = file.args[arg.trim()];
-
+    
     tag = tag.toLowerCase().replace(/[-_]/g, '');
 
     const func = tagFunctions[tag];
