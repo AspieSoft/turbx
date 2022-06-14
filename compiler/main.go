@@ -72,8 +72,6 @@ var tagFuncs map[string]interface{} = map[string]interface{} {
 
 var OPTS map[string]string = map[string]string{}
 
-var writeQueue []string = []string{}
-
 func main() {
 
 	initVarTypes()
@@ -287,13 +285,11 @@ func runPreCompile(input string) {
 
 	_, err := getFile(inputData[1], false, true)
 	if err != nil {
-		// fmt.Println(inputData[0] + ":error")
-		// writeQueue = append(writeQueue, inputData[0] + ":error")
+		fmt.Println(inputData[0] + ":error")
 		return
 	}
 
-	// fmt.Println(inputData[0] + ":success")
-	// writeQueue = append(writeQueue, inputData[0] + ":success")
+	fmt.Println(inputData[0] + ":success")
 }
 
 func runCompile(input string) {
@@ -309,8 +305,7 @@ func runCompile(input string) {
 
 	file, err := getFile(inputData[2], false, true)
 	if err != nil {
-		// fmt.Println(inputData[0] + ":error")
-		// writeQueue = append(writeQueue, inputData[0] + ":error")
+		fmt.Println(inputData[0] + ":error")
 		return
 	}
 
@@ -318,14 +313,11 @@ func runCompile(input string) {
 
 	resOut, err := compress(string(out))
 	if err != nil {
-		// fmt.Println(inputData[0] + ":error")
-		// writeQueue = append(writeQueue, inputData[0] + ":error")
+		fmt.Println(inputData[0] + ":error")
 		return
 	}
 
-	// fmt.Println(inputData[0] + ":" + resOut)
-	// writeQueue = append(writeQueue, inputData[0] + ":" + resOut)
-	_ = resOut
+	fmt.Println(inputData[0] + ":" + resOut)
 }
 
 func getFile(filePath string, component bool, allowImport bool) (fileData, error) {
@@ -659,31 +651,58 @@ func preCompile(html []byte) (fileData, error) {
 	html = decodeEncoding(html)
 
 	// preload components
-	go regex.RepFunc(html, `(?s)<([A-Z]`+regHtmlTag+`+):[0-9]+(\s+[0-9]+|)/?>`, func(data func(int) []byte) []byte {
+	/* go regex.RepFunc(html, `(?s)<([A-Z]`+regHtmlTag+`+):[0-9]+(\s+[0-9]+|)/?>`, func(data func(int) []byte) []byte {
 		name := string(data(1))
 
 		getFile(name, true, true)
 		return []byte{}
-	}, true)
+	}, true) */
 
 	return fileData{html: html, args: argList, str: stringList, script: objScripts}, nil
+}
+
+func compileLayout(res *[]byte, opts map[string]interface{}, allowImport bool){
+	layout := []byte("<BODY/>")
+	
+	template := "layout"
+	if opts["template"] != nil && reflect.TypeOf(opts["template"]) == varType["string"] {
+		template = opts["template"].(string)
+	} else if getOPT("template") != "" {
+		template = getOPT("template")
+	}
+
+	preLayout, err := getFile(template, false, allowImport)
+	if err != nil {
+		*res = layout
+		return
+	}
+	preLayout.html = regex.RepStr(preLayout.html, `(?i){{{?\s*body\s*}}}?|<body\s*/>`, []byte("<BODY/>"))
+
+	layout = compile(preLayout, opts, false, allowImport)
+
+	//todo: smartly auto insert body tag if missing
+
+	*res = layout
 }
 
 func compile(file fileData, opts map[string]interface{}, includeTemplate bool, allowImport bool) []byte {
 
 	hasLayout := false
-	layoutReady := false
-	layout := []byte("<BODY/>")
+	// layoutReady := false
+	var layout []byte = nil
 	if includeTemplate && (opts["template"] != nil || getOPT("template") != "") {
 		hasLayout = true
 
-		go (func() {
+		go compileLayout(&layout, opts, allowImport)
+
+		_ = (func() {
 			template := "layout"
 			if opts["template"] != nil && reflect.TypeOf(opts["template"]) == varType["string"] {
 				template = opts["template"].(string)
 			} else if getOPT("template") != "" {
 				template = getOPT("template")
 			}
+
 			preLayout, err := getFile(template, false, allowImport)
 			if err != nil {
 				layout = []byte("<BODY/>")
@@ -695,8 +714,8 @@ func compile(file fileData, opts map[string]interface{}, includeTemplate bool, a
 
 			//todo: smartly auto insert body tag if missing
 
-			layoutReady = true
-		})()
+			// layoutReady = true
+		})
 	}
 
 	// handle functions, components, and imports with content
@@ -890,7 +909,7 @@ func compile(file fileData, opts map[string]interface{}, includeTemplate bool, a
 
 	// merge layout with content
 	if hasLayout {
-		for !layoutReady {
+		for layout == nil {
 			time.Sleep(1000)
 		}
 		file.html = regex.RepStr(layout, `<BODY/>`, file.html)

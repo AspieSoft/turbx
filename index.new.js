@@ -51,26 +51,33 @@ const OPTS = {};
 
 
 const goCompiledResults = {};
-const goCompiler = spawn('go', ['run', 'compiler/main.go']);
-goCompiler.stdout.on('data', async (data) => {
-  data = data.toString().trim();
-
-  if(data.startsWith('debug:')){
-    console.log(data);
-    return;
-  }
-
-  let idToken = undefined;
-  data = data.replace(/^([\w_-]+):/, (_, id) => {
-    idToken = id;
-    return '';
+let goCompiler;
+function initGoCompiler(){
+  goCompiler = spawn('go', ['run', 'compiler/main.go']);
+  goCompiler.stdout.on('data', async (data) => {
+    data = data.toString().trim();
+  
+    if(data.startsWith('debug:')){
+      console.log(data);
+      return;
+    }
+  
+    let idToken = undefined;
+    data = data.replace(/^([\w_-]+):/, (_, id) => {
+      idToken = id;
+      return '';
+    });
+    if(!idToken){
+      return;
+    }
+  
+    goCompiledResults[idToken] = data;
   });
-  if(!idToken){
-    return;
-  }
-
-  goCompiledResults[idToken] = data;
-});
+  goCompiler.stderr.on('end', () => {
+    initGoCompiler();
+  });
+}
+initGoCompiler();
 
 function goCompilerSetOpt(key, value){
   goCompiler.stdin.write('set:' + key.toString().replace(/[^\w_-]/g, '') + '=' + value.toString().replace(/[\r\n\v]/g, '') + '\n');
