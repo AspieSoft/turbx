@@ -61,10 +61,10 @@ app.engine('xhtml', turbx(app, {
   template: 'layout',
   components: 'components',
   timeout: '3s',
-  before: function(_, opts){
+  before: function(opts){
     opts.startTime = new Date().getTime();
   },
-  after: function(_, opts){
+  after: function(opts){
     log('[purple]', 'Compiled', '[yellow]', opts.settings.filename, '[purple]', 'In', '[cyan]', (new Date().getTime()) - opts.startTime, '~ms');
   },
 }));

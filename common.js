@@ -305,7 +305,6 @@ function getOpt(opts, arg, stringOutput = true){
   return '';
 }
 
-
 module.exports = {
   escapeHTML,
   escapeHTMLArgs,
