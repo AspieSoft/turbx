@@ -52,7 +52,21 @@ const OPTS = {};
 
 const goCompiledResults = {};
 let goCompiler;
+let goCompilerLastInit = 0;
+
+const goRecentId = {};
+setInterval(function(){
+  const now = Date.now();
+  const id = Object.keys(goRecentId);
+  for(let i = 0; i < id.length; i++){
+    if(now - goRecentId[id] > 20000){
+      delete goRecentId[id];
+    }
+  }
+}, 20000);
+
 function initGoCompiler(){
+  goCompilerLastInit = Date.now();
   goCompiler = spawn('go', ['run', 'compiler/main.go']);
   goCompiler.stdout.on('data', async (data) => {
     data = data.toString().trim();
@@ -70,7 +84,14 @@ function initGoCompiler(){
     if(!idToken){
       return;
     }
-  
+
+    const now = Date.now();
+    if(now - goRecentId[idToken] < 20000){
+      return;
+    }
+
+    goRecentId[idToken] = now;
+
     goCompiledResults[idToken] = data;
   });
   goCompiler.stderr.on('end', () => {
@@ -87,12 +108,14 @@ async function goCompilerPreCompile(file){
   const token = randomToken(64);
   goCompiler.stdin.write('pre:' + token + ':' + file.toString().replace(/[\r\n\v]/g, '') + '\n');
 
-  let loops = 1000000;
+  const updateSpeed = Number(OPTS.updateSpeed) || 10;
+
+  let loops = (toTimeMillis(OPTS.timeout) || 30000) / updateSpeed;
   while(loops-- > 0){
-    if(!goCompiledResults[token]){
-      await sleep(10);
+    if(goCompiledResults[token]){
+      break;
     }
-    break;
+    await sleep(updateSpeed);
   }
 
   const res = goCompiledResults[token];
@@ -103,21 +126,48 @@ async function goCompilerPreCompile(file){
 async function goCompilerCompile(file, opts){
   const token = randomToken(64);
 
+  let zippedOpts = undefined;
+
   zlib.gzip(JSON.stringify(opts), (err, buffer) => {
     if(err){
       goCompiledResults[token] = 'error';
+      zippedOpts = null;
       return;
     }
 
-    goCompiler.stdin.write(token + ':' + buffer.toString('base64') + ':' + file.toString().replace(/[\r\n\v]/g, '') + '\n');
+    zippedOpts = buffer.toString('base64');
+
+    // goCompiler.stdin.write(token + ':' + buffer.toString('base64') + ':' + file.toString().replace(/[\r\n\v]/g, '') + '\n');
   });
 
-  let loops = 1000000;
+  const updateSpeed = Number(OPTS.updateSpeed) || 10;
+
+  let loops = (toTimeMillis(OPTS.timeout) || 30000) / updateSpeed;
   while(loops-- > 0){
-    if(!goCompiledResults[token]){
-      await sleep(10);
+    if(zippedOpts != undefined){
+      break;
     }
-    break;
+    await sleep(updateSpeed);
+  }
+
+  if(!zippedOpts){
+    return zippedOpts;
+  }
+
+  let reqStarted = Date.now();
+  goCompiler.stdin.write(token + ':' + zippedOpts + ':' + file.toString().replace(/[\r\n\v]/g, '') + '\n');
+
+  while(loops-- > 0){
+    if(goCompiledResults[token]){
+      break;
+    }
+
+    if(reqStarted < goCompilerLastInit){
+      reqStarted = Date.now();
+      goCompiler.stdin.write(token + ':' + zippedOpts + ':' + file.toString().replace(/[\r\n\v]/g, '') + '\n');
+    }
+
+    await sleep(updateSpeed);
   }
 
   const res = goCompiledResults[token];
@@ -133,12 +183,11 @@ async function goCompilerCompile(file, opts){
       output = res.toString();
     });
 
-    let loops = 1000000;
     while(loops-- > 0){
-      if(output === undefined){
-        await sleep(10);
+      if(output !== undefined){
+        break;
       }
-      break;
+      await sleep(updateSpeed);
     }
 
     return output;
@@ -224,26 +273,6 @@ function engine(path, opts, cb){
 }
 
 
-
-function isSecureMode(opts){
-  let secure = opts.secure || OPTS.secure;
-  if(typeof secure !== 'object'){
-    return true;
-  }
-
-  let key = Object.keys(secure)[0];
-  if(typeof key !== 'string' || secure[key] !== false){
-    return true;
-  }
-
-  if(crypto.createHash('sha256').update(key).digest('base64') === '7LUl6NM1epycs7tWgXC/FuPl2NDhUL59uFzT+1B9Fgg='){
-    return false;
-  }
-
-  return true;
-}
-
-
 function setOpts(opts){
   let before = opts.before;
   let after = opts.after;
@@ -295,10 +324,13 @@ function setOpts(opts){
     OPTS.opts = {};
   }
 
-  if(opts.secure !== undefined){
-    OPTS.secure = opts.secure;
+  if(['number', 'string'].includes(typeof opts.updateSpeed)){
+    updateSpeed = toTimeMillis(opts.updateSpeed);
+    if(updateSpeed && updateSpeed > 0){
+      OPTS.updateSpeed = updateSpeed;
+    }
   }else{
-    OPTS.secure = true;
+    OPTS.updateSpeed = 10;
   }
 
   for(let key in OPTS){
@@ -324,6 +356,8 @@ function setOpts(opts){
 
 
 function setupExpress(app){
+  return;
+
   app.use('/lazyload/:token/:component', async (req, res, next) => {
     //todo: add lazy loading option
   });
@@ -417,6 +451,7 @@ module.exports = (function(){
     after: undefined,
     static: '/',
     opts: {},
+    updateSpeed: 10,
   }, app){
 
     if(typeof opts === 'function' || typeof app === 'object'){
