@@ -3,8 +3,6 @@
 .github
 node_modules
 test
-*.js
-!*.min.js
 
-compile.go
-compiler
+functions-old
+*.old.js

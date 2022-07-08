@@ -13,6 +13,9 @@
 A Fast and Easy To Use View Engine, Compiled With Regex.
 
 > Notice: This View Engine Is Currently In Beta
+---
+> Notice: Version 0.1 does not yet support if statements and other _functions
+> If you need these features, please use version 0.0 for now
 
 ## Installation
 
