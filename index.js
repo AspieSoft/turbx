@@ -72,7 +72,7 @@ const {
   toTimeMillis,
 } = common;
 
-const {tagFunctions, addTagFunction, runTagFunction} = require('./functions.old');
+// const {tagFunctions, addTagFunction, runTagFunction} = require('./functions.old');
 
 
 const taskQueue = multiTaskQueue(10);
@@ -521,8 +521,8 @@ module.exports = (function(){
 
   exports.function = {
     ...common,
-    add: addTagFunction,
-    run: runTagFunction,
+    // add: addTagFunction,
+    // run: runTagFunction,
   };
 
   return exports;
