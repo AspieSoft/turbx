@@ -2,7 +2,6 @@ const fs = require('fs');
 const {join} = require('path');
 // const crypto = require('crypto');
 const zlib = require('zlib');
-// const memoryCache = require('@aspiesoft/obj-memory-cache');
 const multiTaskQueue = require('@aspiesoft/multi-task-queue');
 const {spawn} = require('child_process');
 
