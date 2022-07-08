@@ -1,6 +1,48 @@
 const crypto = require('crypto');
 const validator = require('validator');
 
+function escapeHTML(str){
+  //todo: escape HTML
+  return str.replace(/[<>&]/g, (e) => {
+    switch (e) {
+      case '<':
+        return '&lt;';
+      case '>':
+        return '&gt;';
+      case '&':
+        return '&amp;';
+      default:
+        return '';
+    }
+  }).replace(/&amp;(amp;)*/g, '&amp;');
+}
+
+function escapeHTMLArgs(str){
+  //todo: escape HTML Args in quotes
+  return str.replace(/([\\"'`])/g, '\\$1');
+  /* return str.replace(/(\\*)(["'`])/g, (_, b, q) => {
+    if(b.length % 2 === 0){
+      return b + '\\' + q;
+    }
+    return b + q;
+  }); */
+}
+
+function compileMD(str){
+  //todo: compile markdown
+  return str;
+}
+
+function compileJS(str){
+  //todo: minify js (and maybe compile typescript or something else)
+  return str;
+}
+
+function compileCSS(str){
+  //todo: compile less (and maybe scss)
+  return str;
+}
+
 const sleep = (waitTimeInMs) => new Promise(resolve => setTimeout(resolve, waitTimeInMs));
 
 function randomToken(size){
@@ -210,7 +252,65 @@ function loadedMiddleware(app, search){
 }
 
 
+function getOpt(opts, arg, stringOutput = true){
+  if(['number', 'boolean'].includes(typeof arg)){
+    arg = arg.toString();
+  }
+
+  if(typeof arg !== 'string' || typeof opts !== 'object'){
+    return '';
+  }
+
+  arg = arg.split('|').map(a => a.trim());
+  for(let i = 0; i < arg.length; i++){
+    let value = arg[i].split(/\.|(\[.*?\])/).filter(s => (typeof s === 'string' && s.trim() !== '')).reduce((obj, key) => {
+      if(typeof obj !== 'object' || obj instanceof RegExp){
+        return obj;
+      }
+
+      if(key.match(/^\[.*?\]$/)){
+
+        // get [var] object input
+        key = key.replace(/^\[(.*)\]$/, '$1');
+        if(key.match(/^(['"`])(.*)\1$/)){
+          key = key.replace(/^(['"`])(.*)\1$/, '$2');
+        }else{
+          key = getOpt(opts, key);
+        }
+      }
+
+      if(key.match(/^(['"`])(.*)\1$/)){
+        return key.replace(/^(['"`])(.*)\1$/, '$2');
+      }
+
+      return obj[key];
+    }, opts);
+
+    if(!stringOutput){
+      if(value === undefined || value === null){
+        if(i === arg.length-1){
+          return value;
+        }
+        continue;
+      }
+      return value;
+    }
+
+    if(value === undefined || value === null || typeof value === 'object'){
+      continue;
+    }
+    return value.toString();
+  }
+
+  return '';
+}
+
 module.exports = {
+  escapeHTML,
+  escapeHTMLArgs,
+  compileMD,
+  compileJS,
+  compileCSS,
   sleep,
   randomToken,
   clean,
@@ -219,4 +319,5 @@ module.exports = {
   toNumber,
   asyncReplace,
   loadedMiddleware,
+  getOpt,
 };

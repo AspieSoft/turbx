@@ -1,6 +1,5 @@
 const fs = require('fs');
 const {join} = require('path');
-// const crypto = require('crypto');
 const zlib = require('zlib');
 const multiTaskQueue = require('@aspiesoft/multi-task-queue');
 const {spawn} = require('child_process');
@@ -71,8 +70,6 @@ const {
   clean,
   toTimeMillis,
 } = common;
-
-// const {tagFunctions, addTagFunction, runTagFunction} = require('./functions.old');
 
 
 const taskQueue = multiTaskQueue(10);
@@ -518,12 +515,6 @@ module.exports = (function(){
 
   exports.renderPages = expressFallbackPages;
   exports.rateLimit = expressRateLimit;
-
-  exports.function = {
-    ...common,
-    // add: addTagFunction,
-    // run: runTagFunction,
-  };
 
   return exports;
 })();
