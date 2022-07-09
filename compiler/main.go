@@ -61,12 +61,231 @@ var singleTagList map[string]bool = map[string]bool{
 
 //todo: add functions to go
 var tagFuncs map[string]interface{} = map[string]interface{} {
-	"if": func(args map[string][]byte, cont []byte, opts map[string]interface{}, level int, file fileData) interface{} {
-		return nil
-	},
+	"if": tagFuncIf,
+
 	"each": func(args map[string][]byte, cont []byte, opts map[string]interface{}, level int, file fileData) interface{} {
 		return nil
 	},
+}
+
+func tagFuncIf(args map[string][]byte, cont []byte, opts map[string]interface{}, level int, file fileData) interface{} {
+	isTrue := false
+	lastArg := []byte{}
+
+	if len(args) == 0 {
+		return cont
+	}
+
+	for i := 0; i < len(args); i++ {
+		arg := args[strconv.Itoa(i)]
+		if bytes.Equal(arg, []byte("&")) {
+			if isTrue {
+				continue
+			}
+			break
+		} else if bytes.Equal(arg, []byte("|")) {
+			if isTrue {
+				break
+			}
+			continue
+		}
+
+		arg1, sign, arg2 := []byte{}, "", []byte{}
+		var arg1Any interface{}
+		var arg2Any interface{}
+		a1, ok1 := args[strconv.Itoa(i+1)]
+		if ok1 && regex.Match(a1, `^[!<>]?=|[<>]$`) {
+			arg1 = arg
+			sign = string(a1)
+			arg2 = args[strconv.Itoa(i+2)]
+			lastArg = arg1
+		} else if ok1 && regex.Match(arg, `^[!<>]?=|[<>]$`) {
+			arg1 = lastArg
+			sign = string(arg)
+			arg2 = a1
+			i++
+		} else if len(args) == 1 {
+			pos := true
+			if bytes.HasPrefix(arg, []byte("!")) {
+				pos = false
+				arg1 = arg[1:]
+			}
+
+			if bytes.Equal(arg, []byte("")) {
+				arg1 = a1
+				i++
+			} else if bytes.Equal(arg, []byte("!")) {
+				arg1 = a1
+				i++
+				pos = true
+			}
+
+			if bytes.HasPrefix(arg1, []byte("!")) {
+				pos = !pos
+				arg1 = arg1[1:]
+			}
+
+			lastArg = arg1
+
+			if regex.Match(arg1, `^["'\'](.*)["'\']$`) {
+				arg1 = regex.RepFunc(arg1, `^["'\'](.*)["'\']$`, func(data func(int) []byte) []byte {
+					return data(1)
+				})
+				if arg1N, err := strconv.Atoi(string(arg1)); err == nil {
+					arg1Any = arg1N
+				} else {
+					arg1Any = arg1
+				}
+			} else if arg1N, err := strconv.Atoi(string(arg1)); err == nil {
+				arg1Any = arg1N
+			} else {
+				arg1Any = getOpt(opts, string(arg1), false)
+			}
+
+			isTrue = IsZeroOfUnderlyingType(arg1Any)
+			if pos {
+				isTrue = !isTrue
+			}
+			
+			continue
+		} else {
+			continue
+		}
+
+		if regex.Match(arg1, `^["'\'](.*)["'\']$`) {
+			arg1 = regex.RepFunc(arg1, `^["'\'](.*)["'\']$`, func(data func(int) []byte) []byte {
+				return data(1)
+			})
+			if arg1N, err := strconv.Atoi(string(arg1)); err == nil {
+				arg1Any = arg1N
+			} else {
+				arg1Any = arg1
+			}
+		} else if arg1N, err := strconv.Atoi(string(arg1)); err == nil {
+			arg1Any = arg1N
+		} else {
+			arg1Any = getOpt(opts, string(arg1), false)
+			if reflect.TypeOf(arg1Any) == varType["string"] {
+				if arg1N, err := strconv.Atoi(string(arg1)); err == nil {
+					arg1Any = arg1N
+				}
+			}
+		}
+
+		if len(arg2) == 0 {
+			arg2Any = nil
+		} else if regex.Match(arg2, `^["'\'](.*)["'\']$`) {
+			arg2 = regex.RepFunc(arg2, `^["'\'](.*)["'\']$`, func(data func(int) []byte) []byte {
+				return data(1)
+			})
+			if arg2N, err := strconv.Atoi(string(arg2)); err == nil {
+				arg2Any = arg2N
+			} else {
+				arg2Any = arg2
+			}
+		} else if arg2N, err := strconv.Atoi(string(arg2)); err == nil {
+			arg2Any = arg2N
+		} else {
+			arg2Any = getOpt(opts, string(arg2), false)
+			if reflect.TypeOf(arg2Any) == varType["string"] {
+				if arg2N, err := strconv.Atoi(string(arg2)); err == nil {
+					arg2Any = arg2N
+				}
+			}
+		}
+
+		lastArg = arg1
+
+		arg1Type := reflect.TypeOf(arg1Any)
+		if arg1Type == varType["int"] {
+			arg1Any = float64(arg1Any.(int))
+		}else if arg1Type == varType["float32"] {
+			arg1Any = float64(arg1Any.(float32))
+		}else if arg1Type == varType["int32"] {
+			arg1Any = float64(arg1Any.(int32))
+		}else if arg1Type == varType["byteArray"] {
+			arg1Any = string(arg1Any.([]byte))
+		}else if arg1Type == varType["byte"] {
+			arg1Any = string(arg1Any.(byte))
+		}
+
+		arg2Type := reflect.TypeOf(arg2Any)
+		if arg2Type == varType["int"] {
+			arg2Any = float64(arg2Any.(int))
+		}else if arg2Type == varType["float32"] {
+			arg2Any = float64(arg2Any.(float32))
+		}else if arg2Type == varType["int32"] {
+			arg2Any = float64(arg2Any.(int32))
+		}else if arg1Type == varType["byteArray"] {
+			arg2Any = string(arg2Any.([]byte))
+		}else if arg1Type == varType["byte"] {
+			arg2Any = string(arg2Any.(byte))
+		}
+
+		switch sign {
+		case "=":
+			isTrue = (arg1Any == arg2Any)
+			break
+		case "!=":
+		case "!":
+			isTrue = (arg1Any != arg2Any)
+			break
+		case ">=":
+			if arg1Type == reflect.TypeOf(arg2Any) && arg1Type == varType["float64"] {
+				isTrue = (arg1Any.(float64) >= arg2Any.(float64))
+			}
+			break
+		case "<=":
+			if arg1Type == reflect.TypeOf(arg2Any) && arg1Type == varType["float64"] {
+				isTrue = (arg1Any.(float64) <= arg2Any.(float64))
+			}
+			break
+		case ">":
+			if arg1Type == reflect.TypeOf(arg2Any) && arg1Type == varType["float64"] {
+				isTrue = (arg1Any.(float64) > arg2Any.(float64))
+			}
+			break
+		case "<":
+			if arg1Type == reflect.TypeOf(arg2Any) && arg1Type == varType["float64"] {
+				isTrue = (arg1Any.(float64) < arg2Any.(float64))
+			}
+			break
+		default:
+			break
+		}
+
+		i += 2
+	}
+
+	elseOpt := regex.Match(cont, `(?s)<_el(if|se):`+strconv.Itoa(level)+`(\s+[0-9]+|)/>(.*)$`)
+	if elseOpt && isTrue {
+		return regex.RepStr(cont, `(?s)<_el(if|se):`+strconv.Itoa(level)+`(\s+[0-9]+|)/>(.*)$`, []byte(""))
+	} else if elseOpt {
+		blankElse := false
+		newArgs, newCont := map[string][]byte{}, []byte{}
+		regex.RepFunc(cont, `(?s)<_el(if|se):`+strconv.Itoa(level)+`(\s+[0-9]+|)/>(.*)$`, func(data func(int) []byte) []byte {
+			argInt, err := strconv.Atoi(string(regex.RepStr(data(2), `\s`, []byte{})))
+			if err != nil {
+				blankElse = true
+			}else{
+				newArgs = file.args[argInt]
+			}
+			newCont = data(3)
+			return nil
+		}, true)
+
+		if blankElse {
+			return newCont
+		}
+
+		// https://stackoverflow.com/questions/61830637/how-to-self-reference-a-function
+		// return runTagFunc("if", newArgs, newCont, opts, level, file)
+		return tagFuncIf(newArgs, newCont, opts, level, file)
+	} else if isTrue {
+		return cont
+	}
+
+	return []byte{}
 }
 
 
@@ -174,6 +393,11 @@ func toString(res interface{}) string {
 		default:
 			return ""
 	}
+}
+
+func IsZeroOfUnderlyingType(x interface{}) bool {
+	// return x == nil || x == reflect.Zero(reflect.TypeOf(x)).Interface()
+	return x == nil || reflect.DeepEqual(x, reflect.Zero(reflect.TypeOf(x)).Interface())
 }
 
 func initVarTypes() {
@@ -1030,7 +1254,7 @@ func runFuncs(html []byte, opts map[string]interface{}, level int, file fileData
 
 		if reflect.TypeOf(funcs) == varType["tagFunc"] {
 			fn = funcs.(func(map[string][]byte, []byte, map[string]interface{}, int, fileData) interface{})
-			} else {
+		} else {
 			return []byte{}
 		}
 
