@@ -111,8 +111,8 @@ setInterval(function(){
 
 function initGoCompiler(){
   goCompilerLastInit = Date.now();
-  // goCompiler = spawn('go', ['run', 'compiler/main.go']);
-  goCompiler = spawn('./compiler/compiler');
+  // goCompiler = spawn('go', ['run', 'compiler/main.go'], {cwd: __dirname});
+  goCompiler = spawn('./compiler/compiler', {cwd: __dirname});
   goCompiler.stdout.on('data', async (data) => {
     data = data.toString().trim();
   
