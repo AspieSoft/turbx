@@ -1,6 +1,6 @@
 {
   "name": "@aspiesoft/turbx",
-  "version": "0.1.4",
+  "version": "0.2.0",
   "description": "A Fast and Easy To Use View Engine, Compiled With Regex",
   "author": "AspieSoft",
   "license": "MIT",

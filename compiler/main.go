@@ -35,6 +35,13 @@ type fileData struct {
 	script []scriptObj
 }
 
+
+type eachFnObj struct {
+	html   []byte
+	opts   map[string]interface{}
+}
+
+
 var varType map[string]reflect.Type
 
 var regHtmlTag string = `(?:[\w_\-.$!:][\\/][\w_\-.$!:]|[\w_\-.$!:])`
@@ -59,12 +66,174 @@ var singleTagList map[string]bool = map[string]bool{
 }
 
 
-//todo: add functions to go
 var tagFuncs map[string]interface{} = map[string]interface{} {
 	"if": tagFuncIf,
 
 	"each": func(args map[string][]byte, cont []byte, opts map[string]interface{}, level int, file fileData) interface{} {
-		return nil
+		if len(args) == 0 {
+			return []byte{}
+		}
+
+		var argObj string = ""
+		var argAs []byte = nil
+		var argOf []byte = nil
+		var argIn []byte = nil
+		argType := 0
+
+		for i, v := range args {
+			if i == "0" || i == "value" {
+				argObj = string(v)
+				continue
+			}
+
+			if i == "as" {
+				argAs = v
+				continue
+			}else if i == "of" {
+				argOf = v
+				continue
+			}else if i == "in" {
+				argIn = v
+				continue
+			}
+
+			if bytes.Equal(v, []byte("as")) {
+				argType = 1
+				continue
+			}else if bytes.Equal(v, []byte("of")) {
+				argType = 2
+				continue
+			}else if bytes.Equal(v, []byte("in")) {
+				argType = 3
+				continue
+			}
+
+			if argType == 1 {
+				argAs = v
+				argType = 0
+				continue
+			}else if argType == 2 {
+				argOf = v
+				argType = 0
+				continue
+			}else if argType == 3 {
+				argIn = v
+				argType = 0
+				continue
+			}
+
+			if argAs == nil {
+				argAs = v
+			}else if argOf == nil {
+				argOf = v
+			}else if argIn == nil {
+				argIn = v
+			}
+		}
+
+		obj := getOpt(opts, argObj, false)
+		res := []eachFnObj{}
+
+		objType := reflect.TypeOf(obj)
+		if objType != varType["map"] && objType != varType["array"] {
+			return []byte{}
+		}
+
+		if objType == varType["map"] {
+			n := 0
+			for i, v := range obj.(map[string]interface{}) {
+				opt := opts
+				if argAs != nil {
+					opt[string(argAs)] = v
+				}else{
+					opt[argObj] = v
+				}
+				if argOf != nil {
+					opt[string(argOf)] = i
+				}
+				if argIn != nil {
+					opt[string(argIn)] = n
+				}
+				res = append(res, eachFnObj{html: cont, opts: opt})
+				n++
+			}
+		}else if objType == varType["array"] {
+			n := 0
+			for i, v := range obj.([]interface{}) {
+				opt := opts
+				if argAs != nil {
+					opt[string(argAs)] = v
+				}else{
+					opt[argObj] = v
+				}
+				if argOf != nil {
+					opt[string(argOf)] = i
+				}
+				if argIn != nil {
+					opt[string(argIn)] = n
+				}
+				res = append(res, eachFnObj{html: cont, opts: opt})
+				n++
+			}
+		}
+
+		return res
+	},
+
+	"json": func(args map[string][]byte, cont []byte, opts map[string]interface{}, level int, file fileData) interface{} {
+		var json interface{} = nil
+		if val, ok := args["0"]; ok {
+			json = getOpt(opts, string(val), false)
+		}else{
+			return []byte{}
+		}
+
+		var spaces int = 0
+		if val, ok := args["indent"]; ok {
+			sp, err := strconv.Atoi(string(val))
+			if err != nil {
+				spaces = 0
+			}else{
+				spaces = sp
+			}
+		}else if val, ok := args["1"]; ok {
+			sp, err := strconv.Atoi(string(val))
+			if err != nil {
+				spaces = 0
+			}else{
+				spaces = sp
+			}
+		}
+
+		var prefix int = 0
+		if val, ok := args["prefix"]; ok {
+			sp, err := strconv.Atoi(string(val))
+			if err != nil {
+				spaces = 0
+			}else{
+				spaces = sp
+			}
+		}else if val, ok := args["2"]; ok {
+			sp, err := strconv.Atoi(string(val))
+			if err != nil {
+				prefix = 0
+			}else{
+				prefix = sp
+			}
+		}
+
+		res, err := stringifyJSONSpaces(json, spaces, prefix)
+		if err != nil {
+			return []byte{}
+		}
+
+		return res
+	},
+
+	"lorem": func(args map[string][]byte, cont []byte, opts map[string]interface{}, level int, file fileData) interface{} {
+		//todo: generate lorem ipsum text randomly
+
+		return []byte("Ea laboris exercitation reprehenderit et qui mollit proident. Est enim nisi aliquip nisi non sunt dolor elit. Excepteur Lorem sit sit et ex sunt magna ut consectetur aliqua cillum et. Cillum est culpa id excepteur. Exercitation occaecat laboris et enim ex. Exercitation culpa qui elit laborum sit aliqua esse nisi irure anim consectetur. Qui commodo mollit fugiat cillum eiusmod tempor ex magna ea aliquip non.")
 	},
 }
 
@@ -406,6 +575,7 @@ func initVarTypes() {
 	varType["array"] = reflect.TypeOf([]interface{}{})
 	varType["arrayByte"] = reflect.TypeOf([][]byte{})
 	varType["map"] = reflect.TypeOf(map[string]interface{}{})
+	varType["arrayEachFnObj"] = reflect.TypeOf([]eachFnObj{})
 
 	varType["int"] = reflect.TypeOf(int(0))
 	varType["float64"] = reflect.TypeOf(float64(0))
@@ -912,34 +1082,11 @@ func compileLayout(res *[]byte, opts map[string]interface{}, allowImport bool){
 func compile(file fileData, opts map[string]interface{}, includeTemplate bool, allowImport bool) []byte {
 
 	hasLayout := false
-	// layoutReady := false
 	var layout []byte = nil
 	if includeTemplate && (opts["template"] != nil || getOPT("template") != "") {
 		hasLayout = true
 
 		go compileLayout(&layout, opts, allowImport)
-
-		_ = (func() {
-			template := "layout"
-			if opts["template"] != nil && reflect.TypeOf(opts["template"]) == varType["string"] {
-				template = opts["template"].(string)
-			} else if getOPT("template") != "" {
-				template = getOPT("template")
-			}
-
-			preLayout, err := getFile(template, false, allowImport)
-			if err != nil {
-				layout = []byte("<BODY/>")
-				return
-			}
-			preLayout.html = regex.RepStr(preLayout.html, `(?i){{{?\s*body\s*}}}?|<body\s*/>`, []byte("<BODY/>"))
-
-			layout = compile(preLayout, opts, false, allowImport)
-
-			//todo: smartly auto insert body tag if missing
-
-			// layoutReady = true
-		})
 	}
 
 	// handle functions, components, and imports with content
@@ -982,7 +1129,12 @@ func compile(file fileData, opts map[string]interface{}, includeTemplate bool, a
 		}
 
 		res := []byte{}
-		if reflect.TypeOf(cont) == varType["arrayByte"] {
+		contType := reflect.TypeOf(cont)
+		if contType == varType["arrayEachFnObj"] {
+			for _, v := range cont.([]eachFnObj) {
+				res = append(res, runFuncs(v.html, v.opts, level + 1, file, allowImport)...)
+			}
+		}else if contType == varType["arrayByte"] {
 			for _, v := range cont.([][]byte) {
 				res = append(res, runFuncs(v, opts, level + 1, file, allowImport)...)
 			}
@@ -1272,7 +1424,12 @@ func runFuncs(html []byte, opts map[string]interface{}, level int, file fileData
 		}
 
 		res := []byte{}
-		if reflect.TypeOf(cont) == varType["arrayByte"] {
+		contType := reflect.TypeOf(cont)
+		if contType == varType["arrayEachFnObj"] {
+			for _, v := range cont.([]eachFnObj) {
+				res = append(res, runFuncs(v.html, v.opts, level + 1, file, allowImport)...)
+			}
+		}else if contType == varType["arrayByte"] {
 			for _, v := range cont.([][]byte) {
 				res = append(res, runFuncs(v, opts, level + 1, file, allowImport)...)
 			}
@@ -1420,6 +1577,17 @@ func decodeEncoding(html []byte) []byte {
 
 func stringifyJSON(data interface{}) ([]byte, error) {
 	json, err := json.Marshal(data)
+	if err != nil {
+		return []byte{}, err
+	}
+	json = bytes.ReplaceAll(json, []byte("\\u003c"), []byte("<"))
+	json = bytes.ReplaceAll(json, []byte("\\u003e"), []byte(">"))
+
+	return json, nil
+}
+
+func stringifyJSONSpaces(data interface{}, ind int, pre int) ([]byte, error) {
+	json, err := json.MarshalIndent(data, strings.Repeat(" ", pre), strings.Repeat(" ", ind))
 	if err != nil {
 		return []byte{}, err
 	}
