@@ -10,12 +10,13 @@
 
 [![donation link](https://img.shields.io/badge/buy%20me%20a%20coffee-square-blue)](https://buymeacoffee.aspiesoft.com)
 
-A Fast and Easy To Use View Engine, Compiled With Regex.
+A Fast and Easy To Use View Engine, Compiled In Go.
 
 > Notice: This View Engine Is Currently In Beta
----
-> Notice: Version 0.1 does not yet support if statements and other _functions
-> If you need these features, please use version 0.0 for now
+
+## Whats New
+
+- Module now compiles templates in [go](https://go.dev/)
 
 ## Installation
 
@@ -106,6 +107,10 @@ app.use(function(req, res, next){
   array index: {{index}}
 </_each>
 
+<!-- Note: advanced lorem ipsum has not yet been added to the new compiler -->
+<!-- The old compiler in beta 0.0 uses this lorem ipsum method -->
+<!-- The beta 0.2 compiler in go temporarily will continue to send 1 paragraph of the same text -->
+
 <!-- 2 paragraphs of lorem ipsum text -->
 <_lorem 2/>
   <!-- alias -->
@@ -124,7 +129,7 @@ app.use(function(req, res, next){
 
 
 <!-- A component is imported by using a capital first letter -->
-<!-- The file should still be named in lowercase like any other file -->
+<!-- The file should also be named with a capital first letter -->
 <!-- args can be passed into a component -->
 <MyComponent arg1="value 1" arg2="value 2" type="h1">
   Some body to add to the component
@@ -133,7 +138,7 @@ app.use(function(req, res, next){
 <!-- component without a body -->
 <MyComponent arg1="value"/>
 
-<!-- file: myComponent.xhtml -->
+<!-- file: MyComponent.xhtml -->
 {{arg1}} - {{arg2}}
 <{{type}}>
   {{{body}}}
