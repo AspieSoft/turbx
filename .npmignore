@@ -3,6 +3,3 @@
 .github
 node_modules
 test
-
-functions-old
-*.old.js

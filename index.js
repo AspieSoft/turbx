@@ -55,12 +55,37 @@ setInterval(function () {
   }
 }, 20000);
 
+const DebugMode = false;
+
+let pingRes = false;
+
+const golangOpts = {};
+
 function initGoCompiler() {
+  if(Date.now() - goCompilerLastInit < 100){
+    return;
+  }
   goCompilerLastInit = Date.now();
-  // goCompiler = spawn('go', ['run', 'compiler/main.go'], {cwd: __dirname});
-  goCompiler = spawn('./compiler/compiler', { cwd: __dirname });
+  if(DebugMode){
+    goCompiler = spawn('go', ['run', 'compiler/main.go'], {cwd: __dirname});
+  }else{
+    goCompiler = spawn('./compiler/compiler', { cwd: __dirname });
+  }
+
+  goCompiler.on('close', () => {
+    initGoCompiler();
+  })
+  goCompiler.stderr.on('end', () => {
+    initGoCompiler();
+  });
+
   goCompiler.stdout.on('data', async (data) => {
     data = data.toString().trim();
+
+    if(data === 'pong'){
+      pingRes = true;
+      return;
+    }
 
     if (data.startsWith('debug:')) {
       console.log(data);
@@ -85,14 +110,29 @@ function initGoCompiler() {
 
     goCompiledResults[idToken] = data;
   });
-  goCompiler.stderr.on('end', () => {
-    initGoCompiler();
-  });
+
+  for(let key in golangOpts){
+    if(typeof key === 'string' && key.match(/^[\w_-]+$/)){
+      goCompiler.stdin.write('set:' + key + '=' + golangOpts[key] + '\n');
+    }
+  }
 }
 initGoCompiler();
 
+setInterval(async function(){
+  pingRes = false;
+  goCompiler.stdin.write('ping\n');
+  await sleep(100);
+  if(!pingRes){
+    initGoCompiler();
+  }
+}, 1000);
+
 function goCompilerSetOpt(key, value) {
-  goCompiler.stdin.write('set:' + key.toString().replace(/[^\w_-]/g, '') + '=' + value.toString().replace(/[\r\n\v]/g, '') + '\n');
+  key = key.toString().replace(/[^\w_-]/g, '');
+  value = value.toString().replace(/[\r\n\v]/g, '');
+  golangOpts[key] = value;
+  goCompiler.stdin.write('set:' + key + '=' + value + '\n');
 }
 
 async function goCompilerPreCompile(file) {

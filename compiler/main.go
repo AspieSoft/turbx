@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/AspieSoft/go-regex"
+	lorem "github.com/drhodes/golorem"
 )
 
 type stringObj struct {
@@ -65,11 +66,12 @@ var singleTagList map[string]bool = map[string]bool{
 	"track": true,
 }
 
-
 var tagFuncs map[string]interface{} = map[string]interface{} {
 	"if": tagFuncIf,
 
 	"each": func(args map[string][]byte, cont []byte, opts map[string]interface{}, level int, file fileData) interface{} {
+		//todo: fix each function outputing the same var
+
 		if len(args) == 0 {
 			return []byte{}
 		}
@@ -231,9 +233,87 @@ var tagFuncs map[string]interface{} = map[string]interface{} {
 	},
 
 	"lorem": func(args map[string][]byte, cont []byte, opts map[string]interface{}, level int, file fileData) interface{} {
-		//todo: generate lorem ipsum text randomly
 
-		return []byte("Ea laboris exercitation reprehenderit et qui mollit proident. Est enim nisi aliquip nisi non sunt dolor elit. Excepteur Lorem sit sit et ex sunt magna ut consectetur aliqua cillum et. Cillum est culpa id excepteur. Exercitation occaecat laboris et enim ex. Exercitation culpa qui elit laborum sit aliqua esse nisi irure anim consectetur. Qui commodo mollit fugiat cillum eiusmod tempor ex magna ea aliquip non.")
+		wType := byte('p')
+		if len(args["type"]) != 0 {
+			wType = args["type"][0]
+		}else if len(args["0"]) != 0 && !regex.Match(args["0"], `^[0-9]+$`) {
+			wType = args["0"][0]
+		}else if len(args["1"]) != 0 && !regex.Match(args["1"], `^[0-9]+$`) {
+			wType = args["1"][0]
+		}else if len(args["2"]) != 0 && !regex.Match(args["2"], `^[0-9]+$`) {
+			wType = args["2"][0]
+		}
+		
+		minLen := 1
+		maxLen := 10
+		used := -1
+
+		if len(args["min"]) != 0 {
+			used = -2
+			i, err := strconv.Atoi(string(args["min"]))
+			if err == nil {
+				minLen = i
+			}
+		}else if len(args["0"]) != 0 && regex.Match(args["0"], `^[0-9]+$`) {
+			used = 0
+			i, err := strconv.Atoi(string(args["0"]))
+			if err == nil {
+				minLen = i
+			}
+		}else if len(args["1"]) != 0 && regex.Match(args["1"], `^[0-9]+$`) {
+			used = 1
+			i, err := strconv.Atoi(string(args["1"]))
+			if err == nil {
+				minLen = i
+			}
+		}else if len(args["2"]) != 0 && regex.Match(args["2"], `^[0-9]+$`) {
+			used = 2
+			i, err := strconv.Atoi(string(args["0"]))
+			if err == nil {
+				minLen = i
+			}
+		}
+
+		if len(args["max"]) != 0 {
+			i, err := strconv.Atoi(string(args["max"]))
+			if err == nil {
+				minLen = i
+			}
+		}else if used != 0 && len(args["0"]) != 0 && regex.Match(args["0"], `^[0-9]+$`) {
+			i, err := strconv.Atoi(string(args["0"]))
+			if err == nil {
+				minLen = i
+			}
+		}else if used != 1 && len(args["1"]) != 0 && regex.Match(args["1"], `^[0-9]+$`) {
+			i, err := strconv.Atoi(string(args["1"]))
+			if err == nil {
+				minLen = i
+			}
+		}else if used != 2 && len(args["2"]) != 0 && regex.Match(args["2"], `^[0-9]+$`) {
+			i, err := strconv.Atoi(string(args["0"]))
+			if err == nil {
+				minLen = i
+			}
+		}else if used != -1 {
+			maxLen = minLen
+		}
+
+		if wType == 'p' {
+			return []byte(lorem.Paragraph(minLen, maxLen))
+		} else if wType == 'w' {
+			return []byte(lorem.Word(minLen, maxLen))
+		} else if wType == 's' {
+			return []byte(lorem.Sentence(minLen, maxLen))
+		} else if wType == 'h' {
+			return []byte(lorem.Host())
+		} else if wType == 'e' {
+			return []byte(lorem.Email())
+		} else if wType == 'u' {
+			return []byte(lorem.Url())
+		}
+
+		return []byte(lorem.Paragraph(minLen, maxLen))
 	},
 }
 
@@ -470,7 +550,9 @@ func main() {
 	for {
 		input := <-userInput
 
-		if input == "stop" || input == "exit" {
+		if input == "ping" {
+			fmt.Println("pong")
+		}else if input == "stop" || input == "exit" {
 			break
 		} else if strings.HasPrefix(input, "set:") && strings.ContainsRune(input, '=') {
 			opt := strings.SplitN(strings.SplitN(input, ":", 2)[1], "=", 2)
@@ -792,7 +874,7 @@ func preCompile(html []byte) (fileData, error) {
 	stringList := [][]byte{}
 
 	// extract strings and comments
-	html = regex.RepFunc(html, `(?s)(<!--.*?-->|/\*.*?\*/|\r?\n//.*?\r?\n)|(["'`+"`"+`])((?:\\[\\"'`+"`"+`]|.)*?)\2`, func(data func(int) []byte) []byte {
+	html = regex.RepFunc(html, `(?s)(<!--.*?-->|/\*.*?\*/|\r?\n//.*?\r?\n)|(["'\'])((?:\\[\\"'\']|.)*?)\2`, func(data func(int) []byte) []byte {
 		if len(data(1)) != 0 {
 			return []byte{}
 		}
@@ -907,7 +989,7 @@ func preCompile(html []byte) (fileData, error) {
 
 								// newVal := append(append(key, []byte(`=`)...), decodeStrings(val[1], 1)...)
 								newVal := regex.JoinBytes(key, '=', decodeStrings(val[1], 1))
-								newVal = regex.RepFunc(newVal, `(?s)(['`+"`"+`])((?:\\[\\'`+"`"+`]|.)*?)\1`, func(data func(int) []byte) []byte {
+								newVal = regex.RepFunc(newVal, `(?s)(['\'])((?:\\[\\'\']|.)*?)\1`, func(data func(int) []byte) []byte {
 									stringList = append(stringList, data(2))
 									return regex.JoinBytes([]byte("%!"), len(stringList)-1, []byte("!%"))
 								})
@@ -920,7 +1002,7 @@ func preCompile(html []byte) (fileData, error) {
 									vInd--
 								}
 							} else {
-								decompVal := regex.RepFunc(decodeStrings(val[1], 1), `(?s)(['`+"`"+`])((?:\\[\\'`+"`"+`]|.)*?)\1`, func(data func(int) []byte) []byte {
+								decompVal := regex.RepFunc(decodeStrings(val[1], 1), `(?s)(['\'])((?:\\[\\'\']|.)*?)\1`, func(data func(int) []byte) []byte {
 									stringList = append(stringList, data(2))
 									return regex.JoinBytes([]byte("%!"), len(stringList)-1, []byte("!%"))
 								})
@@ -935,7 +1017,7 @@ func preCompile(html []byte) (fileData, error) {
 								}
 							}
 						} else {
-							decompVal := regex.RepFunc(decodeStrings(v, 1), `(?s)(['`+"`"+`])((?:\\[\\'`+"`"+`]|.)*?)\1`, func(data func(int) []byte) []byte {
+							decompVal := regex.RepFunc(decodeStrings(v, 1), `(?s)(['\'])((?:\\[\\'\']|.)*?)\1`, func(data func(int) []byte) []byte {
 								stringList = append(stringList, data(2))
 								return regex.JoinBytes([]byte("%!"), len(stringList)-1, []byte("!%"))
 							})
@@ -949,7 +1031,7 @@ func preCompile(html []byte) (fileData, error) {
 						decompVal := decodeStrings(val[1], 1)
 
 						if regex.Match(decompVal, `^\{\{\{?.*?\}\}\}?$`) {
-							decompVal = regex.RepFunc(decodeStrings(val[1], 1), `(?s)(['"`+"`"+`])((?:\\[\\'`+"`"+`]|.)*?)\1`, func(data func(int) []byte) []byte {
+							decompVal = regex.RepFunc(decodeStrings(val[1], 1), `(?s)(['"\'])((?:\\[\\'\']|.)*?)\1`, func(data func(int) []byte) []byte {
 								stringList = append(stringList, data(2))
 								return regex.JoinBytes([]byte("%!"), len(stringList)-1, []byte("!%"))
 							})
@@ -1540,20 +1622,23 @@ func escapeHTML(html []byte) []byte {
 }
 
 func escapeHTMLArgs(html []byte) []byte {
-	return regex.RepFunc(html, `[\\"'`+"`"+`]`, func(data func(int) []byte) []byte {
+	return regex.RepFunc(html, `[\\"'\']`, func(data func(int) []byte) []byte {
 		return append([]byte("\\"), data(0)...)
 	})
 }
 
 func compileJS(script []byte) []byte {
+	//todo: minify js (also allow top level async/await)
 	return script
 }
 
 func compileCSS(style []byte) []byte {
+	//todo: compile less to css
 	return style
 }
 
 func compileMD(md []byte) []byte {
+	//todo: compile markdown
 	return md
 }
 

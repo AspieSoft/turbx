@@ -17,6 +17,7 @@ A Fast and Easy To Use View Engine, Compiled In Go.
 ## Whats New
 
 - Module now compiles templates in [go](https://go.dev/)
+- golang compiler now has improved crash recovery
 
 ## Installation
 
@@ -107,25 +108,14 @@ app.use(function(req, res, next){
   array index: {{index}}
 </_each>
 
-<!-- Note: advanced lorem ipsum has not yet been added to the new compiler -->
-<!-- The old compiler in beta 0.0 uses this lorem ipsum method -->
-<!-- The beta 0.2 compiler in go temporarily will continue to send 1 paragraph of the same text -->
-
-<!-- 2 paragraphs of lorem ipsum text -->
+<!-- random paragraph of lorem ipsum text -->
+<_lorem/>
+<!-- paragraph of lorem ipsum text with 2 sentences -->
 <_lorem 2/>
-  <!-- alias -->
-  <_p 2/>
-  <_paragraph 2/>
-<!-- 3 sentences of lorem ipsum text -->
-<_lorem 3 s/>
-  <!-- alias -->
-  <_s 3 s/>
-  <_sentence 3 s/>
-<!-- 5 words of lorem ipsum text -->
-<_lorem 5 w/>
-  <!-- alias -->
-  <_w 5 w/>
-  <_word 5 w/>
+<!-- sentence of lorem ipsum text with 3-5 words -->
+<_lorem s 3 5/>
+<!-- word of lorem ipsum text with 5-10 letters -->
+<_lorem w 5 10/>
 
 
 <!-- A component is imported by using a capital first letter -->
