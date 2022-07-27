@@ -39,13 +39,11 @@ app.engine('xhtml', turbx({
   /* global options */
   template: 'layout',
   opts: {default: 'some default options for res.render'},
-  before: function(data /* json string containing the pre-compiled (only partly compiled) output */, opts){
+  before: function(opts){
     // do stuff before res.render
-    return data || undefined; // returning undefined changes nothing
   },
-  after: function(html /* html string containing the compiled output */, opts){
+  after: function(opts, html /* html string containing the compiled output */){
     // do stuff after res.render
-    return html || undefined; // returning undefined changes nothing
   },
 }));
 app.set('views', join(__dirname, 'views'));

@@ -278,7 +278,7 @@ function engine(path, opts, cb) {
       opts.before(opts);
     }
 
-    const data = await goCompilerCompile(path, opts);
+    let data = await goCompilerCompile(path, opts);
 
     if (typeof opts.after === 'function') {
       let newData = opts.after(opts, data);
