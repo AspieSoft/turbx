@@ -67,7 +67,7 @@ function initGoCompiler() {
   }
   goCompilerLastInit = Date.now();
   if(DebugMode){
-    goCompiler = spawn('go', ['run', 'compiler/main.go'], {cwd: __dirname});
+    goCompiler = spawn('go', ['run', 'main.go'], {cwd: join(__dirname, 'compiler')});
   }else{
     goCompiler = spawn('./compiler/compiler', { cwd: __dirname });
   }

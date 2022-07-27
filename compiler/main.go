@@ -16,6 +16,8 @@ import (
 
 	"github.com/AspieSoft/go-regex"
 	lorem "github.com/drhodes/golorem"
+	"github.com/fsnotify/fsnotify"
+	"github.com/jellydator/ttlcache/v3"
 )
 
 type stringObj struct {
@@ -537,10 +539,24 @@ func tagFuncIf(args map[string][]byte, cont []byte, opts map[string]interface{},
 	return []byte{}
 }
 
+var fileCache *ttlcache.Cache[string, fileData]
 
 var OPTS map[string]string = map[string]string{}
 
 func main() {
+
+	fileCache = ttlcache.New[string, fileData](
+		ttlcache.WithTTL[string, fileData](2 * time.Hour),
+	)
+
+	go fileCache.Start()
+
+	go (func() {
+		for {
+			time.Sleep(2 * time.Hour)
+			fileCache.DeleteExpired()
+		}
+	})()
 
 	initVarTypes()
 
@@ -557,6 +573,9 @@ func main() {
 		} else if strings.HasPrefix(input, "set:") && strings.ContainsRune(input, '=') {
 			opt := strings.SplitN(strings.SplitN(input, ":", 2)[1], "=", 2)
 			setOPT(opt[0], opt[1])
+			if opt[0] == "root" {
+				go watchViews()
+			}
 		} else if strings.HasPrefix(input, "pre:") {
 			pre := strings.SplitN(input, ":", 2)[1]
 			go runPreCompile(pre)
@@ -564,6 +583,38 @@ func main() {
 			go runCompile(input)
 		}
 	}
+}
+
+func watchViews(){
+	root := getOPT("root")
+	if root == "" {
+		return
+	}
+
+	watcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		return
+	}
+	defer watcher.Close()
+
+	done := make(chan bool)
+	go func() {
+		defer close(done)
+
+		for {
+			if event, ok := <-watcher.Events; ok {
+				filePath := strings.Replace(strings.Replace(event.Name, root, "", 1), "/", "", 1)
+				fileCache.Delete(filePath)
+			}
+		}
+
+	}()
+
+	err = watcher.Add(root)
+	if err != nil {
+		return
+	}
+	<-done
 }
 
 var writingOpts int = 0
@@ -798,6 +849,11 @@ func runCompile(input string) {
 
 func getFile(filePath string, component bool, allowImport bool) (fileData, error) {
 
+	cache := fileCache.Get(filePath)
+	if cache != nil {
+		return cache.Value(), nil
+	}
+
 	// init options
 	root := getOPT("root")
 	if root == "" {
@@ -859,7 +915,13 @@ func getFile(filePath string, component bool, allowImport bool) (fileData, error
 		return fileData{}, err
 	}
 
-	//todo: cache file and listen for changes
+	cacheTime := ttlcache.DefaultTTL
+	if cache := getOPT("cache"); cache != "" {
+		if c, err := time.ParseDuration(cache); err == nil {
+			cacheTime = c * time.Millisecond
+		}
+	}
+	fileCache.Set(filePath, file, cacheTime)
 
 	return file, nil
 }
