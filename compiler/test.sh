@@ -13,5 +13,5 @@
 
 cd compiler
 
-echo -e 'set:root=/home/shaynejr/WebDev/NPM/turbx/test/views\nset:ext=xhtml\nset:template=layout\na:H4sIAAAAAAAA/6pWKkktLlGyUqhWSlSyUjDUUVBKUrJSMNJRUEpWslIwrq0FAAAA//8BAAD//3Cj5VAiAAAA:index' | go run main.go
+echo -e 'set:root=/home/shaynejr/WebDev/NPM/turbx/test/views\nset:ext=xhtml\nset:template=layout\na:H4sIAAAAAAAA/6pWKkktLlGyUqhWSlSyUjDUUVBKUrJSMNJRUEpWslIwrq0FAAAA//8BAAD//3Cj5VAiAAAA:index' | go run .
 # echo -e 'set:root=/home/shaynejr/WebDev/NPM/turbx/test/views\nset:ext=xhtml\nset:cache_component=embed\na:H4sIAAAAAAAA/6pWKkktLlGyUqhWSlSyUjDUUVBKUrJSMNJRUEpWslIwrq0FAAAA//8BAAD//3Cj5VAiAAAA:index' | go run compiler/main.go

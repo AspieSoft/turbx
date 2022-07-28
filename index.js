@@ -6,6 +6,8 @@ const { spawn } = require('child_process');
 
 const deviceRateLimit = requireOptional('express-device-rate-limit');
 
+const DebugMode = false;
+
 function requireOptional(path) {
   try {
     return require(path);
@@ -55,10 +57,7 @@ setInterval(function () {
   }
 }, 20000);
 
-const DebugMode = false;
-
 let pingRes = false;
-
 const golangOpts = {};
 
 function initGoCompiler() {
@@ -67,7 +66,7 @@ function initGoCompiler() {
   }
   goCompilerLastInit = Date.now();
   if(DebugMode){
-    goCompiler = spawn('go', ['run', 'main.go'], {cwd: join(__dirname, 'compiler')});
+    goCompiler = spawn('go', ['run', '.'], {cwd: join(__dirname, 'compiler')});
   }else{
     goCompiler = spawn('./compiler/compiler', { cwd: __dirname });
   }
@@ -167,8 +166,6 @@ async function goCompilerCompile(file, opts) {
     }
 
     zippedOpts = buffer.toString('base64');
-
-    // goCompiler.stdin.write(token + ':' + buffer.toString('base64') + ':' + file.toString().replace(/[\r\n\v]/g, '') + '\n');
   });
 
   const updateSpeed = Number(OPTS.updateSpeed) || 10;
