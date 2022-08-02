@@ -97,6 +97,8 @@ func watchViews(root string) {
 			if event, ok := <-watcher.Events; ok {
 				filePath := strings.Replace(strings.Replace(event.Name, root, "", 1), "/", "", 1)
 				fileCache.Delete(filePath)
+				filePath = string(regex.RepStr([]byte(filePath), `\.[\w]+$`, []byte{}))
+				fileCache.Delete(filePath)
 			}
 		}
 	}()
@@ -269,14 +271,14 @@ func getFile(filePath string, component bool, allowImport bool) (fileData, error
 		return fileData{}, errors.New("root not found")
 	}
 
-	ext := "xhtml"
-	if getOPT("ext") != "" {
+	ext := getOPT("ext")
+	if ext == "" {
 		ext = "xhtml"
 	}
 
-	compRoot := "components"
-	if getOPT("components") != "" {
-		compRoot = getOPT("components")
+	compRoot := getOPT("components")
+	if compRoot == "" {
+		compRoot = "components"
 	}
 
 	var html []byte = nil
