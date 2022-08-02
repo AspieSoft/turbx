@@ -227,10 +227,14 @@ func runPreCompile(input string) {
 func runCompile(input string) {
 	inputData := strings.SplitN(input, ":", 3)
 
-	optStr := decompress(inputData[1])
+	optStr, err := decompress(inputData[1])
+	if err != nil {
+		fmt.Println(inputData[0] + ":error")
+		return
+	}
 
 	opts := map[string]interface{}{}
-	err := json.Unmarshal([]byte(optStr), &opts)
+	err = json.Unmarshal([]byte(optStr), &opts)
 	if err != nil {
 		opts = map[string]interface{}{}
 	}

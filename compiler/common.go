@@ -160,10 +160,19 @@ func compress(msg string) (string, error) {
 	return base64.StdEncoding.EncodeToString(b.Bytes()), nil
 }
 
-func decompress(str string) string {
-	data, _ := base64.StdEncoding.DecodeString(str)
+func decompress(str string) (string, error) {
+	data, err := base64.StdEncoding.DecodeString(str)
+	if err != nil {
+		return "", err
+	}
 	rdata := bytes.NewReader(data)
-	r, _ := gzip.NewReader(rdata)
-	s, _ := ioutil.ReadAll(r)
-	return string(s)
+	r, err := gzip.NewReader(rdata)
+	if err != nil {
+		return "", err
+	}
+	s, err := ioutil.ReadAll(r)
+	if err != nil {
+		return "", err
+	}
+	return string(s), nil
 }
