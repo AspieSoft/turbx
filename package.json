@@ -1,6 +1,6 @@
 {
   "name": "@aspiesoft/turbx",
-  "version": "0.2.7",
+  "version": "0.2.8",
   "description": "A Fast and Easy To Use View Engine, Compiled In Go",
   "author": "AspieSoft",
   "license": "MIT",
@@ -22,7 +22,9 @@
     "turbx",
     "view engine",
     "template engine",
-    "xhtml"
+    "xhtml",
+    "go",
+    "golang"
   ],
   "dependencies": {
     "@aspiesoft/multi-task-queue": "^1.3.1",

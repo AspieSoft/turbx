@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io/ioutil"
+	"os"
 	"reflect"
 	"strconv"
 	"strings"
@@ -83,6 +84,23 @@ func main() {
 	}
 }
 
+
+func watchViewsReadSubFolder(watcher *fsnotify.Watcher, dir string){
+	files, err := ioutil.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	for _, file := range files {
+		if file.IsDir() {
+			if path, err := joinPath(dir, file.Name()); err == nil {
+				watcher.Add(path)
+				watchViewsReadSubFolder(watcher, path)
+			}
+		}
+	}
+
+}
+
 func watchViews(root string) {
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
@@ -95,10 +113,24 @@ func watchViews(root string) {
 		defer close(done)
 		for {
 			if event, ok := <-watcher.Events; ok {
-				filePath := strings.Replace(strings.Replace(event.Name, root, "", 1), "/", "", 1)
-				fileCache.Delete(filePath)
-				filePath = string(regex.RepStr([]byte(filePath), `\.[\w]+$`, []byte{}))
-				fileCache.Delete(filePath)
+				filePath := event.Name
+
+				stat, err := os.Stat(filePath)
+				if err != nil {
+					watcher.Remove(filePath)
+					filePath = strings.Replace(strings.Replace(filePath, root, "", 1), "/", "", 1)
+					fileCache.Delete(filePath)
+					filePath = string(regex.RepStr([]byte(filePath), `\.[\w]+$`, []byte{}))
+					fileCache.Delete(filePath)
+				}else if stat.IsDir() {
+					watcher.Add(filePath)
+				}else{
+					filePath = strings.Replace(strings.Replace(filePath, root, "", 1), "/", "", 1)
+					fileCache.Delete(filePath)
+					filePath = string(regex.RepStr([]byte(filePath), `\.[\w]+$`, []byte{}))
+					fileCache.Delete(filePath)
+				}
+
 			}
 		}
 	}()
@@ -107,6 +139,9 @@ func watchViews(root string) {
 	if err != nil {
 		return
 	}
+
+	watchViewsReadSubFolder(watcher, root)
+
 	<-done
 }
 

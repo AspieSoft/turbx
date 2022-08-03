@@ -351,7 +351,8 @@ function setOpts(opts) {
       OPTS.updateSpeed = updateSpeed;
     }
   } else {
-    OPTS.updateSpeed = 10;
+    // OPTS.updateSpeed = 10;
+    OPTS.updateSpeed = 1;
   }
 
   for (let key in OPTS) {

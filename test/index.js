@@ -54,10 +54,12 @@ function log(){
 //* go: 82ms 32ms, 83ms 22ms, 84ms 33ms, 77ms 31ms (pcre regex "github.com/GRbit/go-pcre")
 //* go: 44ms 32ms, 44ms 31ms, 45ms 42ms, 43ms 31ms (full compile, without functions or cache)
 //* go: 34ms 33ms, 43ms 32ms, 43ms 33ms, 43ms 30ms (with cache)
+//* go: 20ms  8ms, 18ms 11ms, 20ms 12ms, 18ms  9ms (faster update speed)
 
 //? average
 //* js: 40-50ms
 //* go: 40ms then 30ms (functions may slow this down) (may be able to boost this by pre loading the regex)
+//* go: 420ms then 10ms (faster update speed)
 //! note: decreasing the updateSpeed value makes things faster. an updateSpeed of 1 can result in 10ms compile time
 
 
@@ -65,8 +67,8 @@ app.engine('xhtml', turbx(app, {
   template: 'layout',
   components: 'components',
   timeout: '3s',
-  updateSpeed: 10,
-  // updateSpeed: 1,
+  // updateSpeed: 10,
+  updateSpeed: 1,
   before: function(opts){
     opts.startTime = new Date().getTime();
   },
