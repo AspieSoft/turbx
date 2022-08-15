@@ -2,10 +2,10 @@ package main
 
 import (
 	"bytes"
+	"compiler/common"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io/ioutil"
 	"os"
 	"reflect"
 	"strconv"
@@ -13,8 +13,10 @@ import (
 	"time"
 
 	"github.com/AspieSoft/go-regex"
+	"github.com/alphadose/haxmap"
 	"github.com/fsnotify/fsnotify"
 	"github.com/jellydator/ttlcache/v3"
+	"github.com/pbnjay/memory"
 )
 
 type stringObj struct {
@@ -42,9 +44,31 @@ type eachFnObj struct {
 
 var fileCache *ttlcache.Cache[string, fileData]
 
-var OPTS map[string]string = map[string]string{}
+// var OPTS map[string]string = map[string]string{}
+var OPTS *haxmap.HashMap[string, string] = haxmap.New[string, string]()
+
+var encKey string
+var freeMem float64
 
 func main() {
+
+	for _, arg := range os.Args {
+		if strings.HasPrefix(arg, "--enc=") {
+			encKey, _ = common.Decompress(strings.Replace(arg, "--enc=", "", 1))
+		}
+	}
+
+	freeMem = common.FormatMemoryUsage(memory.FreeMemory())
+	go (func(){
+		for {
+			time.Sleep(1 * time.Millisecond)
+			freeMem = common.FormatMemoryUsage(memory.FreeMemory())
+		}
+	})()
+
+	common.VarType["arrayEachFnObj"] = reflect.TypeOf([]eachFnObj{})
+	common.VarType["tagFunc"] = reflect.TypeOf(func(map[string][]byte, []byte, map[string]interface{}, int, fileData) interface{} {return nil})
+	common.VarType["preTagFunc"] = reflect.TypeOf(func(map[string][]byte, int, fileData) interface{} {return nil})
 
 	fileCache = ttlcache.New[string, fileData](
 		ttlcache.WithTTL[string, fileData](2 * time.Hour),
@@ -67,6 +91,18 @@ func main() {
 
 		if input == "ping" {
 			fmt.Println("pong")
+		}
+
+		if encKey != "" {
+			dec, err := common.Decrypt(input, encKey)
+			if err != nil {
+				continue
+			}
+			input = string(dec)
+		}
+
+		if input == "ping" {
+			sendRes("pong")
 		} else if input == "stop" || input == "exit" {
 			break
 		} else if strings.HasPrefix(input, "set:") && strings.ContainsRune(input, '=') {
@@ -86,13 +122,14 @@ func main() {
 
 
 func watchViewsReadSubFolder(watcher *fsnotify.Watcher, dir string){
-	files, err := ioutil.ReadDir(dir)
+	// files, err := ioutil.ReadDir(dir)
+	files, err := os.ReadDir(dir)
 	if err != nil {
 		return
 	}
 	for _, file := range files {
 		if file.IsDir() {
-			if path, err := joinPath(dir, file.Name()); err == nil {
+			if path, err := common.JoinPath(dir, file.Name()); err == nil {
 				watcher.Add(path)
 				watchViewsReadSubFolder(watcher, path)
 			}
@@ -145,26 +182,33 @@ func watchViews(root string) {
 	<-done
 }
 
-var writingOpts int = 0
-var readingOpts int = 0
+/* var writingOpts int = 0
+var readingOpts int = 0 */
 
 func setOPT(key string, val string) {
-	writingOpts++
+	OPTS.Set(key, val)
+
+	/* writingOpts++
 	for readingOpts != 0 {
-		time.Sleep(1000)
+		time.Sleep(1 * time.Millisecond)
 	}
 	OPTS[key] = val
-	writingOpts--
+	writingOpts-- */
 }
 
 func getOPT(key string) string {
-	for writingOpts != 0 {
-		time.Sleep(1000)
+	if val, ok := OPTS.Get(key); ok {
+		return val
+	}
+	return ""
+
+	/* for writingOpts != 0 {
+		time.Sleep(1 * time.Millisecond)
 	}
 	readingOpts++
 	opt := OPTS[key]
 	readingOpts--
-	return opt
+	return opt */
 }
 
 func readInput(input chan<- string) {
@@ -192,31 +236,31 @@ func getOpt(opts map[string]interface{}, arg string, stringOutput bool) interfac
 
 			if bytes.HasPrefix(a, []byte("[")) && bytes.HasSuffix(a, []byte("]")) {
 				a = a[1 : len(a)-2]
-				if reflect.TypeOf(res) != varType["array"] || !regex.Match(a, `^[0-9]+$`) {
+				if reflect.TypeOf(res) != common.VarType["array"] || !regex.Match(a, `^[0-9]+$`) {
 					a = []byte(getOpt(opts, string(a), true).(string))
 				}
 			}
 
-			if reflect.TypeOf(res) == varType["array"] && regex.Match(a, `^[0-9]+$`) {
+			if reflect.TypeOf(res) == common.VarType["array"] && regex.Match(a, `^[0-9]+$`) {
 				i, err := strconv.Atoi(string(a))
-				if err == nil && reflect.TypeOf(res) == varType["array"] && len(res.([]interface{})) > i {
+				if err == nil && reflect.TypeOf(res) == common.VarType["array"] && len(res.([]interface{})) > i {
 					res = res.([]interface{})[i]
 				}
-			} else if reflect.TypeOf(res) == varType["map"] {
+			} else if reflect.TypeOf(res) == common.VarType["map"] {
 				res = res.(map[string]interface{})[string(a)]
 			} else {
 				res = nil
 				break
 			}
 
-			if t := reflect.TypeOf(res); t != varType["map"] && t != varType["array"] {
+			if t := reflect.TypeOf(res); t != common.VarType["map"] && t != common.VarType["array"] {
 				break
 			}
 		}
 
 		if res != nil && res != false {
 			if stringOutput {
-				if t := reflect.TypeOf(res); t != varType["map"] && t != varType["array"] {
+				if t := reflect.TypeOf(res); t != common.VarType["map"] && t != common.VarType["array"] {
 					break
 				}
 			} else {
@@ -227,19 +271,19 @@ func getOpt(opts map[string]interface{}, arg string, stringOutput bool) interfac
 
 	if stringOutput {
 		switch reflect.TypeOf(res) {
-		case varType["string"]:
+		case common.VarType["string"]:
 			return string(res.(string))
-		case varType["byteArray"]:
+		case common.VarType["byteArray"]:
 			return string(res.([]byte))
-		case varType["byte"]:
+		case common.VarType["byte"]:
 			return string(res.(byte))
-		case varType["int32"]:
+		case common.VarType["int32"]:
 			return string(res.(int32))
-		case varType["int"]:
+		case common.VarType["int"]:
 			return strconv.Itoa(res.(int))
-		case varType["float64"]:
+		case common.VarType["float64"]:
 			return strconv.FormatFloat(res.(float64), 'f', -1, 64)
-		case varType["float32"]:
+		case common.VarType["float32"]:
 			return strconv.FormatFloat(float64(res.(float32)), 'f', -1, 32)
 		default:
 			return ""
@@ -249,24 +293,44 @@ func getOpt(opts map[string]interface{}, arg string, stringOutput bool) interfac
 	return res
 }
 
+func sendRes(res string){
+	if encKey != "" {
+		enc, err := common.Encrypt([]byte(res), encKey)
+		if err != nil {
+			return
+		}
+		fmt.Println(enc)
+		return
+	}
+	fmt.Println(res)
+}
+
 func runPreCompile(input string) {
 	inputData := strings.SplitN(input, ":", 2)
 
+	for freeMem < 10 {
+		time.Sleep(1 * time.Millisecond)
+	}
+
 	_, err := getFile(inputData[1], false, true)
 	if err != nil {
-		fmt.Println(inputData[0] + ":error")
+		sendRes(inputData[0] + ":error")
 		return
 	}
 
-	fmt.Println(inputData[0] + ":success")
+	sendRes(inputData[0] + ":success")
 }
 
 func runCompile(input string) {
 	inputData := strings.SplitN(input, ":", 3)
 
-	optStr, err := decompress(inputData[1])
+	for freeMem < 10 {
+		time.Sleep(1 * time.Millisecond)
+	}
+
+	optStr, err := common.Decompress(inputData[1])
 	if err != nil {
-		fmt.Println(inputData[0] + ":error")
+		sendRes(inputData[0] + ":error")
 		return
 	}
 
@@ -278,19 +342,19 @@ func runCompile(input string) {
 
 	file, err := getFile(inputData[2], false, true)
 	if err != nil {
-		fmt.Println(inputData[0] + ":error")
+		sendRes(inputData[0] + ":error")
 		return
 	}
 
 	out := compile(file, opts, true, true)
 
-	resOut, err := compress(string(out))
+	resOut, err := common.Compress(string(out))
 	if err != nil {
-		fmt.Println(inputData[0] + ":error")
+		sendRes(inputData[0] + ":error")
 		return
 	}
 
-	fmt.Println(inputData[0] + ":" + resOut)
+	sendRes(inputData[0] + ":" + resOut)
 }
 
 func getFile(filePath string, component bool, allowImport bool) (fileData, error) {
@@ -322,18 +386,20 @@ func getFile(filePath string, component bool, allowImport bool) (fileData, error
 
 	// try files
 	if component {
-		path, err = joinPath(root, compRoot, filePath+"."+ext)
+		path, err = common.JoinPath(root, compRoot, filePath+"."+ext)
 		if err == nil {
-			html, err = ioutil.ReadFile(path)
+			// html, err = ioutil.ReadFile(path)
+			html, err = os.ReadFile(path)
 			if err != nil {
 				html = nil
 			}
 		}
 
 		if html == nil {
-			path, err = joinPath(root, filePath+"."+ext)
+			path, err = common.JoinPath(root, filePath+"."+ext)
 			if err == nil {
-				html, err = ioutil.ReadFile(path)
+				// html, err = ioutil.ReadFile(path)
+				html, err = os.ReadFile(path)
 				if err != nil {
 					html = nil
 				}
@@ -342,9 +408,10 @@ func getFile(filePath string, component bool, allowImport bool) (fileData, error
 	}
 
 	if html == nil && allowImport {
-		path, err = joinPath(root, filePath+"."+ext)
+		path, err = common.JoinPath(root, filePath+"."+ext)
 		if err == nil {
-			html, err = ioutil.ReadFile(path)
+			// html, err = ioutil.ReadFile(path)
+			html, err = os.ReadFile(path)
 			if err != nil {
 				html = nil
 			}

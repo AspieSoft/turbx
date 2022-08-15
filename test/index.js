@@ -58,8 +58,7 @@ function log(){
 
 //? average
 //* js: 40-50ms
-//* go: 40ms then 30ms (functions may slow this down) (may be able to boost this by pre loading the regex)
-//* go: 420ms then 10ms (faster update speed)
+//* go: 20ms then 10ms (first is 12ms without nodemon) (can also hit 5ms)
 //! note: decreasing the updateSpeed value makes things faster. an updateSpeed of 1 can result in 10ms compile time
 
 

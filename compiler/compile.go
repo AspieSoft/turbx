@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"compiler/common"
 	"reflect"
 	"strconv"
 	"strings"
@@ -88,7 +89,7 @@ func preCompile(html []byte) (fileData, error) {
 			cont = compileMD(cont)
 		} else if regex.Match(data(1), `^(text|txt|raw)$`) {
 			tag = 't'
-			cont = escapeHTML(cont)
+			cont = common.EscapeHTML(cont)
 		} else if bytes.Equal(data(1), []byte("raw")) {
 			tag = 'r'
 		} else if regex.Match(data(1), `^(script|js)$`) {
@@ -300,11 +301,11 @@ func preCompile(html []byte) (fileData, error) {
 		var fn func(map[string][]byte, int, fileData) interface{}
 		funcs := preTagFuncs[string(data(1))]
 
-		for reflect.TypeOf(funcs) == varType["string"] {
+		for reflect.TypeOf(funcs) == common.VarType["string"] {
 			funcs = preTagFuncs[funcs.(string)]
 		}
 
-		if reflect.TypeOf(funcs) == varType["preTagFunc"] {
+		if reflect.TypeOf(funcs) == common.VarType["preTagFunc"] {
 			fn = funcs.(func(map[string][]byte, int, fileData) interface{})
 		} else {
 			return []byte{}
@@ -329,7 +330,7 @@ func preCompile(html []byte) (fileData, error) {
 			return []byte{}
 		}
 
-		return []byte(toString(cont))
+		return []byte(common.ToString(cont))
 	})
 
 
@@ -355,7 +356,7 @@ func compileLayout(res *[]byte, opts map[string]interface{}, allowImport bool){
 	layout := []byte("<BODY/>")
 	
 	template := "layout"
-	if opts["template"] != nil && reflect.TypeOf(opts["template"]) == varType["string"] {
+	if opts["template"] != nil && reflect.TypeOf(opts["template"]) == common.VarType["string"] {
 		template = opts["template"].(string)
 	} else if getOPT("template") != "" {
 		template = getOPT("template")
@@ -395,11 +396,11 @@ func compile(file fileData, opts map[string]interface{}, includeTemplate bool, a
 		var fn func(map[string][]byte, []byte, map[string]interface{}, int, fileData) interface{}
 		funcs := tagFuncs[string(data(1))]
 
-		for reflect.TypeOf(funcs) == varType["string"] {
+		for reflect.TypeOf(funcs) == common.VarType["string"] {
 			funcs = tagFuncs[funcs.(string)]
 		}
 
-		if reflect.TypeOf(funcs) == varType["tagFunc"] {
+		if reflect.TypeOf(funcs) == common.VarType["tagFunc"] {
 			fn = funcs.(func(map[string][]byte, []byte, map[string]interface{}, int, fileData) interface{})
 			} else {
 			return []byte{}
@@ -426,16 +427,16 @@ func compile(file fileData, opts map[string]interface{}, includeTemplate bool, a
 
 		res := []byte{}
 		contType := reflect.TypeOf(cont)
-		if contType == varType["arrayEachFnObj"] {
+		if contType == common.VarType["arrayEachFnObj"] {
 			for _, v := range cont.([]eachFnObj) {
 				res = append(res, runFuncs(v.html, v.opts, level + 1, file, allowImport)...)
 			}
-		}else if contType == varType["arrayByte"] {
+		}else if contType == common.VarType["arrayByte"] {
 			for _, v := range cont.([][]byte) {
 				res = append(res, runFuncs(v, opts, level + 1, file, allowImport)...)
 			}
 		}else{
-			res = runFuncs([]byte(toString(cont)), opts, level + 1, file, allowImport)
+			res = runFuncs([]byte(common.ToString(cont)), opts, level + 1, file, allowImport)
 		}
 
 		return res
@@ -472,19 +473,19 @@ func compile(file fileData, opts map[string]interface{}, includeTemplate bool, a
 					v := getOpt(opts, arg[1], false)
 					if esc {
 						vt := reflect.TypeOf(v)
-						if vt == varType["string"] {
-							v = string(escapeHTMLArgs([]byte(v.(string))))
-						}else if vt == varType["byteArray"] {
-							v = escapeHTMLArgs(v.([]byte))
-						}else if vt == varType["byte"] {
-							v = escapeHTMLArgs([]byte{v.(byte)})[0]
+						if vt == common.VarType["string"] {
+							v = string(common.EscapeHTMLArgs([]byte(v.(string))))
+						}else if vt == common.VarType["byteArray"] {
+							v = common.EscapeHTMLArgs(v.([]byte))
+						}else if vt == common.VarType["byte"] {
+							v = common.EscapeHTMLArgs([]byte{v.(byte)})[0]
 						}
 					}
 					compOpts[arg[0]] = v
 				}else{
 					v := getOpt(opts, string(val), true)
 					if esc {
-						vs := string(escapeHTMLArgs([]byte(v.(string))))
+						vs := string(common.EscapeHTMLArgs([]byte(v.(string))))
 						if strings.ContainsRune(vs, '=') {
 							arg := strings.SplitN(vs, "=", 2)
 							compOpts[arg[0]] = arg[1]
@@ -546,7 +547,7 @@ func compile(file fileData, opts map[string]interface{}, includeTemplate bool, a
 						v := bytes.SplitN(val, []byte("="), 2)
 						argV = []byte(getOpt(opts, string(v[1]), true).(string))
 						if esc {
-							argV = escapeHTMLArgs(argV)
+							argV = common.EscapeHTMLArgs(argV)
 						}
 
 						return append(v[0], '=')
@@ -554,7 +555,7 @@ func compile(file fileData, opts map[string]interface{}, includeTemplate bool, a
 
 					argV = []byte(getOpt(opts, string(val), true).(string))
 					if esc {
-						argV = escapeHTMLArgs(argV)
+						argV = common.EscapeHTMLArgs(argV)
 					}
 
 					return []byte{}
@@ -582,7 +583,7 @@ func compile(file fileData, opts map[string]interface{}, includeTemplate bool, a
 	// merge layout with content
 	if hasLayout {
 		for layout == nil {
-			time.Sleep(1000)
+			time.Sleep(1 * time.Millisecond)
 		}
 		file.html = regex.RepStr(layout, `(?i)<BODY/>`, file.html)
 	}
@@ -597,7 +598,7 @@ func compile(file fileData, opts map[string]interface{}, includeTemplate bool, a
 		val := getOpt(opts, string(data(2)), true).(string)
 
 		if esc {
-			return escapeHTML([]byte(val))
+			return common.EscapeHTML([]byte(val))
 		}
 
 		return []byte(val)
@@ -639,14 +640,14 @@ func compile(file fileData, opts map[string]interface{}, includeTemplate bool, a
 	})
 
 	// set css and js vars from public opts
-	if reflect.TypeOf(opts["public"]) == varType["map"] {
+	if reflect.TypeOf(opts["public"]) == common.VarType["map"] {
 		publicOpts := opts["public"].(map[string]interface{})
 
-		if reflect.TypeOf(publicOpts["js"]) == varType["map"] && len(publicOpts["js"].(map[string]interface{})) != 0 {
+		if reflect.TypeOf(publicOpts["js"]) == common.VarType["map"] && len(publicOpts["js"].(map[string]interface{})) != 0 {
 			jsVars := []byte("<script>")
 
 			for key, val := range publicOpts["js"].(map[string]interface{}) {
-				json, err := stringifyJSON(val)
+				json, err := common.StringifyJSON(val)
 				if err != nil {
 					continue
 				}
@@ -665,7 +666,7 @@ func compile(file fileData, opts map[string]interface{}, includeTemplate bool, a
 			}
 		}
 
-		if reflect.TypeOf(publicOpts["css"]) == varType["map"] && len(publicOpts["css"].(map[string]interface{})) != 0 {
+		if reflect.TypeOf(publicOpts["css"]) == common.VarType["map"] && len(publicOpts["css"].(map[string]interface{})) != 0 {
 			cssVars := []byte("<style>:root{")
 
 			for key, val := range publicOpts["css"].(map[string]interface{}) {
@@ -696,11 +697,11 @@ func runFuncs(html []byte, opts map[string]interface{}, level int, file fileData
 		var fn func(map[string][]byte, []byte, map[string]interface{}, int, fileData) interface{}
 		funcs := tagFuncs[string(data(1))]
 
-		for reflect.TypeOf(funcs) == varType["string"] {
+		for reflect.TypeOf(funcs) == common.VarType["string"] {
 			funcs = tagFuncs[funcs.(string)]
 		}
 
-		if reflect.TypeOf(funcs) == varType["tagFunc"] {
+		if reflect.TypeOf(funcs) == common.VarType["tagFunc"] {
 			fn = funcs.(func(map[string][]byte, []byte, map[string]interface{}, int, fileData) interface{})
 		} else {
 			return []byte{}
@@ -721,16 +722,16 @@ func runFuncs(html []byte, opts map[string]interface{}, level int, file fileData
 
 		res := []byte{}
 		contType := reflect.TypeOf(cont)
-		if contType == varType["arrayEachFnObj"] {
+		if contType == common.VarType["arrayEachFnObj"] {
 			for _, v := range cont.([]eachFnObj) {
 				res = append(res, runFuncs(v.html, v.opts, level + 1, file, allowImport)...)
 			}
-		}else if contType == varType["arrayByte"] {
+		}else if contType == common.VarType["arrayByte"] {
 			for _, v := range cont.([][]byte) {
 				res = append(res, runFuncs(v, opts, level + 1, file, allowImport)...)
 			}
 		}else{
-			res = runFuncs([]byte(toString(cont)), opts, level + 1, file, allowImport)
+			res = runFuncs([]byte(common.ToString(cont)), opts, level + 1, file, allowImport)
 		}
 
 		return res
@@ -767,19 +768,19 @@ func runFuncs(html []byte, opts map[string]interface{}, level int, file fileData
 					v := getOpt(opts, arg[1], false)
 					if esc {
 						vt := reflect.TypeOf(v)
-						if vt == varType["string"] {
-							v = string(escapeHTMLArgs([]byte(v.(string))))
-						}else if vt == varType["byteArray"] {
-							v = escapeHTMLArgs(v.([]byte))
-						}else if vt == varType["byte"] {
-							v = escapeHTMLArgs([]byte{v.(byte)})[0]
+						if vt == common.VarType["string"] {
+							v = string(common.EscapeHTMLArgs([]byte(v.(string))))
+						}else if vt == common.VarType["byteArray"] {
+							v = common.EscapeHTMLArgs(v.([]byte))
+						}else if vt == common.VarType["byte"] {
+							v = common.EscapeHTMLArgs([]byte{v.(byte)})[0]
 						}
 					}
 					compOpts[arg[0]] = v
 				}else{
 					v := getOpt(opts, string(val), true)
 					if esc {
-						vs := string(escapeHTMLArgs([]byte(v.(string))))
+						vs := string(common.EscapeHTMLArgs([]byte(v.(string))))
 						if strings.ContainsRune(vs, '=') {
 							arg := strings.SplitN(vs, "=", 2)
 							compOpts[arg[0]] = arg[1]

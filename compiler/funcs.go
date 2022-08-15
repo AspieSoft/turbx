@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"compiler/common"
 	"reflect"
 	"strconv"
 
@@ -166,11 +167,11 @@ var tagFuncs map[string]interface{} = map[string]interface{} {
 		res := []eachFnObj{}
 
 		objType := reflect.TypeOf(obj)
-		if objType != varType["map"] && objType != varType["array"] {
+		if objType != common.VarType["map"] && objType != common.VarType["array"] {
 			return []byte{}
 		}
 
-		if objType == varType["map"] {
+		if objType == common.VarType["map"] {
 			n := 0
 			for i, v := range obj.(map[string]interface{}) {
 				opt := opts
@@ -188,7 +189,7 @@ var tagFuncs map[string]interface{} = map[string]interface{} {
 				res = append(res, eachFnObj{html: cont, opts: opt})
 				n++
 			}
-		}else if objType == varType["array"] {
+		}else if objType == common.VarType["array"] {
 			n := 0
 			for i, v := range obj.([]interface{}) {
 				opt := opts
@@ -253,7 +254,7 @@ var tagFuncs map[string]interface{} = map[string]interface{} {
 			}
 		}
 
-		res, err := stringifyJSONSpaces(json, spaces, prefix)
+		res, err := common.StringifyJSONSpaces(json, spaces, prefix)
 		if err != nil {
 			return []byte{}
 		}
@@ -336,7 +337,7 @@ func tagFuncIf(args map[string][]byte, cont []byte, opts map[string]interface{},
 				arg1Any = getOpt(opts, string(arg1), false)
 			}
 
-			isTrue = IsZeroOfUnderlyingType(arg1Any)
+			isTrue = common.IsZeroOfUnderlyingType(arg1Any)
 			if pos {
 				isTrue = !isTrue
 			}
@@ -359,7 +360,7 @@ func tagFuncIf(args map[string][]byte, cont []byte, opts map[string]interface{},
 			arg1Any = arg1N
 		} else {
 			arg1Any = getOpt(opts, string(arg1), false)
-			if reflect.TypeOf(arg1Any) == varType["string"] {
+			if reflect.TypeOf(arg1Any) == common.VarType["string"] {
 				if arg1N, err := strconv.Atoi(string(arg1)); err == nil {
 					arg1Any = arg1N
 				}
@@ -381,7 +382,7 @@ func tagFuncIf(args map[string][]byte, cont []byte, opts map[string]interface{},
 			arg2Any = arg2N
 		} else {
 			arg2Any = getOpt(opts, string(arg2), false)
-			if reflect.TypeOf(arg2Any) == varType["string"] {
+			if reflect.TypeOf(arg2Any) == common.VarType["string"] {
 				if arg2N, err := strconv.Atoi(string(arg2)); err == nil {
 					arg2Any = arg2N
 				}
@@ -391,28 +392,28 @@ func tagFuncIf(args map[string][]byte, cont []byte, opts map[string]interface{},
 		lastArg = arg1
 
 		arg1Type := reflect.TypeOf(arg1Any)
-		if arg1Type == varType["int"] {
+		if arg1Type == common.VarType["int"] {
 			arg1Any = float64(arg1Any.(int))
-		}else if arg1Type == varType["float32"] {
+		}else if arg1Type == common.VarType["float32"] {
 			arg1Any = float64(arg1Any.(float32))
-		}else if arg1Type == varType["int32"] {
+		}else if arg1Type == common.VarType["int32"] {
 			arg1Any = float64(arg1Any.(int32))
-		}else if arg1Type == varType["byteArray"] {
+		}else if arg1Type == common.VarType["byteArray"] {
 			arg1Any = string(arg1Any.([]byte))
-		}else if arg1Type == varType["byte"] {
+		}else if arg1Type == common.VarType["byte"] {
 			arg1Any = string(arg1Any.(byte))
 		}
 
 		arg2Type := reflect.TypeOf(arg2Any)
-		if arg2Type == varType["int"] {
+		if arg2Type == common.VarType["int"] {
 			arg2Any = float64(arg2Any.(int))
-		}else if arg2Type == varType["float32"] {
+		}else if arg2Type == common.VarType["float32"] {
 			arg2Any = float64(arg2Any.(float32))
-		}else if arg2Type == varType["int32"] {
+		}else if arg2Type == common.VarType["int32"] {
 			arg2Any = float64(arg2Any.(int32))
-		}else if arg1Type == varType["byteArray"] {
+		}else if arg1Type == common.VarType["byteArray"] {
 			arg2Any = string(arg2Any.([]byte))
-		}else if arg1Type == varType["byte"] {
+		}else if arg1Type == common.VarType["byte"] {
 			arg2Any = string(arg2Any.(byte))
 		}
 
@@ -425,22 +426,22 @@ func tagFuncIf(args map[string][]byte, cont []byte, opts map[string]interface{},
 			isTrue = (arg1Any != arg2Any)
 			break
 		case ">=":
-			if arg1Type == reflect.TypeOf(arg2Any) && arg1Type == varType["float64"] {
+			if arg1Type == reflect.TypeOf(arg2Any) && arg1Type == common.VarType["float64"] {
 				isTrue = (arg1Any.(float64) >= arg2Any.(float64))
 			}
 			break
 		case "<=":
-			if arg1Type == reflect.TypeOf(arg2Any) && arg1Type == varType["float64"] {
+			if arg1Type == reflect.TypeOf(arg2Any) && arg1Type == common.VarType["float64"] {
 				isTrue = (arg1Any.(float64) <= arg2Any.(float64))
 			}
 			break
 		case ">":
-			if arg1Type == reflect.TypeOf(arg2Any) && arg1Type == varType["float64"] {
+			if arg1Type == reflect.TypeOf(arg2Any) && arg1Type == common.VarType["float64"] {
 				isTrue = (arg1Any.(float64) > arg2Any.(float64))
 			}
 			break
 		case "<":
-			if arg1Type == reflect.TypeOf(arg2Any) && arg1Type == varType["float64"] {
+			if arg1Type == reflect.TypeOf(arg2Any) && arg1Type == common.VarType["float64"] {
 				isTrue = (arg1Any.(float64) < arg2Any.(float64))
 			}
 			break

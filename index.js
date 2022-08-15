@@ -17,7 +17,7 @@ function requireOptional(path) {
 }
 
 const common = require('./common');
-const { sleep, randomToken, clean, toTimeMillis } = common;
+const { sleep, waitForMemory, randomToken, clean, toTimeMillis, encrypt, decrypt } = common;
 
 const taskQueue = multiTaskQueue(10);
 
@@ -46,6 +46,8 @@ const goCompiledResults = {};
 let goCompiler;
 let goCompilerLastInit = 0;
 
+const EncKey = randomToken(32);
+
 const goRecentId = {};
 setInterval(function () {
   const now = Date.now();
@@ -65,10 +67,18 @@ function initGoCompiler() {
     return;
   }
   goCompilerLastInit = Date.now();
-  if(DebugMode){
-    goCompiler = spawn('go', ['run', '.'], {cwd: join(__dirname, 'compiler')});
+
+  let compKey = zlib.gzipSync(EncKey);
+  if(!compKey){
+    throw new Error('Error: Turbx failed to compress random encryption key');
   }else{
-    goCompiler = spawn('./compiler/compiler', { cwd: __dirname });
+    compKey = compKey.toString('base64');
+  }
+
+  if(DebugMode){
+    goCompiler = spawn('go', ['run', '.', '--enc='+compKey], {cwd: join(__dirname, 'compiler')});
+  }else{
+    goCompiler = spawn('./compiler/compiler', ['--enc='+compKey], { cwd: __dirname });
   }
 
   goCompiler.on('close', () => {
@@ -89,6 +99,13 @@ function initGoCompiler() {
     if (data.startsWith('debug:')) {
       console.log(data);
       return;
+    }
+
+    if(EncKey){
+      data = await decrypt(data, EncKey)
+      if(!data){
+        return;
+      }
     }
 
     let idToken = undefined;
@@ -112,7 +129,7 @@ function initGoCompiler() {
 
   for(let key in golangOpts){
     if(typeof key === 'string' && key.match(/^[\w_-]+$/)){
-      goCompiler.stdin.write('set:' + key + '=' + golangOpts[key] + '\n');
+      goCompilerSendRes('set:' + key + '=' + golangOpts[key]);
     }
   }
 }
@@ -127,16 +144,27 @@ setInterval(async function(){
   }
 }, 1000);
 
+async function goCompilerSendRes(res){
+  if(EncKey){
+    const enc = await encrypt(res, EncKey);
+    if(enc){
+      goCompiler.stdin.write(enc + '\n');
+    }
+  }else{
+    goCompiler.stdin.write(res);
+  }
+}
+
 function goCompilerSetOpt(key, value) {
   key = key.toString().replace(/[^\w_-]/g, '');
   value = value.toString().replace(/[\r\n\v]/g, '');
   golangOpts[key] = value;
-  goCompiler.stdin.write('set:' + key + '=' + value + '\n');
+  goCompilerSendRes('set:' + key + '=' + value);
 }
 
 async function goCompilerPreCompile(file) {
   const token = randomToken(64);
-  goCompiler.stdin.write('pre:' + token + ':' + file.toString().replace(/[\r\n\v]/g, '') + '\n');
+  goCompilerSendRes('pre:' + token + ':' + file.toString().replace(/[\r\n\v]/g, ''));
 
   const updateSpeed = Number(OPTS.updateSpeed) || 10;
 
@@ -158,6 +186,7 @@ async function goCompilerCompile(file, opts) {
 
   let zippedOpts = undefined;
 
+  await waitForMemory();
   zlib.gzip(JSON.stringify(opts), (err, buffer) => {
     if (err) {
       goCompiledResults[token] = 'error';
@@ -183,7 +212,7 @@ async function goCompilerCompile(file, opts) {
   }
 
   let reqStarted = Date.now();
-  goCompiler.stdin.write(token + ':' + zippedOpts + ':' + file.toString().replace(/[\r\n\v]/g, '') + '\n');
+  goCompilerSendRes(token + ':' + zippedOpts + ':' + file.toString().replace(/[\r\n\v]/g, ''));
 
   while (loops-- > 0) {
     if (goCompiledResults[token]) {
@@ -192,7 +221,7 @@ async function goCompilerCompile(file, opts) {
 
     if (reqStarted < goCompilerLastInit) {
       reqStarted = Date.now();
-      goCompiler.stdin.write(token + ':' + zippedOpts + ':' + file.toString().replace(/[\r\n\v]/g, '') + '\n');
+      goCompilerSendRes(token + ':' + zippedOpts + ':' + file.toString().replace(/[\r\n\v]/g, ''));
     }
 
     await sleep(updateSpeed);
@@ -203,6 +232,7 @@ async function goCompilerCompile(file, opts) {
 
   let output = undefined;
   if (res) {
+    await waitForMemory();
     zlib.gunzip(Buffer.from(res, 'base64'), (err, res) => {
       if (err) {
         output = null;
@@ -226,7 +256,7 @@ async function goCompilerCompile(file, opts) {
 
 function exitHandler(options, exitCode) {
   if (options.cleanup) {
-    goCompiler.stdin.write('stop');
+    goCompilerSendRes('stop');
   }
   if (options.exit) {
     process.exit(exitCode);
