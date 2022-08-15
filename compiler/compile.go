@@ -32,6 +32,8 @@ var singleTagList map[string]bool = map[string]bool{
 	"track": true,
 }
 
+//todo: add option to ignore specific option vars (for example: to compile them later and cache the other vars)
+
 func preCompile(html []byte) (fileData, error) {
 	html = append([]byte("\n"), html...)
 	html = append(html, []byte("\n")...)
