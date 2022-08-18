@@ -16,8 +16,7 @@ A Fast and Easy To Use View Engine, Compiled In Go.
 
 ## Whats New
 
-- Module now compiles templates in [go](https://go.dev/)
-- golang compiler now has improved crash recovery
+- Repeated vars can now optionally be pre compiled
 
 ## Installation
 
@@ -50,7 +49,41 @@ app.set('views', join(__dirname, 'views'));
 app.set('view engine', 'xhtml');
 
 app.use(function(req, res, next){
-  res.render('index', {title: 'example', content: '<h2>Hello, World!</h2>'});
+  res.render('index', {
+    title: 'example',
+    content: '<h2>Hello, World!</h2>',
+    const: {
+      // the const object can be used to precompile a var, and not need to compile it again
+      GoogleAuthToken: 'This Value Will Never Change',
+    },
+  });
+});
+
+// pre compiling constant vars
+app.use(async function(req, res, next){
+  let preCompiled = await res.preCompiled('index');
+  if(!preCompiled){
+    const SomethingConsistant = await someLongProcess();
+
+    await res.preRender('index', {
+      myConstVar: SomethingConsistant,
+    });
+  }
+
+  res.render('index', {
+    title: 'example',
+    content: '<h2>Hello, World!</h2>',
+  });
+});
+
+// pre compiling and overriding the cache
+app.use('/fix-cache', async function(req, res, next){
+  res.render('index', {
+    PreCompile: true, // this will override the existing cache and rebuild it with the new data (or create a new cache)
+
+    title: 'example',
+    content: '<h2>Hello, World!</h2>',
+  });
 });
 
 ```

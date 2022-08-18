@@ -35,6 +35,7 @@ type fileData struct {
 	args   []map[string][]byte
 	str    [][]byte
 	script []scriptObj
+	path string
 }
 
 type eachFnObj struct {
@@ -51,7 +52,6 @@ var encKey string
 var freeMem float64
 
 func main() {
-
 	for _, arg := range os.Args {
 		if strings.HasPrefix(arg, "--enc=") {
 			encKey, _ = common.Decompress(strings.Replace(arg, "--enc=", "", 1))
@@ -68,6 +68,7 @@ func main() {
 
 	common.VarType["arrayEachFnObj"] = reflect.TypeOf([]eachFnObj{})
 	common.VarType["tagFunc"] = reflect.TypeOf(func(map[string][]byte, []byte, map[string]interface{}, int, fileData) interface{} {return nil})
+	common.VarType["tagFuncPre"] = reflect.TypeOf(func(map[string][]byte, []byte, map[string]interface{}, int, fileData, bool) (interface{}, bool) {return nil, false})
 	common.VarType["preTagFunc"] = reflect.TypeOf(func(map[string][]byte, int, fileData) interface{} {return nil})
 
 	fileCache = ttlcache.New[string, fileData](
@@ -114,6 +115,9 @@ func main() {
 		} else if strings.HasPrefix(input, "pre:") {
 			pre := strings.SplitN(input, ":", 2)[1]
 			go runPreCompile(pre)
+		} else if strings.HasPrefix(input, "has:") {
+			pre := strings.SplitN(input, ":", 2)[1]
+			go checkCompiledCache(pre)
 		} else if strings.ContainsRune(input, ':') {
 			go runCompile(input)
 		}
@@ -182,18 +186,8 @@ func watchViews(root string) {
 	<-done
 }
 
-/* var writingOpts int = 0
-var readingOpts int = 0 */
-
 func setOPT(key string, val string) {
 	OPTS.Set(key, val)
-
-	/* writingOpts++
-	for readingOpts != 0 {
-		time.Sleep(1 * time.Millisecond)
-	}
-	OPTS[key] = val
-	writingOpts-- */
 }
 
 func getOPT(key string) string {
@@ -201,14 +195,6 @@ func getOPT(key string) string {
 		return val
 	}
 	return ""
-
-	/* for writingOpts != 0 {
-		time.Sleep(1 * time.Millisecond)
-	}
-	readingOpts++
-	opt := OPTS[key]
-	readingOpts--
-	return opt */
 }
 
 func readInput(input chan<- string) {
@@ -312,13 +298,24 @@ func runPreCompile(input string) {
 		time.Sleep(1 * time.Millisecond)
 	}
 
-	_, err := getFile(inputData[1], false, true)
+	_, err := getFile(inputData[1], false, true, false)
 	if err != nil {
 		sendRes(inputData[0] + ":error")
 		return
 	}
 
 	sendRes(inputData[0] + ":success")
+}
+
+func checkCompiledCache(input string) {
+	inputData := strings.SplitN(input, ":", 2)
+
+	cache := fileCache.Get(inputData[1] + ".pre")
+	if cache != nil {
+		sendRes(inputData[0] + ":true")
+	}else{
+		sendRes(inputData[0] + ":false")
+	}
 }
 
 func runCompile(input string) {
@@ -340,13 +337,18 @@ func runCompile(input string) {
 		opts = map[string]interface{}{}
 	}
 
-	file, err := getFile(inputData[2], false, true)
+	pre := false
+	if opts["PreCompile"] == true {
+		pre = true
+	}
+
+	file, err := getFile(inputData[2], false, true, pre)
 	if err != nil {
 		sendRes(inputData[0] + ":error")
 		return
 	}
 
-	out := compile(file, opts, true, true)
+	out := compile(file, opts, true, true, pre)
 
 	resOut, err := common.Compress(string(out))
 	if err != nil {
@@ -357,7 +359,7 @@ func runCompile(input string) {
 	sendRes(inputData[0] + ":" + resOut)
 }
 
-func getFile(filePath string, component bool, allowImport bool) (fileData, error) {
+func getFile(filePath string, component bool, allowImport bool, pre bool) (fileData, error) {
 
 	cache := fileCache.Get(filePath)
 	if cache != nil {
@@ -423,7 +425,7 @@ func getFile(filePath string, component bool, allowImport bool) (fileData, error
 	}
 
 	// pre compile
-	file, err := preCompile(html)
+	file, err := preCompile(html, filePath)
 	if err != nil {
 		return fileData{}, err
 	}

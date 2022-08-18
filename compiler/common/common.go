@@ -28,6 +28,7 @@ func init(){
 
 	VarType["array"] = reflect.TypeOf([]interface{}{})
 	VarType["arrayByte"] = reflect.TypeOf([][]byte{})
+	VarType["arrayString"] = reflect.TypeOf([]string{})
 	VarType["map"] = reflect.TypeOf(map[string]interface{}{})
 	// VarType["arrayEachFnObj"] = reflect.TypeOf([]eachFnObj{})
 

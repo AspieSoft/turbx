@@ -263,12 +263,12 @@ var tagFuncs map[string]interface{} = map[string]interface{} {
 	},
 }
 
-func tagFuncIf(args map[string][]byte, cont []byte, opts map[string]interface{}, level int, file fileData) interface{} {
+func tagFuncIf(args map[string][]byte, cont []byte, opts map[string]interface{}, level int, file fileData, pre bool) (interface{}, bool) {
 	isTrue := false
 	lastArg := []byte{}
 
 	if len(args) == 0 {
-		return cont
+		return cont, false
 	}
 
 	for i := 0; i < len(args); i++ {
@@ -320,6 +320,10 @@ func tagFuncIf(args map[string][]byte, cont []byte, opts map[string]interface{},
 				arg1 = arg1[1:]
 			}
 
+			if len(arg1) == 0 {
+				arg1 = arg
+			}
+
 			lastArg = arg1
 
 			if regex.Match(arg1, `^["'\'](.*)["'\']$`) {
@@ -335,6 +339,9 @@ func tagFuncIf(args map[string][]byte, cont []byte, opts map[string]interface{},
 				arg1Any = arg1N
 			} else {
 				arg1Any = getOpt(opts, string(arg1), false)
+				if pre && arg1Any == nil {
+					return nil, true
+				}
 			}
 
 			isTrue = common.IsZeroOfUnderlyingType(arg1Any)
@@ -360,6 +367,10 @@ func tagFuncIf(args map[string][]byte, cont []byte, opts map[string]interface{},
 			arg1Any = arg1N
 		} else {
 			arg1Any = getOpt(opts, string(arg1), false)
+			if pre && arg1Any == nil {
+				return nil, true
+			}
+
 			if reflect.TypeOf(arg1Any) == common.VarType["string"] {
 				if arg1N, err := strconv.Atoi(string(arg1)); err == nil {
 					arg1Any = arg1N
@@ -382,6 +393,10 @@ func tagFuncIf(args map[string][]byte, cont []byte, opts map[string]interface{},
 			arg2Any = arg2N
 		} else {
 			arg2Any = getOpt(opts, string(arg2), false)
+			if pre && arg2Any == nil {
+				return nil, true
+			}
+
 			if reflect.TypeOf(arg2Any) == common.VarType["string"] {
 				if arg2N, err := strconv.Atoi(string(arg2)); err == nil {
 					arg2Any = arg2N
@@ -420,33 +435,25 @@ func tagFuncIf(args map[string][]byte, cont []byte, opts map[string]interface{},
 		switch sign {
 		case "=":
 			isTrue = (arg1Any == arg2Any)
-			break
 		case "!=":
 		case "!":
 			isTrue = (arg1Any != arg2Any)
-			break
 		case ">=":
 			if arg1Type == reflect.TypeOf(arg2Any) && arg1Type == common.VarType["float64"] {
 				isTrue = (arg1Any.(float64) >= arg2Any.(float64))
 			}
-			break
 		case "<=":
 			if arg1Type == reflect.TypeOf(arg2Any) && arg1Type == common.VarType["float64"] {
 				isTrue = (arg1Any.(float64) <= arg2Any.(float64))
 			}
-			break
 		case ">":
 			if arg1Type == reflect.TypeOf(arg2Any) && arg1Type == common.VarType["float64"] {
 				isTrue = (arg1Any.(float64) > arg2Any.(float64))
 			}
-			break
 		case "<":
 			if arg1Type == reflect.TypeOf(arg2Any) && arg1Type == common.VarType["float64"] {
 				isTrue = (arg1Any.(float64) < arg2Any.(float64))
 			}
-			break
-		default:
-			break
 		}
 
 		i += 2
@@ -454,7 +461,7 @@ func tagFuncIf(args map[string][]byte, cont []byte, opts map[string]interface{},
 
 	elseOpt := regex.Match(cont, `(?s)<_el(if|se):`+strconv.Itoa(level)+`(\s+[0-9]+|)/>(.*)$`)
 	if elseOpt && isTrue {
-		return regex.RepStr(cont, `(?s)<_el(if|se):`+strconv.Itoa(level)+`(\s+[0-9]+|)/>(.*)$`, []byte(""))
+		return regex.RepStr(cont, `(?s)<_el(if|se):`+strconv.Itoa(level)+`(\s+[0-9]+|)/>(.*)$`, []byte("")), false
 	} else if elseOpt {
 		blankElse := false
 		newArgs, newCont := map[string][]byte{}, []byte{}
@@ -470,15 +477,13 @@ func tagFuncIf(args map[string][]byte, cont []byte, opts map[string]interface{},
 		}, true)
 
 		if blankElse {
-			return newCont
+			return newCont, false
 		}
 
-		// https://stackoverflow.com/questions/61830637/how-to-self-reference-a-function
-		// return runTagFunc("if", newArgs, newCont, opts, level, file)
-		return tagFuncIf(newArgs, newCont, opts, level, file)
+		return tagFuncIf(newArgs, newCont, opts, level, file, pre)
 	} else if isTrue {
-		return cont
+		return cont, false
 	}
 
-	return []byte{}
+	return []byte{}, false
 }

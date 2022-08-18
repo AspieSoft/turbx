@@ -1,5 +1,20 @@
 <h1>Hello World</h1>
 
+<br><br>
+
+{{emptyVar}}
+{{{emptyVar}}}
+
+<div {{emptyVar="emptyVar"}}></div>
+<div {{="emptyVar"}}></div>
+<div emptyVar="{{emptyVar}}"></div>
+
+<_if emptyVar>
+  this should not run before the cache
+</_if>
+
+<br><br>
+
 %!encoding!%
 
 'test'

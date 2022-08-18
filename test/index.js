@@ -3,6 +3,8 @@ const app = express()
 const {join} = require('path')
 const turbx = require('../index')
 
+const sleep = (waitTimeInMs) => new Promise(resolve => setTimeout(resolve, waitTimeInMs));
+
 function log(){
   let args = [];
   let col = '';
@@ -83,22 +85,79 @@ app.set('view engine', 'xhtml');
 turbx.rateLimit();
 
 
-app.get('/', function (req, res) {
+app.get('/', async (req, res) => {
+  let preCompiled = await res.preCompiled('index');
+  console.log(preCompiled);
+
   res.render('index', {
-    var1: 'this is a test',
-    test: 1,
-    test0: false,
-    test1: true,
-    url: 'https://www.aspiesoft.com',
-    arr: [1, 2, 3],
-    obj: {
-      test1: 'this is test 1',
-      test2: 'this is test 2',
-      test3: 'this is test 3',
+    // PreCompile: true,
+
+    const: {
+      var1: 'this is a test',
+      test: 1,
+      test0: false,
+      test1: true,
+      url: 'https://www.aspiesoft.com',
+      arr: [1, 2, 3],
+      obj: {
+        test1: 'this is test 1',
+        test2: 'this is test 2',
+        test3: 'this is test 3',
+      },
+      testKey: 'test1',
     },
-    testKey: 'test1',
   });
 });
+
+app.get('/cache', async (req, res) => {
+  let preCompiled = await res.preCompiled('index');
+  console.log(preCompiled);
+
+  let opts = {};
+  if(!preCompiled){
+    opts = {
+      var1: 'this is a test',
+      test: 1,
+      test0: false,
+      test1: true,
+      url: 'https://www.aspiesoft.com',
+      arr: [1, 2, 3],
+      obj: {
+        test1: 'this is test 1',
+        test2: 'this is test 2',
+        test3: 'this is test 3',
+      },
+      testKey: 'test1',
+    };
+  }
+
+  res.render('index', {
+    ...opts,
+    emptyVar: 'This var was not from the cache!',
+  });
+});
+
+app.get('/slow', async (req, res, next) => {
+  let preCompiled = await res.preCompiled('basic');
+
+  if(!preCompiled){
+    const SomethingConsistant = await someLongProcess();
+
+    await res.preRender('basic', {
+      myConstVar: SomethingConsistant,
+    });
+  }
+
+  res.render('basic', {
+    title: 'example',
+    content: '<h2>Hello, World!</h2>',
+  });
+});
+
+async function someLongProcess(){
+  await sleep(3000);
+  return 'test 1';
+}
 
 
 // auto set all views to public pages

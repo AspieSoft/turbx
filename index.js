@@ -162,11 +162,16 @@ function goCompilerSetOpt(key, value) {
   goCompilerSendRes('set:' + key + '=' + value);
 }
 
-async function goCompilerPreCompile(file) {
+async function goCompilerPreCompile(file, opts) {
+  if(typeof opts === 'object'){
+    opts.PreCompile = true;
+    return await goCompilerCompile(file, opts);
+  }
+
   const token = randomToken(64);
   goCompilerSendRes('pre:' + token + ':' + file.toString().replace(/[\r\n\v]/g, ''));
 
-  const updateSpeed = Number(OPTS.updateSpeed) || 10;
+  const updateSpeed = Number(OPTS.updateSpeed) || 1;
 
   let loops = (toTimeMillis(OPTS.timeout) || 30000) / updateSpeed;
   while (loops-- > 0) {
@@ -179,6 +184,28 @@ async function goCompilerPreCompile(file) {
   const res = goCompiledResults[token];
   delete goCompiledResults[token];
   return res;
+}
+
+async function goCompilerHasCache(file) {
+  const token = randomToken(64);
+  goCompilerSendRes('has:' + token + ':' + file.toString().replace(/[\r\n\v]/g, ''));
+
+  const updateSpeed = Number(OPTS.updateSpeed) || 1;
+
+  let loops = (toTimeMillis(OPTS.timeout) || 30000) / updateSpeed;
+  while (loops-- > 0) {
+    if (goCompiledResults[token]) {
+      break;
+    }
+    await sleep(updateSpeed);
+  }
+
+  const res = goCompiledResults[token];
+  delete goCompiledResults[token];
+  if(res === 'true' || res === true){
+    return true;
+  }
+  return false;
 }
 
 async function goCompilerCompile(file, opts) {
@@ -197,7 +224,7 @@ async function goCompilerCompile(file, opts) {
     zippedOpts = buffer.toString('base64');
   });
 
-  const updateSpeed = Number(OPTS.updateSpeed) || 10;
+  const updateSpeed = Number(OPTS.updateSpeed) || 1;
 
   let loops = (toTimeMillis(OPTS.timeout) || 30000) / updateSpeed;
   while (loops-- > 0) {
@@ -279,6 +306,10 @@ function engine(path, opts, cb) {
   path = clean(path);
   opts = clean(opts);
 
+  if(!opts){
+    opts = {};
+  }
+
   if (!OPTS.ext) {
     OPTS.ext = opts.settings['view engine'] || (path.includes('.') ? path.substring(path.lastIndexOf('.')).replace('.', '') : 'xhtml');
     goCompilerSetOpt('ext', OPTS.ext);
@@ -303,6 +334,18 @@ function engine(path, opts, cb) {
     }
     if (typeof opts.before === 'function') {
       opts.before(opts);
+    }
+
+    if(typeof opts.const === 'object'){
+      if(!(await goCompilerHasCache(path))){
+        const preOpts = {
+          ...opts,
+          ...opts.const,
+          PreCompile: true,
+        };
+        await goCompilerCompile(path, preOpts);
+      }
+      delete opts.const;
     }
 
     let data = await goCompilerCompile(path, opts);
@@ -407,6 +450,12 @@ function setOpts(opts) {
 }
 
 function setupExpress(app) {
+  app.use((req, res, next) => {
+    res.preRender = goCompilerPreCompile;
+    res.preCompiled = goCompilerHasCache;
+    next();
+  });
+
   return;
 
   app.use('/lazyload/:token/:component', async (req, res, next) => {
@@ -539,6 +588,9 @@ module.exports = (function () {
 
     return engine;
   };
+
+  exports.preRender = goCompilerPreCompile;
+  exports.preCompiled = goCompilerHasCache;
 
   exports.renderPages = expressFallbackPages;
   exports.rateLimit = expressRateLimit;

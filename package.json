@@ -1,12 +1,15 @@
 {
   "name": "@aspiesoft/turbx",
-  "version": "0.2.9",
+  "version": "0.3.0",
   "description": "A Fast and Easy To Use View Engine, Compiled In Go",
   "author": "AspieSoft",
   "license": "MIT",
   "main": "index.js",
   "scripts": {
     "test": "nodemon -e \"js,go\" test/run.js"
+  },
+  "nodemonConfig": {
+    "delay": 2500
   },
   "engines": {
     "node": ">=12.0.0"
