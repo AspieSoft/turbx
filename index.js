@@ -336,18 +336,6 @@ function engine(path, opts, cb) {
       opts.before(opts);
     }
 
-    if(typeof opts.const === 'object'){
-      if(!(await goCompilerHasCache(path))){
-        const preOpts = {
-          ...opts,
-          ...opts.const,
-          PreCompile: true,
-        };
-        await goCompilerCompile(path, preOpts);
-      }
-      delete opts.const;
-    }
-
     let data = await goCompilerCompile(path, opts);
 
     if (typeof opts.after === 'function') {

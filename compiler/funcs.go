@@ -263,7 +263,7 @@ var tagFuncs map[string]interface{} = map[string]interface{} {
 	},
 }
 
-func tagFuncIf(args map[string][]byte, cont []byte, opts map[string]interface{}, level int, file fileData, pre bool) (interface{}, bool) {
+func tagFuncIf(args map[string][]byte, cont []byte, opts map[string]interface{}, level int, file fileData, pre int) (interface{}, bool) {
 	isTrue := false
 	lastArg := []byte{}
 
@@ -339,7 +339,7 @@ func tagFuncIf(args map[string][]byte, cont []byte, opts map[string]interface{},
 				arg1Any = arg1N
 			} else {
 				arg1Any = getOpt(opts, string(arg1), false)
-				if pre && arg1Any == nil {
+				if pre == 1 && arg1Any == nil {
 					return nil, true
 				}
 			}
@@ -367,7 +367,7 @@ func tagFuncIf(args map[string][]byte, cont []byte, opts map[string]interface{},
 			arg1Any = arg1N
 		} else {
 			arg1Any = getOpt(opts, string(arg1), false)
-			if pre && arg1Any == nil {
+			if pre == 1 && arg1Any == nil {
 				return nil, true
 			}
 
@@ -393,7 +393,7 @@ func tagFuncIf(args map[string][]byte, cont []byte, opts map[string]interface{},
 			arg2Any = arg2N
 		} else {
 			arg2Any = getOpt(opts, string(arg2), false)
-			if pre && arg2Any == nil {
+			if pre == 1 && arg2Any == nil {
 				return nil, true
 			}
 

@@ -35,7 +35,7 @@ type fileData struct {
 	args   []map[string][]byte
 	str    [][]byte
 	script []scriptObj
-	path string
+	path   string
 }
 
 type eachFnObj struct {
@@ -59,7 +59,7 @@ func main() {
 	}
 
 	freeMem = common.FormatMemoryUsage(memory.FreeMemory())
-	go (func(){
+	go (func() {
 		for {
 			time.Sleep(1 * time.Millisecond)
 			freeMem = common.FormatMemoryUsage(memory.FreeMemory())
@@ -67,9 +67,11 @@ func main() {
 	})()
 
 	common.VarType["arrayEachFnObj"] = reflect.TypeOf([]eachFnObj{})
-	common.VarType["tagFunc"] = reflect.TypeOf(func(map[string][]byte, []byte, map[string]interface{}, int, fileData) interface{} {return nil})
-	common.VarType["tagFuncPre"] = reflect.TypeOf(func(map[string][]byte, []byte, map[string]interface{}, int, fileData, bool) (interface{}, bool) {return nil, false})
-	common.VarType["preTagFunc"] = reflect.TypeOf(func(map[string][]byte, int, fileData) interface{} {return nil})
+	common.VarType["tagFunc"] = reflect.TypeOf(func(map[string][]byte, []byte, map[string]interface{}, int, fileData) interface{} { return nil })
+	common.VarType["tagFuncPre"] = reflect.TypeOf(func(map[string][]byte, []byte, map[string]interface{}, int, fileData, int) (interface{}, bool) {
+		return nil, false
+	})
+	common.VarType["preTagFunc"] = reflect.TypeOf(func(map[string][]byte, int, fileData) interface{} { return nil })
 
 	fileCache = ttlcache.New[string, fileData](
 		ttlcache.WithTTL[string, fileData](2 * time.Hour),
@@ -124,13 +126,13 @@ func main() {
 	}
 }
 
-
-func watchViewsReadSubFolder(watcher *fsnotify.Watcher, dir string){
+func watchViewsReadSubFolder(watcher *fsnotify.Watcher, dir string) {
 	// files, err := ioutil.ReadDir(dir)
 	files, err := os.ReadDir(dir)
 	if err != nil {
 		return
 	}
+
 	for _, file := range files {
 		if file.IsDir() {
 			if path, err := common.JoinPath(dir, file.Name()); err == nil {
@@ -139,7 +141,6 @@ func watchViewsReadSubFolder(watcher *fsnotify.Watcher, dir string){
 			}
 		}
 	}
-
 }
 
 func watchViews(root string) {
@@ -163,13 +164,17 @@ func watchViews(root string) {
 					fileCache.Delete(filePath)
 					filePath = string(regex.RepStr([]byte(filePath), `\.[\w]+$`, []byte{}))
 					fileCache.Delete(filePath)
-				}else if stat.IsDir() {
+				} else if stat.IsDir() {
 					watcher.Add(filePath)
-				}else{
+				} else {
 					filePath = strings.Replace(strings.Replace(filePath, root, "", 1), "/", "", 1)
+
 					fileCache.Delete(filePath)
+					fileCache.Delete(filePath + ".pre")
+
 					filePath = string(regex.RepStr([]byte(filePath), `\.[\w]+$`, []byte{}))
 					fileCache.Delete(filePath)
+					fileCache.Delete(filePath + ".pre")
 				}
 
 			}
@@ -279,7 +284,7 @@ func getOpt(opts map[string]interface{}, arg string, stringOutput bool) interfac
 	return res
 }
 
-func sendRes(res string){
+func sendRes(res string) {
 	if encKey != "" {
 		enc, err := common.Encrypt([]byte(res), encKey)
 		if err != nil {
@@ -298,7 +303,7 @@ func runPreCompile(input string) {
 		time.Sleep(1 * time.Millisecond)
 	}
 
-	_, err := getFile(inputData[1], false, true, false)
+	_, err := getFile(inputData[1], false, true)
 	if err != nil {
 		sendRes(inputData[0] + ":error")
 		return
@@ -313,7 +318,7 @@ func checkCompiledCache(input string) {
 	cache := fileCache.Get(inputData[1] + ".pre")
 	if cache != nil {
 		sendRes(inputData[0] + ":true")
-	}else{
+	} else {
 		sendRes(inputData[0] + ":false")
 	}
 }
@@ -337,18 +342,36 @@ func runCompile(input string) {
 		opts = map[string]interface{}{}
 	}
 
-	pre := false
+	pre := 0
+	var preCompileConst map[string]interface{}
 	if opts["PreCompile"] == true {
-		pre = true
+		pre = 1
+	}else if reflect.TypeOf(opts["const"]) == common.VarType["map"] {
+		pre = 1
+		// preCompileConst = common.CopyMap(opts["const"].(map[string]interface{}))
+		preCompileConst = opts["const"].(map[string]interface{})
+		for key, val := range preCompileConst {
+			if _, ok := opts[key]; !ok {
+				opts[key] = val
+			}
+		}
+		preCompileConst["PreCompile"] = true
+		delete(opts, "const")
 	}
 
-	file, err := getFile(inputData[2], false, true, pre)
+	file, err := getFile(inputData[2], false, true)
 	if err != nil {
 		sendRes(inputData[0] + ":error")
 		return
 	}
 
-	out := compile(file, opts, true, true, pre)
+	var out []byte
+	if preCompileConst != nil {
+		out = compile(file, opts, true, true, 0)
+		go compile(file, preCompileConst, true, true, pre)
+	}else{
+		out = compile(file, opts, true, true, pre)
+	}
 
 	resOut, err := common.Compress(string(out))
 	if err != nil {
@@ -359,8 +382,7 @@ func runCompile(input string) {
 	sendRes(inputData[0] + ":" + resOut)
 }
 
-func getFile(filePath string, component bool, allowImport bool, pre bool) (fileData, error) {
-
+func getFile(filePath string, component bool, allowImport bool) (fileData, error) {
 	cache := fileCache.Get(filePath)
 	if cache != nil {
 		return cache.Value(), nil

@@ -3,10 +3,11 @@ module compiler
 go 1.18
 
 require (
-	github.com/AspieSoft/go-regex v1.3.1
+	github.com/AspieSoft/go-regex v1.3.2
 	github.com/alphadose/haxmap v0.1.0
 	github.com/drhodes/golorem v0.0.0-20220328165741-da82e5b29246
 	github.com/fsnotify/fsnotify v1.5.4
+	github.com/gomarkdown/markdown v0.0.0-20220817224203-2206187d3406
 	github.com/jellydator/ttlcache/v3 v3.0.0
 	github.com/pbnjay/memory v0.0.0-20210728143218-7b4eea64cf58
 )

@@ -106,6 +106,12 @@ app.get('/', async (req, res) => {
       },
       testKey: 'test1',
     },
+
+    public: {
+      js: {
+        test: 'Test 1',
+      }
+    }
   });
 });
 

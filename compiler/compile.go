@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/AspieSoft/go-regex"
+	"github.com/gomarkdown/markdown"
 	"github.com/jellydator/ttlcache/v3"
 )
 
@@ -84,6 +85,8 @@ func preCompile(html []byte, filePath string) (fileData, error) {
 	html = regex.RepFunc(html, `(?s)<(script|js|style|css|less|markdown|md|text|txt|raw)(\s+.*?|)>(.*?)</\1>`, func(data func(int) []byte) []byte {
 		cont := decodeEncoding(decodeStrings(data(3), 0))
 
+		args := decodeStrings(data(2), 0)
+
 		var tag byte
 		if regex.Match(data(1), `^(markdown|md)$`) {
 			tag = 'm'
@@ -99,9 +102,14 @@ func preCompile(html []byte, filePath string) (fileData, error) {
 		} else if regex.Match(data(1), `^(style|css|less)$`) {
 			tag = 'c'
 			cont = compileCSS(cont)
+			/* if regex.Match(args, `(?s)(^|\s+)type=(["'\'])((?:\\[\\"'\']|.)*?)\2`) {
+				args = regex.RepFuncFirst(args, `(?s)(^|\s+)type=(["'\'])((?:\\[\\"'\']|.)*?)\2`, func(d func(int) []byte) []byte {
+					return regex.JoinBytes(d(1), []byte("type="), d(2), "text/less", d(2))
+				})
+			}else{
+				args = append(args, []byte(` type="text/less"`)...)
+			} */
 		}
-
-		args := decodeStrings(data(2), 0)
 
 		objScripts = append(objScripts, scriptObj{tag, args, cont})
 		i := strconv.Itoa(len(objScripts) - 1)
@@ -343,7 +351,7 @@ func preCompile(html []byte, filePath string) (fileData, error) {
 	
 			if !preCompiledComponent[name] {
 				preCompiledComponent[name] = true
-				getFile(name, true, true, false)
+				getFile(name, true, true)
 			}
 	
 			return []byte{}
@@ -353,7 +361,7 @@ func preCompile(html []byte, filePath string) (fileData, error) {
 	return fileData{html: html, args: argList, str: stringList, script: objScripts, path: filePath}, nil
 }
 
-func compileLayout(res *[]byte, opts map[string]interface{}, allowImport bool, pre bool){
+func compileLayout(res *[]byte, opts map[string]interface{}, allowImport bool, pre int){
 	layout := []byte("<BODY/>")
 	
 	template := "layout"
@@ -363,7 +371,7 @@ func compileLayout(res *[]byte, opts map[string]interface{}, allowImport bool, p
 		template = getOPT("template")
 	}
 
-	preLayout, err := getFile(template, false, allowImport, pre)
+	preLayout, err := getFile(template, false, allowImport)
 	if err != nil {
 		*res = layout
 		return
@@ -373,14 +381,47 @@ func compileLayout(res *[]byte, opts map[string]interface{}, allowImport bool, p
 	layout = compile(preLayout, opts, false, allowImport, pre)
 
 	//todo: smartly auto insert body tag if missing
+	if !regex.Match(layout, `(?i)<BODY/>`) {
+		if regex.Match(layout, `(?i)</main>`) {
+			layout = regex.RepStr(layout, `(?i)</main>`, []byte("<BODY/></main>"))
+		}else if regex.Match(layout, `(?i)</header>`) {
+			layout = regex.RepStr(layout, `(?i)</header>`, []byte("</header><BODY/>"))
+		}else if regex.Match(layout, `(?i)<footer(?:\s+(?:(["'\'])(?:\\[\\"'\']|.)*?\1|.)*?|)>`) {
+			layout = regex.RepFunc(layout, `(?i)<footer(?:\s+(?:(["'\'])(?:\\[\\"'\']|.)*?\1|.)*?|)>`, func(data func(int) []byte) []byte {
+				return append([]byte("<BODY/>"), data(0)...)
+			})
+		}else if regex.Match(layout, `(?i)</head>`) {
+			layout = regex.RepStr(layout, `(?i)</head>`, []byte("</head><BODY/>"))
+		}else{
+			layout = append(layout, []byte("<BODY/>")...)
+		}
+	}
+
+
+	if regex.Match(layout, `(?s)<head(?:\s+(?:(["'\'])(?:\\[\\"'\']|.)*?\1|.)*?|)>`) {
+		metaTags := [][]byte{}
+		layout = regex.RepFunc(layout, `(?s)<meta(?:\s+(?:(["'\'])(?:\\[\\"'\']|.)*?\1|.)*?|)/?>`, func(data func(int) []byte) []byte {
+			metaTags = append(metaTags, data(0))
+			return []byte{}
+		})
+
+		// add scripts to head
+		layout = regex.RepFunc(layout, `(?s)<head(?:\s+(?:(["'\'])(?:\\[\\"'\']|.)*?\1|.)*?|)>`, func(data func(int) []byte) []byte {
+			return regex.JoinBytes(
+				data(0),
+				metaTags,
+				`<script src="https://instant.page/5.1.1" type="module" integrity="sha384-MWfCL6g1OTGsbSwfuMHc8+8J2u71/LA8dzlIN3ycajckxuZZmF+DNjdm7O6H3PSq"></script>`,
+				`<script src="https://cdnjs.cloudflare.com/ajax/libs/less.js/4.1.3/less.min.js" integrity="sha512-6gUGqd/zBCrEKbJqPI7iINc61jlOfH5A+SluY15IkNO1o4qP1DEYjQBewTB4l0U4ihXZdupg8Mb77VxqE+37dg==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>`,
+			)
+		})
+	}
 
 	*res = layout
 }
 
-func compile(file fileData, opts map[string]interface{}, includeTemplate bool, allowImport bool, pre bool) []byte {
-
+func compile(file fileData, opts map[string]interface{}, includeTemplate bool, allowImport bool, pre int) []byte {
 	fromCache := false
-	if !pre {
+	if pre == 0 {
 		if cache := fileCache.Get(file.path + ".pre"); cache != nil {
 			fromCache = true
 			file = cache.Value()
@@ -396,12 +437,10 @@ func compile(file fileData, opts map[string]interface{}, includeTemplate bool, a
 	hasLayout := false
 	var layout []byte = nil
 
-	if !fromCache {
-		if includeTemplate && (opts["template"] != nil || getOPT("template") != "") {
-			hasLayout = true
-	
-			go compileLayout(&layout, opts, allowImport, pre)
-		}
+	if !fromCache && includeTemplate && (opts["template"] != nil || getOPT("template") != "") {
+		hasLayout = true
+
+		go compileLayout(&layout, opts, allowImport, pre)
 	}
 
 	// handle functions, components, and imports with content
@@ -412,7 +451,7 @@ func compile(file fileData, opts map[string]interface{}, includeTemplate bool, a
 
 		// get function
 		var fn func(map[string][]byte, []byte, map[string]interface{}, int, fileData) interface{}
-		var fnPre func(map[string][]byte, []byte, map[string]interface{}, int, fileData, bool) (interface{}, bool)
+		var fnPre func(map[string][]byte, []byte, map[string]interface{}, int, fileData, int) (interface{}, bool)
 		funcs := tagFuncs[string(data(1))]
 
 		for reflect.TypeOf(funcs) == common.VarType["string"] {
@@ -422,7 +461,7 @@ func compile(file fileData, opts map[string]interface{}, includeTemplate bool, a
 		if reflect.TypeOf(funcs) == common.VarType["tagFunc"] {
 			fn = funcs.(func(map[string][]byte, []byte, map[string]interface{}, int, fileData) interface{})
 		} else if reflect.TypeOf(funcs) == common.VarType["tagFuncPre"] {
-			fnPre = funcs.(func(map[string][]byte, []byte, map[string]interface{}, int, fileData, bool) (interface{}, bool))
+			fnPre = funcs.(func(map[string][]byte, []byte, map[string]interface{}, int, fileData, int) (interface{}, bool))
 		} else {
 			return []byte{}
 		}
@@ -548,7 +587,7 @@ func compile(file fileData, opts map[string]interface{}, includeTemplate bool, a
 		// if component
 		if len(data(1)) == 1 {
 			fileName := string(append(data(1), data(2)...))
-			comp, err := getFile(fileName, true, canImport, pre)
+			comp, err := getFile(fileName, true, canImport)
 			if err != nil {
 				return []byte{}
 			}
@@ -557,12 +596,12 @@ func compile(file fileData, opts map[string]interface{}, includeTemplate bool, a
 		}
 
 		if canImport {
-			comp, err := getFile(string(data(2)), false, canImport, pre)
+			comp, err := getFile(string(data(2)), false, canImport)
 			if err != nil {
 				return []byte{}
 			}
 
-			return compile(comp, compOpts, false, canImport, pre)
+			return compile(comp, compOpts, false, canImport, -1)
 		}
 
 		return []byte{}
@@ -579,6 +618,8 @@ func compile(file fileData, opts map[string]interface{}, includeTemplate bool, a
 
 				var key []byte
 				var argV []byte
+				// i := 0
+				// skipKey := map[int]bool{}
 				key = regex.RepFunc(arg, `(\{\{\{?)(.*?)(\}\}\}?)`, func(d func(int) []byte) []byte {
 					esc := true
 					if len(d(1)) == 3 && len(d(3)) == 3 {
@@ -590,7 +631,8 @@ func compile(file fileData, opts map[string]interface{}, includeTemplate bool, a
 					if bytes.ContainsRune(val, '=') {
 						v := bytes.SplitN(val, []byte("="), 2)
 						argV = []byte(getOpt(opts, string(v[1]), true).(string))
-						if pre && len(argV) == 0 {
+						if pre == 1 && len(argV) == 0 {
+							hasChanged = false
 							return d(0)
 						}
 
@@ -602,7 +644,8 @@ func compile(file fileData, opts map[string]interface{}, includeTemplate bool, a
 					}
 
 					argV = []byte(getOpt(opts, string(val), true).(string))
-					if pre && len(argV) == 0 {
+					if pre == 1 && len(argV) == 0 {
+						hasChanged = false
 						return d(0)
 					}
 
@@ -648,7 +691,7 @@ func compile(file fileData, opts map[string]interface{}, includeTemplate bool, a
 		}
 
 		val := getOpt(opts, string(data(2)), true).(string)
-		if pre && val == "" {
+		if pre == 1 && val == "" {
 			return data(0)
 		}
 
@@ -659,7 +702,7 @@ func compile(file fileData, opts map[string]interface{}, includeTemplate bool, a
 		return []byte(val)
 	})
 
-	if pre {
+	if pre == 1 {
 		cacheTime := ttlcache.DefaultTTL
 		if cache := getOPT("cache"); cache != "" {
 			if c, err := time.ParseDuration(cache); err == nil {
@@ -706,29 +749,19 @@ func compile(file fileData, opts map[string]interface{}, includeTemplate bool, a
 	})
 
 	// set css and js vars from public opts
-	if reflect.TypeOf(opts["public"]) == common.VarType["map"] {
+	if includeTemplate && reflect.TypeOf(opts["public"]) == common.VarType["map"] {
 		publicOpts := opts["public"].(map[string]interface{})
 
 		if reflect.TypeOf(publicOpts["js"]) == common.VarType["map"] && len(publicOpts["js"].(map[string]interface{})) != 0 {
-			jsVars := []byte("<script>")
-
-			for key, val := range publicOpts["js"].(map[string]interface{}) {
-				json, err := common.StringifyJSON(val)
-				if err != nil {
-					continue
-				}
+			if json, err := common.StringifyJSON(publicOpts["js"]); err == nil {
 				json = regex.RepStr(json, `\n`, []byte(`\n`))
-				key = string(regex.RepStr([]byte(key), `-`, []byte("_")))
-				key = string(regex.RepStr([]byte(key), `[^\w_]`, []byte{}))
-				jsVars = append(jsVars, regex.JoinBytes([]byte(";const "), key, '=', json, ';')...)
-			}
+				jsVars := regex.JoinBytes([]byte("<script>;const OPTS="), json, []byte(";</script>"))
 
-			jsVars = append(jsVars, []byte("</script>")...)
-
-			if regex.Match(file.html, `</head>`) {
-				regex.RepStr(file.html, `</head>`, append(jsVars, []byte("</head>")...))
-			}else{
-				file.html = append(jsVars, file.html...)
+				if regex.Match(file.html, `</head>`) {
+					file.html = regex.RepStr(file.html, `</head>`, append(jsVars, []byte("</head>")...))
+				}else{
+					file.html = append(jsVars, file.html...)
+				}
 			}
 		}
 
@@ -743,7 +776,7 @@ func compile(file fileData, opts map[string]interface{}, includeTemplate bool, a
 			cssVars = append(cssVars, []byte("}</style>")...)
 
 			if regex.Match(file.html, `</head>`) {
-				regex.RepStr(file.html, `</head>`, append(cssVars, []byte("</head>")...))
+				file.html = regex.RepStr(file.html, `</head>`, append(cssVars, []byte("</head>")...))
 			}else{
 				file.html = append(cssVars, file.html...)
 			}
@@ -753,7 +786,7 @@ func compile(file fileData, opts map[string]interface{}, includeTemplate bool, a
 	return file.html
 }
 
-func runFuncs(html []byte, opts map[string]interface{}, level int, file fileData, allowImport bool, pre bool) []byte {
+func runFuncs(html []byte, opts map[string]interface{}, level int, file fileData, allowImport bool, pre int) []byte {
 	levelStr := strconv.Itoa(level)
 
 	// handle functions with content
@@ -761,7 +794,7 @@ func runFuncs(html []byte, opts map[string]interface{}, level int, file fileData
 
 		// get function
 		var fn func(map[string][]byte, []byte, map[string]interface{}, int, fileData) interface{}
-		var fnPre func(map[string][]byte, []byte, map[string]interface{}, int, fileData, bool) (interface{}, bool)
+		var fnPre func(map[string][]byte, []byte, map[string]interface{}, int, fileData, int) (interface{}, bool)
 		funcs := tagFuncs[string(data(1))]
 
 		for reflect.TypeOf(funcs) == common.VarType["string"] {
@@ -771,7 +804,7 @@ func runFuncs(html []byte, opts map[string]interface{}, level int, file fileData
 		if reflect.TypeOf(funcs) == common.VarType["tagFunc"] {
 			fn = funcs.(func(map[string][]byte, []byte, map[string]interface{}, int, fileData) interface{})
 		} else if reflect.TypeOf(funcs) == common.VarType["tagFuncPre"] {
-			fnPre = funcs.(func(map[string][]byte, []byte, map[string]interface{}, int, fileData, bool) (interface{}, bool))
+			fnPre = funcs.(func(map[string][]byte, []byte, map[string]interface{}, int, fileData, int) (interface{}, bool))
 		} else {
 			return []byte{}
 		}
@@ -893,7 +926,7 @@ func runFuncs(html []byte, opts map[string]interface{}, level int, file fileData
 		// if component
 		if len(data(1)) == 1 {
 			fileName := string(append(data(1), data(2)...))
-			comp, err := getFile(fileName, true, canImport, pre)
+			comp, err := getFile(fileName, true, canImport)
 			if err != nil {
 				return []byte{}
 			}
@@ -902,12 +935,12 @@ func runFuncs(html []byte, opts map[string]interface{}, level int, file fileData
 		}
 
 		if canImport {
-			comp, err := getFile(string(data(2)), false, canImport, pre)
+			comp, err := getFile(string(data(2)), false, canImport)
 			if err != nil {
 				return []byte{}
 			}
 
-			return compile(comp, compOpts, false, canImport, pre)
+			return compile(comp, compOpts, false, canImport, -1)
 		}
 
 		return []byte{}
@@ -923,10 +956,22 @@ func compileJS(script []byte) []byte {
 
 func compileCSS(style []byte) []byte {
 	//todo: compile less to css
+	/* if css, err := less.Render(string(style), map[string]interface{}{"compress": true}); err == nil {
+		return []byte(css)
+	} */
+	//todo: add less compiler to the head in client side js (github.com/tystuyfzand/less-go is too slow)
 	return style
 }
 
 func compileMD(md []byte) []byte {
-	//todo: compile markdown
-	return md
+	var sp []byte
+	md = regex.RepFunc(md, `(?m)^(\s+)`, func(data func(int) []byte) []byte {
+		s := data(1)
+		if sp == nil {
+			sp = s
+		}
+		return bytes.Replace(s, sp, []byte{}, 1)
+	})
+
+	return markdown.ToHTML(md, nil, nil)
 }
