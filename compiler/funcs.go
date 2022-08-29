@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"compiler/common"
+	"net/http"
 	"reflect"
 	"strconv"
 
@@ -10,9 +11,10 @@ import (
 	lorem "github.com/drhodes/golorem"
 )
 
+// jsdelivr update url version (global): https://cdn.jsdelivr.net/gh/AspieSoft/turbx@0.4.0
+
 var preTagFuncs map[string]interface{} = map[string]interface{} {
 	"lorem": func(args map[string][]byte, level int, file fileData) interface{} {
-
 		wType := byte('p')
 		if len(args["type"]) != 0 {
 			wType = args["type"][0]
@@ -23,7 +25,7 @@ var preTagFuncs map[string]interface{} = map[string]interface{} {
 		}else if len(args["2"]) != 0 && !regex.Match(args["2"], `^[0-9]+$`) {
 			wType = args["2"][0]
 		}
-		
+
 		minLen := 1
 		maxLen := 10
 		used := -1
@@ -94,6 +96,127 @@ var preTagFuncs map[string]interface{} = map[string]interface{} {
 
 		return []byte(lorem.Paragraph(minLen, maxLen))
 	},
+
+	"youtube": func(args map[string][]byte, level int, file fileData) interface{} {
+		url := regex.RepFunc(args["url"], `^(["'\'])(.*)\1$`, func(data func(int) []byte) []byte {
+			return data(2)
+		})
+		url = regex.RepFunc(url, `^(?:https?://|)(?:www\.|)(?:youtube\.com|youtu\.be)/(?:watch/?\?v=|playlist/?\?list=|channel/?|)(.*)$`, func(data func(int) []byte) []byte {
+			return data(1)
+		})
+		if regex.Match(url, `^.*?&list=`) {
+			url = regex.RepStr(url, `^.*?&list=`, []byte{})
+		}
+		url = regex.RepStr(url, `(\?|&).*$`, []byte{})
+
+		//todo: consider running "http.Get" as client fetch call, rather than taking up server resources and slowing down for requests to youtube
+		// may also run this as a goroutine
+
+		videoData := map[string][]byte{}
+		if bytes.HasPrefix(url, []byte("c/")) {
+			//todo: get embed url for custom channel url
+			// url = bytes.Replace(url, []byte("c/"), []byte{}, 1)
+			return []byte{}
+		}else if bytes.HasPrefix(url, []byte("UC")) || bytes.HasPrefix(url, []byte("UU")) {
+			var vidUrl string
+			if bytes.HasPrefix(url, []byte("UC")) {
+				vidUrl = string(bytes.Replace(url, []byte("UC"), []byte{}, 1))
+			} else {
+				vidUrl = string(bytes.Replace(url, []byte("UU"), []byte{}, 1))
+			}
+
+			//todo: fix checking if video can be embedded
+			// for this below method (commented out): youtube always returns 200 ok responce (this method is also slow)
+			/* resHead, err := http.Head("https://www.youtube.com/embed/?list=UU" + vidUrl)
+			if err != nil {
+				return []byte{}
+			}
+
+			if resHead.StatusCode == 200 {
+				vidUrl = "UU" + vidUrl
+			}else{
+				vidUrl = "PU" + vidUrl
+			} */
+
+			vidUrl = "UU" + vidUrl
+
+			res, err := http.Get("https://www.youtube.com/oembed?url=https://www.youtube.com/playlist?list="+vidUrl+"&format=json")
+			if err != nil {
+				return []byte{}
+			}
+			body, _ := common.DecodeJSON(res.Body)
+
+			videoData["url"] = append([]byte("https://www.youtube.com/embed/?list="), url...)
+
+			if reflect.TypeOf(body["thumbnail_url"]) == common.VarType["string"] {
+				videoData["img"] = []byte(body["thumbnail_url"].(string))
+			}
+			if reflect.TypeOf(body["title"]) == common.VarType["string"] {
+				videoData["title"] = []byte(body["title"].(string))
+			}
+			if body["width"] != nil && body["height"] != nil {
+				videoData["ratio"] = []byte(common.ToString(body["width"])+":"+common.ToString(body["height"]))
+			}
+		}else if bytes.HasPrefix(url, []byte("PU")) || bytes.HasPrefix(url, []byte("PL")) {
+			res, err := http.Get("https://www.youtube.com/oembed?url=https://www.youtube.com/playlist?list="+string(url)+"&format=json")
+			if err != nil {
+				return []byte{}
+			}
+			body, _ := common.DecodeJSON(res.Body)
+
+			videoData["url"] = append([]byte("https://www.youtube.com/embed/?list="), url...)
+
+			if reflect.TypeOf(body["thumbnail_url"]) == common.VarType["string"] {
+				videoData["img"] = []byte(body["thumbnail_url"].(string))
+			}
+			if reflect.TypeOf(body["title"]) == common.VarType["string"] {
+				videoData["title"] = []byte(body["title"].(string))
+			}
+			if body["width"] != nil && body["height"] != nil {
+				videoData["ratio"] = []byte(common.ToString(body["width"])+":"+common.ToString(body["height"]))
+			}
+		}else{
+			res, err := http.Get("https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v="+string(url)+"&format=json")
+			if err != nil {
+				return []byte{}
+			}
+			body, _ := common.DecodeJSON(res.Body)
+
+			videoData["url"] = append([]byte("https://www.youtube.com/embed/"), url...)
+
+			if reflect.TypeOf(body["thumbnail_url"]) == common.VarType["string"] {
+				videoData["img"] = []byte(body["thumbnail_url"].(string))
+			}
+			if reflect.TypeOf(body["title"]) == common.VarType["string"] {
+				videoData["title"] = []byte(body["title"].(string))
+			}
+			if body["width"] != nil && body["height"] != nil {
+				videoData["ratio"] = []byte(common.ToString(body["width"])+":"+common.ToString(body["height"]))
+			}
+		}
+
+		if videoData["url"] == nil {
+			return []byte{}
+		}
+
+		res := regex.JoinBytes([]byte(`<div class="youtube-embed" href="`), videoData["url"], []byte(`"`))
+		if videoData["ratio"] != nil {
+			res = regex.JoinBytes(res, []byte(` ratio="`), videoData["ratio"], []byte(`">`))
+		}else{
+			res = append(res, '>')
+		}
+		if videoData["img"] != nil {
+			res = regex.JoinBytes(res, []byte(`<img src="`), videoData["img"], []byte(`" alt="YouTube Embed"/>`))
+		}
+		if videoData["title"] != nil {
+			res = regex.JoinBytes(res, []byte(`<h1>`), videoData["title"], []byte(`</h1>`))
+		}
+		res = append(res, []byte(`<img class="youtube-embed-play-btn" src="https://cdn.jsdelivr.net/gh/AspieSoft/turbx@0.4.0/assets/youtube.png"/></div>`)...)
+
+		return res
+	},
+
+	"yt": "youtube",
 }
 
 var tagFuncs map[string]interface{} = map[string]interface{} {

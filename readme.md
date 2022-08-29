@@ -139,15 +139,6 @@ app.use('/fix-cache', async function(req, res, next){
   array index: {{index}}
 </_each>
 
-<!-- random paragraph of lorem ipsum text -->
-<_lorem/>
-<!-- paragraph of lorem ipsum text with 2 sentences -->
-<_lorem 2/>
-<!-- sentence of lorem ipsum text with 3-5 words -->
-<_lorem s 3 5/>
-<!-- word of lorem ipsum text with 5-10 letters -->
-<_lorem w 5 10/>
-
 
 <!-- A component is imported by using a capital first letter -->
 <!-- The file should also be named with a capital first letter -->
@@ -178,6 +169,29 @@ app.use('/fix-cache', async function(req, res, next){
     <footer>
   </body>
 </html>
+
+```
+
+## Other Functions
+
+```xhtml
+
+  <!-- random paragraph of lorem ipsum text -->
+  <_lorem/>
+  <!-- paragraph of lorem ipsum text with 2 sentences -->
+  <_lorem 2/>
+  <!-- sentence of lorem ipsum text with 3-5 words -->
+  <_lorem s 3 5/>
+  <!-- word of lorem ipsum text with 5-10 letters -->
+  <_lorem w 5 10/>
+
+  <!--! Node: YouTube Embeding is currently in Alpha, and may slow down the page loading when used! -->
+  <!-- embed a youtube video -->
+  <_youtube url="https://www.youtube.com/watch?v=SJeBRW1QQMA" />
+  <!-- embed a youtube playlist -->
+  <_youtube url="https://www.youtube.com/playlist?list=PL0vfts4VzfNjnYhJMfTulea5McZbQLM7G" />
+  <!-- Alias for yourube embed function -->
+  <_yt_ url="https://www.youtube.com/watch?v=SJeBRW1QQMA" />
 
 ```
 

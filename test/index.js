@@ -80,6 +80,8 @@ app.engine('xhtml', turbx(app, {
 app.set('views', join(__dirname, 'views'));
 app.set('view engine', 'xhtml');
 
+app.use('/assets', express.static(join(__dirname, '../assets')))
+
 
 // firewall rate limiting
 turbx.rateLimit();

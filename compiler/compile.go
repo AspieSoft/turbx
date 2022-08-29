@@ -380,7 +380,6 @@ func compileLayout(res *[]byte, opts map[string]interface{}, allowImport bool, p
 
 	layout = compile(preLayout, opts, false, allowImport, pre)
 
-	//todo: smartly auto insert body tag if missing
 	if !regex.Match(layout, `(?i)<BODY/>`) {
 		if regex.Match(layout, `(?i)</main>`) {
 			layout = regex.RepStr(layout, `(?i)</main>`, []byte("<BODY/></main>"))
@@ -412,6 +411,8 @@ func compileLayout(res *[]byte, opts map[string]interface{}, allowImport bool, p
 				metaTags,
 				`<script src="https://instant.page/5.1.1" type="module" integrity="sha384-MWfCL6g1OTGsbSwfuMHc8+8J2u71/LA8dzlIN3ycajckxuZZmF+DNjdm7O6H3PSq"></script>`,
 				`<script src="https://cdnjs.cloudflare.com/ajax/libs/less.js/4.1.3/less.min.js" integrity="sha512-6gUGqd/zBCrEKbJqPI7iINc61jlOfH5A+SluY15IkNO1o4qP1DEYjQBewTB4l0U4ihXZdupg8Mb77VxqE+37dg==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>`,
+				`<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/AspieSoft/turbx@0.4.0/assets/style.css"/>`,
+				`<script src="https://cdn.jsdelivr.net/gh/AspieSoft/turbx@0.4.0/assets/script.js" defer></script>`,
 			)
 		})
 	}
