@@ -13,9 +13,9 @@ import (
 	"time"
 
 	"github.com/AspieSoft/go-regex"
+	"github.com/AspieSoft/go-ttlcache"
 	"github.com/alphadose/haxmap"
 	"github.com/fsnotify/fsnotify"
-	"github.com/jellydator/ttlcache/v3"
 	"github.com/pbnjay/memory"
 )
 
@@ -51,11 +51,22 @@ var OPTS *haxmap.HashMap[string, string] = haxmap.New[string, string]()
 var encKey string
 var freeMem float64
 
+var DebugMode bool = false
+
+//todo: update GithubAssetURL version when updating module
+var GithubAssetURL = "https://cdn.jsdelivr.net/gh/AspieSoft/turbx@0.4.1/assets"
+
 func main() {
 	for _, arg := range os.Args {
 		if strings.HasPrefix(arg, "--enc=") {
 			encKey, _ = common.Decompress(strings.Replace(arg, "--enc=", "", 1))
+		} else if strings.HasPrefix(arg, "--debug") {
+			DebugMode = true
 		}
+	}
+
+	if DebugMode {
+		GithubAssetURL = "/assets"
 	}
 
 	freeMem = common.FormatMemoryUsage(memory.FreeMemory())
@@ -71,20 +82,19 @@ func main() {
 	common.VarType["tagFuncPre"] = reflect.TypeOf(func(map[string][]byte, []byte, map[string]interface{}, int, fileData, int) (interface{}, bool) {
 		return nil, false
 	})
-	common.VarType["preTagFunc"] = reflect.TypeOf(func(map[string][]byte, int, fileData) interface{} { return nil })
+	common.VarType["preTagFunc"] = reflect.TypeOf(func(map[string][]byte, int, fileData, bool) interface{} { return nil })
+
+	cacheTime := 2 * time.Hour
+	if cache := getOPT("cache"); cache != "" {
+		if c, err := time.ParseDuration(cache); err == nil {
+			cacheTime = c * time.Millisecond
+		}
+	}
 
 	fileCache = ttlcache.New[string, fileData](
-		ttlcache.WithTTL[string, fileData](2 * time.Hour),
+		cacheTime,
+		4 * time.Hour,
 	)
-
-	go fileCache.Start()
-
-	go (func() {
-		for {
-			time.Sleep(2 * time.Hour)
-			fileCache.DeleteExpired()
-		}
-	})()
 
 	userInput := make(chan string)
 	go readInput(userInput)
@@ -113,6 +123,10 @@ func main() {
 			setOPT(opt[0], opt[1])
 			if opt[0] == "root" {
 				go watchViews(opt[1])
+			}else if opt[0] == "cache" {
+				if i, err := strconv.Atoi(opt[1]); err == nil {
+					fileCache.TTL(time.Duration(i) * time.Millisecond)
+				}
 			}
 		} else if strings.HasPrefix(input, "pre:") {
 			pre := strings.SplitN(input, ":", 2)[1]
@@ -161,20 +175,20 @@ func watchViews(root string) {
 				if err != nil {
 					watcher.Remove(filePath)
 					filePath = strings.Replace(strings.Replace(filePath, root, "", 1), "/", "", 1)
-					fileCache.Delete(filePath)
+					fileCache.Del(filePath)
 					filePath = string(regex.RepStr([]byte(filePath), `\.[\w]+$`, []byte{}))
-					fileCache.Delete(filePath)
+					fileCache.Del(filePath)
 				} else if stat.IsDir() {
 					watcher.Add(filePath)
 				} else {
 					filePath = strings.Replace(strings.Replace(filePath, root, "", 1), "/", "", 1)
 
-					fileCache.Delete(filePath)
-					fileCache.Delete(filePath + ".pre")
+					fileCache.Del(filePath)
+					fileCache.Del(filePath + ".pre")
 
 					filePath = string(regex.RepStr([]byte(filePath), `\.[\w]+$`, []byte{}))
-					fileCache.Delete(filePath)
-					fileCache.Delete(filePath + ".pre")
+					fileCache.Del(filePath)
+					fileCache.Del(filePath + ".pre")
 				}
 
 			}
@@ -303,7 +317,7 @@ func runPreCompile(input string) {
 		time.Sleep(1 * time.Millisecond)
 	}
 
-	_, err := getFile(inputData[1], false, true)
+	_, err := getFile(inputData[1], false, true, false)
 	if err != nil {
 		sendRes(inputData[0] + ":error")
 		return
@@ -315,8 +329,7 @@ func runPreCompile(input string) {
 func checkCompiledCache(input string) {
 	inputData := strings.SplitN(input, ":", 2)
 
-	cache := fileCache.Get(inputData[1] + ".pre")
-	if cache != nil {
+	if _, ok := fileCache.Get(inputData[1] + ".pre"); ok {
 		sendRes(inputData[0] + ":true")
 	} else {
 		sendRes(inputData[0] + ":false")
@@ -359,7 +372,7 @@ func runCompile(input string) {
 		delete(opts, "const")
 	}
 
-	file, err := getFile(inputData[2], false, true)
+	file, err := getFile(inputData[2], false, true, true)
 	if err != nil {
 		sendRes(inputData[0] + ":error")
 		return
@@ -382,10 +395,11 @@ func runCompile(input string) {
 	sendRes(inputData[0] + ":" + resOut)
 }
 
-func getFile(filePath string, component bool, allowImport bool) (fileData, error) {
-	cache := fileCache.Get(filePath)
-	if cache != nil {
-		return cache.Value(), nil
+func getFile(filePath string, component bool, allowImport bool, fastMode bool) (fileData, error) {
+	if !fastMode {
+		if cache, ok := fileCache.Get(filePath); ok {
+			return cache, nil
+		}
 	}
 
 	// init options
@@ -447,18 +461,12 @@ func getFile(filePath string, component bool, allowImport bool) (fileData, error
 	}
 
 	// pre compile
-	file, err := preCompile(html, filePath)
+	file, err := preCompile(html, filePath, fastMode)
 	if err != nil {
 		return fileData{}, err
 	}
 
-	cacheTime := ttlcache.DefaultTTL
-	if cache := getOPT("cache"); cache != "" {
-		if c, err := time.ParseDuration(cache); err == nil {
-			cacheTime = c * time.Millisecond
-		}
-	}
-	fileCache.Set(filePath, file, cacheTime)
+	fileCache.Set(filePath, file)
 
 	return file, nil
 }

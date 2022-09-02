@@ -6,6 +6,7 @@ const { spawn } = require('child_process');
 
 const deviceRateLimit = requireOptional('express-device-rate-limit');
 
+//todo: make sure DebugMode is set to "false" before publishing to github and npm
 const DebugMode = false;
 
 function requireOptional(path) {
@@ -76,7 +77,7 @@ function initGoCompiler() {
   }
 
   if(DebugMode){
-    goCompiler = spawn('go', ['run', '.', '--enc='+compKey], {cwd: join(__dirname, 'compiler')});
+    goCompiler = spawn('go', ['run', '.', '--enc='+compKey, '--debug'], {cwd: join(__dirname, 'compiler')});
   }else{
     goCompiler = spawn('./compiler/compiler', ['--enc='+compKey], { cwd: __dirname });
   }

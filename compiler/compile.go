@@ -10,7 +10,6 @@ import (
 
 	"github.com/AspieSoft/go-regex"
 	"github.com/gomarkdown/markdown"
-	"github.com/jellydator/ttlcache/v3"
 )
 
 var regHtmlTag string = `(?:[\w_\-.$!:][\\/][\w_\-.$!:]|[\w_\-.$!:])`
@@ -34,7 +33,7 @@ var singleTagList map[string]bool = map[string]bool{
 	"track": true,
 }
 
-func preCompile(html []byte, filePath string) (fileData, error) {
+func preCompile(html []byte, filePath string, fastMode bool) (fileData, error) {
 	html = append([]byte("\n"), html...)
 	html = append(html, []byte("\n")...)
 
@@ -307,7 +306,7 @@ func preCompile(html []byte, filePath string) (fileData, error) {
 	html = regex.RepFunc(html, `(?s)<_([\w_\-.$!]`+regHtmlTag+`*):([0-9]+)(\s+[0-9]+|)/>`, func(data func(int) []byte) []byte {
 
 		// get function
-		var fn func(map[string][]byte, int, fileData) interface{}
+		var fn func(map[string][]byte, int, fileData, bool) interface{}
 		funcs := preTagFuncs[string(data(1))]
 
 		for reflect.TypeOf(funcs) == common.VarType["string"] {
@@ -315,7 +314,7 @@ func preCompile(html []byte, filePath string) (fileData, error) {
 		}
 
 		if reflect.TypeOf(funcs) == common.VarType["preTagFunc"] {
-			fn = funcs.(func(map[string][]byte, int, fileData) interface{})
+			fn = funcs.(func(map[string][]byte, int, fileData, bool) interface{})
 		} else {
 			return []byte{}
 		}
@@ -333,7 +332,7 @@ func preCompile(html []byte, filePath string) (fileData, error) {
 			level = -1
 		}
 
-		cont := fn(args, level + 1, fileData{html: html, args: argList, str: stringList, script: objScripts, path: filePath})
+		cont := fn(args, level + 1, fileData{html: html, args: argList, str: stringList, script: objScripts, path: filePath}, fastMode)
 
 		if cont == nil {
 			return []byte{}
@@ -351,7 +350,7 @@ func preCompile(html []byte, filePath string) (fileData, error) {
 	
 			if !preCompiledComponent[name] {
 				preCompiledComponent[name] = true
-				getFile(name, true, true)
+				getFile(name, true, true, fastMode)
 			}
 	
 			return []byte{}
@@ -371,7 +370,7 @@ func compileLayout(res *[]byte, opts map[string]interface{}, allowImport bool, p
 		template = getOPT("template")
 	}
 
-	preLayout, err := getFile(template, false, allowImport)
+	preLayout, err := getFile(template, false, allowImport, true)
 	if err != nil {
 		*res = layout
 		return
@@ -406,13 +405,23 @@ func compileLayout(res *[]byte, opts map[string]interface{}, allowImport bool, p
 
 		// add scripts to head
 		layout = regex.RepFunc(layout, `(?s)<head(?:\s+(?:(["'\'])(?:\\[\\"'\']|.)*?\1|.)*?|)>`, func(data func(int) []byte) []byte {
+			var styleAsset, scriptAsset []byte
+
+			if DebugMode {
+				styleAsset = []byte(`<link rel="stylesheet" href="`+GithubAssetURL+`/style.css"/>`)
+				scriptAsset = []byte(`<script src="`+GithubAssetURL+`/script.js" defer></script>`)
+			}else{
+				styleAsset = []byte(`<link rel="stylesheet" href="`+GithubAssetURL+`/style.min.css"/>`)
+				scriptAsset = []byte(`<script src="`+GithubAssetURL+`/script.min.js" defer></script>`)
+			}
+
 			return regex.JoinBytes(
 				data(0),
 				metaTags,
-				`<script src="https://instant.page/5.1.1" type="module" integrity="sha384-MWfCL6g1OTGsbSwfuMHc8+8J2u71/LA8dzlIN3ycajckxuZZmF+DNjdm7O6H3PSq"></script>`,
-				`<script src="https://cdnjs.cloudflare.com/ajax/libs/less.js/4.1.3/less.min.js" integrity="sha512-6gUGqd/zBCrEKbJqPI7iINc61jlOfH5A+SluY15IkNO1o4qP1DEYjQBewTB4l0U4ihXZdupg8Mb77VxqE+37dg==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>`,
-				`<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/AspieSoft/turbx@0.4.0/assets/style.css"/>`,
-				`<script src="https://cdn.jsdelivr.net/gh/AspieSoft/turbx@0.4.0/assets/script.js" defer></script>`,
+				[]byte(`<script src="https://instant.page/5.1.1" type="module" integrity="sha384-MWfCL6g1OTGsbSwfuMHc8+8J2u71/LA8dzlIN3ycajckxuZZmF+DNjdm7O6H3PSq"></script>`),
+				[]byte(`<script src="https://cdnjs.cloudflare.com/ajax/libs/less.js/4.1.3/less.min.js" integrity="sha512-6gUGqd/zBCrEKbJqPI7iINc61jlOfH5A+SluY15IkNO1o4qP1DEYjQBewTB4l0U4ihXZdupg8Mb77VxqE+37dg==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>`),
+				styleAsset,
+				scriptAsset,
 			)
 		})
 	}
@@ -423,9 +432,9 @@ func compileLayout(res *[]byte, opts map[string]interface{}, allowImport bool, p
 func compile(file fileData, opts map[string]interface{}, includeTemplate bool, allowImport bool, pre int) []byte {
 	fromCache := false
 	if pre == 0 {
-		if cache := fileCache.Get(file.path + ".pre"); cache != nil {
+		if cache, ok := fileCache.Get(file.path + ".pre"); ok {
 			fromCache = true
-			file = cache.Value()
+			file = cache
 			file.html = regex.RepFunc(file.html, `%!fn:(.*?)!%`, func(data func(int) []byte) []byte {
 				if res, err := common.Decompress(string(data(1))); err == nil {
 					return []byte(res)
@@ -588,7 +597,7 @@ func compile(file fileData, opts map[string]interface{}, includeTemplate bool, a
 		// if component
 		if len(data(1)) == 1 {
 			fileName := string(append(data(1), data(2)...))
-			comp, err := getFile(fileName, true, canImport)
+			comp, err := getFile(fileName, true, canImport, true)
 			if err != nil {
 				return []byte{}
 			}
@@ -597,7 +606,7 @@ func compile(file fileData, opts map[string]interface{}, includeTemplate bool, a
 		}
 
 		if canImport {
-			comp, err := getFile(string(data(2)), false, canImport)
+			comp, err := getFile(string(data(2)), false, canImport, true)
 			if err != nil {
 				return []byte{}
 			}
@@ -704,13 +713,7 @@ func compile(file fileData, opts map[string]interface{}, includeTemplate bool, a
 	})
 
 	if pre == 1 {
-		cacheTime := ttlcache.DefaultTTL
-		if cache := getOPT("cache"); cache != "" {
-			if c, err := time.ParseDuration(cache); err == nil {
-				cacheTime = c * time.Millisecond
-			}
-		}
-		fileCache.Set(file.path + ".pre", file, cacheTime)
+		fileCache.Set(file.path + ".pre", file)
 		return file.html
 	}
 
@@ -927,7 +930,7 @@ func runFuncs(html []byte, opts map[string]interface{}, level int, file fileData
 		// if component
 		if len(data(1)) == 1 {
 			fileName := string(append(data(1), data(2)...))
-			comp, err := getFile(fileName, true, canImport)
+			comp, err := getFile(fileName, true, canImport, true)
 			if err != nil {
 				return []byte{}
 			}
@@ -936,7 +939,7 @@ func runFuncs(html []byte, opts map[string]interface{}, level int, file fileData
 		}
 
 		if canImport {
-			comp, err := getFile(string(data(2)), false, canImport)
+			comp, err := getFile(string(data(2)), false, canImport, true)
 			if err != nil {
 				return []byte{}
 			}

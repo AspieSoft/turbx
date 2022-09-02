@@ -11,10 +11,8 @@ import (
 	lorem "github.com/drhodes/golorem"
 )
 
-// jsdelivr update url version (global): https://cdn.jsdelivr.net/gh/AspieSoft/turbx@0.4.0
-
 var preTagFuncs map[string]interface{} = map[string]interface{} {
-	"lorem": func(args map[string][]byte, level int, file fileData) interface{} {
+	"lorem": func(args map[string][]byte, level int, file fileData, fastMode bool) interface{} {
 		wType := byte('p')
 		if len(args["type"]) != 0 {
 			wType = args["type"][0]
@@ -97,7 +95,7 @@ var preTagFuncs map[string]interface{} = map[string]interface{} {
 		return []byte(lorem.Paragraph(minLen, maxLen))
 	},
 
-	"youtube": func(args map[string][]byte, level int, file fileData) interface{} {
+	"youtube": func(args map[string][]byte, level int, file fileData, fastMode bool) interface{} {
 		url := regex.RepFunc(args["url"], `^(["'\'])(.*)\1$`, func(data func(int) []byte) []byte {
 			return data(2)
 		})
@@ -108,6 +106,10 @@ var preTagFuncs map[string]interface{} = map[string]interface{} {
 			url = regex.RepStr(url, `^.*?&list=`, []byte{})
 		}
 		url = regex.RepStr(url, `(\?|&).*$`, []byte{})
+
+		if fastMode {
+			return regex.JoinBytes([]byte(`<div class="youtube-embed youtube-embed-client" src="`), url, []byte(`"><img class="youtube-embed-play-btn" src="`+GithubAssetURL+`/youtube.png"/></div>`))
+		}
 
 		//todo: consider running "http.Get" as client fetch call, rather than taking up server resources and slowing down for requests to youtube
 		// may also run this as a goroutine
@@ -211,7 +213,7 @@ var preTagFuncs map[string]interface{} = map[string]interface{} {
 		if videoData["title"] != nil {
 			res = regex.JoinBytes(res, []byte(`<h1>`), videoData["title"], []byte(`</h1>`))
 		}
-		res = append(res, []byte(`<img class="youtube-embed-play-btn" src="https://cdn.jsdelivr.net/gh/AspieSoft/turbx@0.4.0/assets/youtube.png"/></div>`)...)
+		res = append(res, []byte(`<img class="youtube-embed-play-btn" src="`+GithubAssetURL+`/youtube.png"/></div>`)...)
 
 		return res
 	},
