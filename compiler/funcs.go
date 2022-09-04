@@ -2,12 +2,12 @@ package main
 
 import (
 	"bytes"
-	"compiler/common"
 	"net/http"
 	"reflect"
 	"strconv"
 
 	"github.com/AspieSoft/go-regex"
+	"github.com/AspieSoft/goutil"
 	lorem "github.com/drhodes/golorem"
 )
 
@@ -146,54 +146,54 @@ var preTagFuncs map[string]interface{} = map[string]interface{} {
 			if err != nil {
 				return []byte{}
 			}
-			body, _ := common.DecodeJSON(res.Body)
+			body, _ := goutil.DecodeJSON(res.Body)
 
 			videoData["url"] = append([]byte("https://www.youtube.com/embed/?list="), url...)
 
-			if reflect.TypeOf(body["thumbnail_url"]) == common.VarType["string"] {
+			if reflect.TypeOf(body["thumbnail_url"]) == goutil.VarType["string"] {
 				videoData["img"] = []byte(body["thumbnail_url"].(string))
 			}
-			if reflect.TypeOf(body["title"]) == common.VarType["string"] {
+			if reflect.TypeOf(body["title"]) == goutil.VarType["string"] {
 				videoData["title"] = []byte(body["title"].(string))
 			}
 			if body["width"] != nil && body["height"] != nil {
-				videoData["ratio"] = []byte(common.ToString(body["width"])+":"+common.ToString(body["height"]))
+				videoData["ratio"] = []byte(goutil.ToString(body["width"])+":"+goutil.ToString(body["height"]))
 			}
 		}else if bytes.HasPrefix(url, []byte("PU")) || bytes.HasPrefix(url, []byte("PL")) {
 			res, err := http.Get("https://www.youtube.com/oembed?url=https://www.youtube.com/playlist?list="+string(url)+"&format=json")
 			if err != nil {
 				return []byte{}
 			}
-			body, _ := common.DecodeJSON(res.Body)
+			body, _ := goutil.DecodeJSON(res.Body)
 
 			videoData["url"] = append([]byte("https://www.youtube.com/embed/?list="), url...)
 
-			if reflect.TypeOf(body["thumbnail_url"]) == common.VarType["string"] {
+			if reflect.TypeOf(body["thumbnail_url"]) == goutil.VarType["string"] {
 				videoData["img"] = []byte(body["thumbnail_url"].(string))
 			}
-			if reflect.TypeOf(body["title"]) == common.VarType["string"] {
+			if reflect.TypeOf(body["title"]) == goutil.VarType["string"] {
 				videoData["title"] = []byte(body["title"].(string))
 			}
 			if body["width"] != nil && body["height"] != nil {
-				videoData["ratio"] = []byte(common.ToString(body["width"])+":"+common.ToString(body["height"]))
+				videoData["ratio"] = []byte(goutil.ToString(body["width"])+":"+goutil.ToString(body["height"]))
 			}
 		}else{
 			res, err := http.Get("https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v="+string(url)+"&format=json")
 			if err != nil {
 				return []byte{}
 			}
-			body, _ := common.DecodeJSON(res.Body)
+			body, _ := goutil.DecodeJSON(res.Body)
 
 			videoData["url"] = append([]byte("https://www.youtube.com/embed/"), url...)
 
-			if reflect.TypeOf(body["thumbnail_url"]) == common.VarType["string"] {
+			if reflect.TypeOf(body["thumbnail_url"]) == goutil.VarType["string"] {
 				videoData["img"] = []byte(body["thumbnail_url"].(string))
 			}
-			if reflect.TypeOf(body["title"]) == common.VarType["string"] {
+			if reflect.TypeOf(body["title"]) == goutil.VarType["string"] {
 				videoData["title"] = []byte(body["title"].(string))
 			}
 			if body["width"] != nil && body["height"] != nil {
-				videoData["ratio"] = []byte(common.ToString(body["width"])+":"+common.ToString(body["height"]))
+				videoData["ratio"] = []byte(goutil.ToString(body["width"])+":"+goutil.ToString(body["height"]))
 			}
 		}
 
@@ -292,11 +292,11 @@ var tagFuncs map[string]interface{} = map[string]interface{} {
 		res := []eachFnObj{}
 
 		objType := reflect.TypeOf(obj)
-		if objType != common.VarType["map"] && objType != common.VarType["array"] {
+		if objType != goutil.VarType["map"] && objType != goutil.VarType["array"] {
 			return []byte{}
 		}
 
-		if objType == common.VarType["map"] {
+		if objType == goutil.VarType["map"] {
 			n := 0
 			for i, v := range obj.(map[string]interface{}) {
 				opt := opts
@@ -314,7 +314,7 @@ var tagFuncs map[string]interface{} = map[string]interface{} {
 				res = append(res, eachFnObj{html: cont, opts: opt})
 				n++
 			}
-		}else if objType == common.VarType["array"] {
+		}else if objType == goutil.VarType["array"] {
 			n := 0
 			for i, v := range obj.([]interface{}) {
 				opt := opts
@@ -379,7 +379,7 @@ var tagFuncs map[string]interface{} = map[string]interface{} {
 			}
 		}
 
-		res, err := common.StringifyJSONSpaces(json, spaces, prefix)
+		res, err := goutil.StringifyJSON(json, spaces, prefix)
 		if err != nil {
 			return []byte{}
 		}
@@ -469,7 +469,7 @@ func tagFuncIf(args map[string][]byte, cont []byte, opts map[string]interface{},
 				}
 			}
 
-			isTrue = common.IsZeroOfUnderlyingType(arg1Any)
+			isTrue = goutil.IsZeroOfUnderlyingType(arg1Any)
 			if pos {
 				isTrue = !isTrue
 			}
@@ -496,7 +496,7 @@ func tagFuncIf(args map[string][]byte, cont []byte, opts map[string]interface{},
 				return nil, true
 			}
 
-			if reflect.TypeOf(arg1Any) == common.VarType["string"] {
+			if reflect.TypeOf(arg1Any) == goutil.VarType["string"] {
 				if arg1N, err := strconv.Atoi(string(arg1)); err == nil {
 					arg1Any = arg1N
 				}
@@ -522,7 +522,7 @@ func tagFuncIf(args map[string][]byte, cont []byte, opts map[string]interface{},
 				return nil, true
 			}
 
-			if reflect.TypeOf(arg2Any) == common.VarType["string"] {
+			if reflect.TypeOf(arg2Any) == goutil.VarType["string"] {
 				if arg2N, err := strconv.Atoi(string(arg2)); err == nil {
 					arg2Any = arg2N
 				}
@@ -532,28 +532,28 @@ func tagFuncIf(args map[string][]byte, cont []byte, opts map[string]interface{},
 		lastArg = arg1
 
 		arg1Type := reflect.TypeOf(arg1Any)
-		if arg1Type == common.VarType["int"] {
+		if arg1Type == goutil.VarType["int"] {
 			arg1Any = float64(arg1Any.(int))
-		}else if arg1Type == common.VarType["float32"] {
+		}else if arg1Type == goutil.VarType["float32"] {
 			arg1Any = float64(arg1Any.(float32))
-		}else if arg1Type == common.VarType["int32"] {
+		}else if arg1Type == goutil.VarType["int32"] {
 			arg1Any = float64(arg1Any.(int32))
-		}else if arg1Type == common.VarType["byteArray"] {
+		}else if arg1Type == goutil.VarType["byteArray"] {
 			arg1Any = string(arg1Any.([]byte))
-		}else if arg1Type == common.VarType["byte"] {
+		}else if arg1Type == goutil.VarType["byte"] {
 			arg1Any = string(arg1Any.(byte))
 		}
 
 		arg2Type := reflect.TypeOf(arg2Any)
-		if arg2Type == common.VarType["int"] {
+		if arg2Type == goutil.VarType["int"] {
 			arg2Any = float64(arg2Any.(int))
-		}else if arg2Type == common.VarType["float32"] {
+		}else if arg2Type == goutil.VarType["float32"] {
 			arg2Any = float64(arg2Any.(float32))
-		}else if arg2Type == common.VarType["int32"] {
+		}else if arg2Type == goutil.VarType["int32"] {
 			arg2Any = float64(arg2Any.(int32))
-		}else if arg1Type == common.VarType["byteArray"] {
+		}else if arg1Type == goutil.VarType["byteArray"] {
 			arg2Any = string(arg2Any.([]byte))
-		}else if arg1Type == common.VarType["byte"] {
+		}else if arg1Type == goutil.VarType["byte"] {
 			arg2Any = string(arg2Any.(byte))
 		}
 
@@ -564,19 +564,19 @@ func tagFuncIf(args map[string][]byte, cont []byte, opts map[string]interface{},
 		case "!":
 			isTrue = (arg1Any != arg2Any)
 		case ">=":
-			if arg1Type == reflect.TypeOf(arg2Any) && arg1Type == common.VarType["float64"] {
+			if arg1Type == reflect.TypeOf(arg2Any) && arg1Type == goutil.VarType["float64"] {
 				isTrue = (arg1Any.(float64) >= arg2Any.(float64))
 			}
 		case "<=":
-			if arg1Type == reflect.TypeOf(arg2Any) && arg1Type == common.VarType["float64"] {
+			if arg1Type == reflect.TypeOf(arg2Any) && arg1Type == goutil.VarType["float64"] {
 				isTrue = (arg1Any.(float64) <= arg2Any.(float64))
 			}
 		case ">":
-			if arg1Type == reflect.TypeOf(arg2Any) && arg1Type == common.VarType["float64"] {
+			if arg1Type == reflect.TypeOf(arg2Any) && arg1Type == goutil.VarType["float64"] {
 				isTrue = (arg1Any.(float64) > arg2Any.(float64))
 			}
 		case "<":
-			if arg1Type == reflect.TypeOf(arg2Any) && arg1Type == common.VarType["float64"] {
+			if arg1Type == reflect.TypeOf(arg2Any) && arg1Type == goutil.VarType["float64"] {
 				isTrue = (arg1Any.(float64) < arg2Any.(float64))
 			}
 		}

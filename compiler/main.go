@@ -2,7 +2,6 @@ package main
 
 import (
 	"bytes"
-	"compiler/common"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,8 +13,8 @@ import (
 
 	"github.com/AspieSoft/go-regex"
 	"github.com/AspieSoft/go-ttlcache"
+	"github.com/AspieSoft/goutil"
 	"github.com/alphadose/haxmap"
-	"github.com/fsnotify/fsnotify"
 	"github.com/pbnjay/memory"
 )
 
@@ -59,7 +58,7 @@ var GithubAssetURL = "https://cdn.jsdelivr.net/gh/AspieSoft/turbx@0.4.1/assets"
 func main() {
 	for _, arg := range os.Args {
 		if strings.HasPrefix(arg, "--enc=") {
-			encKey, _ = common.Decompress(strings.Replace(arg, "--enc=", "", 1))
+			encKey, _ = goutil.Decompress(strings.Replace(arg, "--enc=", "", 1))
 		} else if strings.HasPrefix(arg, "--debug") {
 			DebugMode = true
 		}
@@ -69,20 +68,20 @@ func main() {
 		GithubAssetURL = "/assets"
 	}
 
-	freeMem = common.FormatMemoryUsage(memory.FreeMemory())
+	freeMem = goutil.FormatMemoryUsage(memory.FreeMemory())
 	go (func() {
 		for {
 			time.Sleep(1 * time.Millisecond)
-			freeMem = common.FormatMemoryUsage(memory.FreeMemory())
+			freeMem = goutil.FormatMemoryUsage(memory.FreeMemory())
 		}
 	})()
 
-	common.VarType["arrayEachFnObj"] = reflect.TypeOf([]eachFnObj{})
-	common.VarType["tagFunc"] = reflect.TypeOf(func(map[string][]byte, []byte, map[string]interface{}, int, fileData) interface{} { return nil })
-	common.VarType["tagFuncPre"] = reflect.TypeOf(func(map[string][]byte, []byte, map[string]interface{}, int, fileData, int) (interface{}, bool) {
+	goutil.VarType["arrayEachFnObj"] = reflect.TypeOf([]eachFnObj{})
+	goutil.VarType["tagFunc"] = reflect.TypeOf(func(map[string][]byte, []byte, map[string]interface{}, int, fileData) interface{} { return nil })
+	goutil.VarType["tagFuncPre"] = reflect.TypeOf(func(map[string][]byte, []byte, map[string]interface{}, int, fileData, int) (interface{}, bool) {
 		return nil, false
 	})
-	common.VarType["preTagFunc"] = reflect.TypeOf(func(map[string][]byte, int, fileData, bool) interface{} { return nil })
+	goutil.VarType["preTagFunc"] = reflect.TypeOf(func(map[string][]byte, int, fileData, bool) interface{} { return nil })
 
 	cacheTime := 2 * time.Hour
 	if cache := getOPT("cache"); cache != "" {
@@ -107,7 +106,7 @@ func main() {
 		}
 
 		if encKey != "" {
-			dec, err := common.Decrypt(input, encKey)
+			dec, err := goutil.Decrypt(input, encKey)
 			if err != nil {
 				continue
 			}
@@ -140,69 +139,30 @@ func main() {
 	}
 }
 
-func watchViewsReadSubFolder(watcher *fsnotify.Watcher, dir string) {
-	// files, err := ioutil.ReadDir(dir)
-	files, err := os.ReadDir(dir)
-	if err != nil {
-		return
-	}
-
-	for _, file := range files {
-		if file.IsDir() {
-			if path, err := common.JoinPath(dir, file.Name()); err == nil {
-				watcher.Add(path)
-				watchViewsReadSubFolder(watcher, path)
-			}
-		}
-	}
+func debug(msg ...interface{}) {
+	fmt.Println("debug:", msg)
 }
 
-func watchViews(root string) {
-	watcher, err := fsnotify.NewWatcher()
-	if err != nil {
-		return
-	}
-	defer watcher.Close()
+func watchViews(root string){
+	goutil.WatchDir(root, &goutil.Watcher{
+		FileChange: func(path, op string) {
+			path = strings.Replace(strings.Replace(path, root, "", 1), "/", "", 1)
 
-	done := make(chan bool)
-	go func() {
-		defer close(done)
-		for {
-			if event, ok := <-watcher.Events; ok {
-				filePath := event.Name
+			fileCache.Del(path)
+			fileCache.Del(path + ".pre")
 
-				stat, err := os.Stat(filePath)
-				if err != nil {
-					watcher.Remove(filePath)
-					filePath = strings.Replace(strings.Replace(filePath, root, "", 1), "/", "", 1)
-					fileCache.Del(filePath)
-					filePath = string(regex.RepStr([]byte(filePath), `\.[\w]+$`, []byte{}))
-					fileCache.Del(filePath)
-				} else if stat.IsDir() {
-					watcher.Add(filePath)
-				} else {
-					filePath = strings.Replace(strings.Replace(filePath, root, "", 1), "/", "", 1)
-
-					fileCache.Del(filePath)
-					fileCache.Del(filePath + ".pre")
-
-					filePath = string(regex.RepStr([]byte(filePath), `\.[\w]+$`, []byte{}))
-					fileCache.Del(filePath)
-					fileCache.Del(filePath + ".pre")
-				}
-
-			}
-		}
-	}()
-
-	err = watcher.Add(root)
-	if err != nil {
-		return
-	}
-
-	watchViewsReadSubFolder(watcher, root)
-
-	<-done
+			path = string(regex.RepStr([]byte(path), `\.[\w]+$`, []byte{}))
+			fileCache.Del(path)
+			fileCache.Del(path + ".pre")
+		},
+		Remove: func(path, op string) (removeWatcher bool) {
+			path = strings.Replace(strings.Replace(path, root, "", 1), "/", "", 1)
+			fileCache.Del(path)
+			path = regex.RepStr(path, `\.[\w]+$`, "")
+			fileCache.Del(path)
+			return true
+		},
+	})
 }
 
 func setOPT(key string, val string) {
@@ -241,31 +201,31 @@ func getOpt(opts map[string]interface{}, arg string, stringOutput bool) interfac
 
 			if bytes.HasPrefix(a, []byte("[")) && bytes.HasSuffix(a, []byte("]")) {
 				a = a[1 : len(a)-2]
-				if reflect.TypeOf(res) != common.VarType["array"] || !regex.Match(a, `^[0-9]+$`) {
+				if reflect.TypeOf(res) != goutil.VarType["array"] || !regex.Match(a, `^[0-9]+$`) {
 					a = []byte(getOpt(opts, string(a), true).(string))
 				}
 			}
 
-			if reflect.TypeOf(res) == common.VarType["array"] && regex.Match(a, `^[0-9]+$`) {
+			if reflect.TypeOf(res) == goutil.VarType["array"] && regex.Match(a, `^[0-9]+$`) {
 				i, err := strconv.Atoi(string(a))
-				if err == nil && reflect.TypeOf(res) == common.VarType["array"] && len(res.([]interface{})) > i {
+				if err == nil && reflect.TypeOf(res) == goutil.VarType["array"] && len(res.([]interface{})) > i {
 					res = res.([]interface{})[i]
 				}
-			} else if reflect.TypeOf(res) == common.VarType["map"] {
+			} else if reflect.TypeOf(res) == goutil.VarType["map"] {
 				res = res.(map[string]interface{})[string(a)]
 			} else {
 				res = nil
 				break
 			}
 
-			if t := reflect.TypeOf(res); t != common.VarType["map"] && t != common.VarType["array"] {
+			if t := reflect.TypeOf(res); t != goutil.VarType["map"] && t != goutil.VarType["array"] {
 				break
 			}
 		}
 
 		if res != nil && res != false {
 			if stringOutput {
-				if t := reflect.TypeOf(res); t != common.VarType["map"] && t != common.VarType["array"] {
+				if t := reflect.TypeOf(res); t != goutil.VarType["map"] && t != goutil.VarType["array"] {
 					break
 				}
 			} else {
@@ -276,19 +236,19 @@ func getOpt(opts map[string]interface{}, arg string, stringOutput bool) interfac
 
 	if stringOutput {
 		switch reflect.TypeOf(res) {
-		case common.VarType["string"]:
+		case goutil.VarType["string"]:
 			return string(res.(string))
-		case common.VarType["byteArray"]:
+		case goutil.VarType["byteArray"]:
 			return string(res.([]byte))
-		case common.VarType["byte"]:
+		case goutil.VarType["byte"]:
 			return string(res.(byte))
-		case common.VarType["int32"]:
+		case goutil.VarType["int32"]:
 			return string(res.(int32))
-		case common.VarType["int"]:
+		case goutil.VarType["int"]:
 			return strconv.Itoa(res.(int))
-		case common.VarType["float64"]:
+		case goutil.VarType["float64"]:
 			return strconv.FormatFloat(res.(float64), 'f', -1, 64)
-		case common.VarType["float32"]:
+		case goutil.VarType["float32"]:
 			return strconv.FormatFloat(float64(res.(float32)), 'f', -1, 32)
 		default:
 			return ""
@@ -300,7 +260,7 @@ func getOpt(opts map[string]interface{}, arg string, stringOutput bool) interfac
 
 func sendRes(res string) {
 	if encKey != "" {
-		enc, err := common.Encrypt([]byte(res), encKey)
+		enc, err := goutil.Encrypt([]byte(res), encKey)
 		if err != nil {
 			return
 		}
@@ -343,7 +303,7 @@ func runCompile(input string) {
 		time.Sleep(1 * time.Millisecond)
 	}
 
-	optStr, err := common.Decompress(inputData[1])
+	optStr, err := goutil.Decompress(inputData[1])
 	if err != nil {
 		sendRes(inputData[0] + ":error")
 		return
@@ -359,9 +319,9 @@ func runCompile(input string) {
 	var preCompileConst map[string]interface{}
 	if opts["PreCompile"] == true {
 		pre = 1
-	}else if reflect.TypeOf(opts["const"]) == common.VarType["map"] {
+	}else if reflect.TypeOf(opts["const"]) == goutil.VarType["map"] {
 		pre = 1
-		// preCompileConst = common.CopyMap(opts["const"].(map[string]interface{}))
+		// preCompileConst = goutil.CopyMap(opts["const"].(map[string]interface{}))
 		preCompileConst = opts["const"].(map[string]interface{})
 		for key, val := range preCompileConst {
 			if _, ok := opts[key]; !ok {
@@ -386,7 +346,7 @@ func runCompile(input string) {
 		out = compile(file, opts, true, true, pre)
 	}
 
-	resOut, err := common.Compress(string(out))
+	resOut, err := goutil.Compress(string(out))
 	if err != nil {
 		sendRes(inputData[0] + ":error")
 		return
@@ -424,7 +384,7 @@ func getFile(filePath string, component bool, allowImport bool, fastMode bool) (
 
 	// try files
 	if component {
-		path, err = common.JoinPath(root, compRoot, filePath+"."+ext)
+		path, err = goutil.JoinPath(root, compRoot, filePath+"."+ext)
 		if err == nil {
 			// html, err = ioutil.ReadFile(path)
 			html, err = os.ReadFile(path)
@@ -434,7 +394,7 @@ func getFile(filePath string, component bool, allowImport bool, fastMode bool) (
 		}
 
 		if html == nil {
-			path, err = common.JoinPath(root, filePath+"."+ext)
+			path, err = goutil.JoinPath(root, filePath+"."+ext)
 			if err == nil {
 				// html, err = ioutil.ReadFile(path)
 				html, err = os.ReadFile(path)
@@ -446,7 +406,7 @@ func getFile(filePath string, component bool, allowImport bool, fastMode bool) (
 	}
 
 	if html == nil && allowImport {
-		path, err = common.JoinPath(root, filePath+"."+ext)
+		path, err = goutil.JoinPath(root, filePath+"."+ext)
 		if err == nil {
 			// html, err = ioutil.ReadFile(path)
 			html, err = os.ReadFile(path)
