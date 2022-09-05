@@ -53,7 +53,7 @@ var freeMem float64
 var DebugMode bool = false
 
 //todo: update GithubAssetURL version when updating module
-var GithubAssetURL = "https://cdn.jsdelivr.net/gh/AspieSoft/turbx@0.4.1/assets"
+var GithubAssetURL = "https://cdn.jsdelivr.net/gh/AspieSoft/turbx@0.4.4/assets"
 
 func main() {
 	for _, arg := range os.Args {
