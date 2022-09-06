@@ -21,7 +21,11 @@ A Fast and Easy To Use View Engine, Compiled In Go.
 ## Installation
 
 ```shell script
+
+sudo apt-get install libpcre3-dev
+
 npm install turbx
+
 ```
 
 ## Setup
