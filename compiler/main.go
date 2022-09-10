@@ -11,9 +11,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/AspieSoft/go-regex"
+	"github.com/AspieSoft/go-regex/v2"
 	"github.com/AspieSoft/go-ttlcache"
-	"github.com/AspieSoft/goutil"
+	"github.com/AspieSoft/goutil/v2"
 	"github.com/alphadose/haxmap"
 	"github.com/pbnjay/memory"
 )
@@ -50,10 +50,10 @@ var OPTS *haxmap.HashMap[string, string] = haxmap.New[string, string]()
 var encKey string
 var freeMem float64
 
-var DebugMode bool = false
 
-//todo: update GithubAssetURL version when updating module
-var GithubAssetURL = "https://cdn.jsdelivr.net/gh/AspieSoft/turbx@0.4.5/assets"
+//todo: make sure DebugMode is set to "false" and update GithubAssetURL version before publishing to github and npm
+var DebugMode bool = false
+var GithubAssetURL = "https://cdn.jsdelivr.net/gh/AspieSoft/turbx@0.5.0/assets"
 
 func main() {
 	for _, arg := range os.Args {
@@ -77,11 +77,11 @@ func main() {
 	})()
 
 	goutil.VarType["arrayEachFnObj"] = reflect.TypeOf([]eachFnObj{})
-	goutil.VarType["tagFunc"] = reflect.TypeOf(func(map[string][]byte, []byte, map[string]interface{}, int, fileData) interface{} { return nil })
-	goutil.VarType["tagFuncPre"] = reflect.TypeOf(func(map[string][]byte, []byte, map[string]interface{}, int, fileData, int) (interface{}, bool) {
+	goutil.VarType["tagFunc"] = reflect.TypeOf(func(*map[string][]byte, []byte, *map[string]interface{}, int, *fileData) interface{} { return nil })
+	goutil.VarType["tagFuncPre"] = reflect.TypeOf(func(*map[string][]byte, []byte, *map[string]interface{}, int, *fileData, int) (interface{}, bool) {
 		return nil, false
 	})
-	goutil.VarType["preTagFunc"] = reflect.TypeOf(func(map[string][]byte, int, fileData, bool) interface{} { return nil })
+	goutil.VarType["preTagFunc"] = reflect.TypeOf(func(*map[string][]byte, int, *fileData, bool) interface{} { return nil })
 
 	cacheTime := 2 * time.Hour
 	if cache := getOPT("cache"); cache != "" {
@@ -158,7 +158,7 @@ func watchViews(root string){
 		Remove: func(path, op string) (removeWatcher bool) {
 			path = strings.Replace(strings.Replace(path, root, "", 1), "/", "", 1)
 			fileCache.Del(path)
-			path = regex.RepStr(path, `\.[\w]+$`, "")
+			path = string(regex.RepStr([]byte(path), `\.[\w]+$`, []byte{}))
 			fileCache.Del(path)
 			return true
 		},
@@ -195,18 +195,18 @@ func getOpt(opts map[string]interface{}, arg string, stringOutput bool) interfac
 		res = opts
 		args := regex.Split(regex.RepStr([]byte(arg), `\s+`, []byte{}), `\.|(\[.*?\])`)
 		for _, a := range args {
-			if regex.Match(a, `^%![0-9]+!%$`) {
+			if regex.MatchRef(&a, `^%![0-9]+!%$`) {
 				return string(a)
 			}
 
 			if bytes.HasPrefix(a, []byte("[")) && bytes.HasSuffix(a, []byte("]")) {
 				a = a[1 : len(a)-2]
-				if reflect.TypeOf(res) != goutil.VarType["array"] || !regex.Match(a, `^[0-9]+$`) {
+				if reflect.TypeOf(res) != goutil.VarType["array"] || !regex.MatchRef(&a, `^[0-9]+$`) {
 					a = []byte(getOpt(opts, string(a), true).(string))
 				}
 			}
 
-			if reflect.TypeOf(res) == goutil.VarType["array"] && regex.Match(a, `^[0-9]+$`) {
+			if reflect.TypeOf(res) == goutil.VarType["array"] && regex.MatchRef(&a, `^[0-9]+$`) {
 				i, err := strconv.Atoi(string(a))
 				if err == nil && reflect.TypeOf(res) == goutil.VarType["array"] && len(res.([]interface{})) > i {
 					res = res.([]interface{})[i]
@@ -260,7 +260,7 @@ func getOpt(opts map[string]interface{}, arg string, stringOutput bool) interfac
 
 func sendRes(res string) {
 	if encKey != "" {
-		enc, err := goutil.Encrypt([]byte(res), encKey)
+		enc, err := goutil.Encrypt(res, encKey)
 		if err != nil {
 			return
 		}
@@ -340,10 +340,10 @@ func runCompile(input string) {
 
 	var out []byte
 	if preCompileConst != nil {
-		out = compile(file, opts, true, true, 0)
-		go compile(file, preCompileConst, true, true, pre)
+		out = compile(file, &opts, true, true, 0)
+		go compile(file, &preCompileConst, true, true, pre)
 	}else{
-		out = compile(file, opts, true, true, pre)
+		out = compile(file, &opts, true, true, pre)
 	}
 
 	resOut, err := goutil.Compress(string(out))
@@ -432,7 +432,7 @@ func getFile(filePath string, component bool, allowImport bool, fastMode bool) (
 }
 
 func encodeEncoding(html []byte) []byte {
-	return regex.RepFunc(html, `%!|!%`, func(data func(int) []byte) []byte {
+	return regex.RepFuncRef(&html, `%!|!%`, func(data func(int) []byte) []byte {
 		if bytes.Equal(data(0), []byte("%!")) {
 			return []byte("%!o!%")
 		}
@@ -441,7 +441,7 @@ func encodeEncoding(html []byte) []byte {
 }
 
 func decodeEncoding(html []byte) []byte {
-	return regex.RepFunc(html, `%!([oc])!%`, func(data func(int) []byte) []byte {
+	return regex.RepFuncRef(&html, `%!([oc])!%`, func(data func(int) []byte) []byte {
 		if bytes.Equal(data(1), []byte("o")) {
 			return []byte("%!")
 		}

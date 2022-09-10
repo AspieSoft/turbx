@@ -6,13 +6,15 @@ import (
 	"reflect"
 	"strconv"
 
-	"github.com/AspieSoft/go-regex"
-	"github.com/AspieSoft/goutil"
+	"github.com/AspieSoft/go-regex/v2"
+	"github.com/AspieSoft/goutil/v2"
 	lorem "github.com/drhodes/golorem"
 )
 
 var preTagFuncs map[string]interface{} = map[string]interface{} {
-	"lorem": func(args map[string][]byte, level int, file fileData, fastMode bool) interface{} {
+	"lorem": func(arg *map[string][]byte, level int, file *fileData, fastMode bool) interface{} {
+		args := *arg
+
 		wType := byte('p')
 		if len(args["type"]) != 0 {
 			wType = args["type"][0]
@@ -95,17 +97,18 @@ var preTagFuncs map[string]interface{} = map[string]interface{} {
 		return []byte(lorem.Paragraph(minLen, maxLen))
 	},
 
-	"youtube": func(args map[string][]byte, level int, file fileData, fastMode bool) interface{} {
-		url := regex.RepFunc(args["url"], `^(["'\'])(.*)\1$`, func(data func(int) []byte) []byte {
+	"youtube": func(args *map[string][]byte, level int, file *fileData, fastMode bool) interface{} {
+		url := (*args)["url"]
+		url = regex.RepFuncRef(&url, `^(["'\'])(.*)\1$`, func(data func(int) []byte) []byte {
 			return data(2)
 		})
-		url = regex.RepFunc(url, `^(?:https?://|)(?:www\.|)(?:youtube\.com|youtu\.be)/(?:watch/?\?v=|playlist/?\?list=|channel/?|)(.*)$`, func(data func(int) []byte) []byte {
+		url = regex.RepFuncRef(&url, `^(?:https?://|)(?:www\.|)(?:youtube\.com|youtu\.be)/(?:watch/?\?v=|playlist/?\?list=|channel/?|)(.*)$`, func(data func(int) []byte) []byte {
 			return data(1)
 		})
-		if regex.Match(url, `^.*?&list=`) {
-			url = regex.RepStr(url, `^.*?&list=`, []byte{})
+		if regex.MatchRef(&url, `^.*?&list=`) {
+			url = regex.RepStrRef(&url, `^.*?&list=`, []byte{})
 		}
-		url = regex.RepStr(url, `(\?|&).*$`, []byte{})
+		url = regex.RepStrRef(&url, `(\?|&).*$`, []byte{})
 
 		if fastMode {
 			return regex.JoinBytes([]byte(`<div class="youtube-embed youtube-embed-client" src="`), url, []byte(`"><img class="youtube-embed-play-btn" src="`+GithubAssetURL+`/youtube.png"/></div>`))
@@ -224,7 +227,9 @@ var preTagFuncs map[string]interface{} = map[string]interface{} {
 var tagFuncs map[string]interface{} = map[string]interface{} {
 	"if": tagFuncIf,
 
-	"each": func(args map[string][]byte, cont []byte, opts map[string]interface{}, level int, file fileData) interface{} {
+	"each": func(arg *map[string][]byte, cont []byte, opts *map[string]interface{}, level int, file *fileData) interface{} {
+		args := *arg
+
 		//todo: fix each function outputing the same var
 
 		if len(args) == 0 {
@@ -288,7 +293,7 @@ var tagFuncs map[string]interface{} = map[string]interface{} {
 			}
 		}
 
-		obj := getOpt(opts, argObj, false)
+		obj := getOpt(*opts, argObj, false)
 		res := []eachFnObj{}
 
 		objType := reflect.TypeOf(obj)
@@ -299,7 +304,10 @@ var tagFuncs map[string]interface{} = map[string]interface{} {
 		if objType == goutil.VarType["map"] {
 			n := 0
 			for i, v := range obj.(map[string]interface{}) {
-				opt := opts
+				opt, err := goutil.DeepCopyJson(*opts)
+				if err != nil {
+					opt = map[string]interface{}{}
+				}
 				if argAs != nil {
 					opt[string(argAs)] = v
 				}else{
@@ -317,7 +325,10 @@ var tagFuncs map[string]interface{} = map[string]interface{} {
 		}else if objType == goutil.VarType["array"] {
 			n := 0
 			for i, v := range obj.([]interface{}) {
-				opt := opts
+				opt, err := goutil.DeepCopyJson(*opts)
+				if err != nil {
+					opt = map[string]interface{}{}
+				}
 				if argAs != nil {
 					opt[string(argAs)] = v
 				}else{
@@ -337,10 +348,12 @@ var tagFuncs map[string]interface{} = map[string]interface{} {
 		return res
 	},
 
-	"json": func(args map[string][]byte, cont []byte, opts map[string]interface{}, level int, file fileData) interface{} {
+	"json": func(arg *map[string][]byte, cont []byte, opts *map[string]interface{}, level int, file *fileData) interface{} {
+		args := *arg
+
 		var json interface{} = nil
 		if val, ok := args["0"]; ok {
-			json = getOpt(opts, string(val), false)
+			json = getOpt(*opts, string(val), false)
 		}else{
 			return []byte{}
 		}
@@ -388,7 +401,9 @@ var tagFuncs map[string]interface{} = map[string]interface{} {
 	},
 }
 
-func tagFuncIf(args map[string][]byte, cont []byte, opts map[string]interface{}, level int, file fileData, pre int) (interface{}, bool) {
+func tagFuncIf(arg *map[string][]byte, cont []byte, opts *map[string]interface{}, level int, file *fileData, pre int) (interface{}, bool) {
+	args := *arg
+	
 	isTrue := false
 	lastArg := []byte{}
 
@@ -414,12 +429,12 @@ func tagFuncIf(args map[string][]byte, cont []byte, opts map[string]interface{},
 		var arg1Any interface{}
 		var arg2Any interface{}
 		a1, ok1 := args[strconv.Itoa(i+1)]
-		if ok1 && regex.Match(a1, `^[!<>]?=|[<>]$`) {
+		if ok1 && regex.MatchRef(&a1, `^[!<>]?=|[<>]$`) {
 			arg1 = arg
 			sign = string(a1)
 			arg2 = args[strconv.Itoa(i+2)]
 			lastArg = arg1
-		} else if ok1 && regex.Match(arg, `^[!<>]?=|[<>]$`) {
+		} else if ok1 && regex.MatchRef(&arg, `^[!<>]?=|[<>]$`) {
 			arg1 = lastArg
 			sign = string(arg)
 			arg2 = a1
@@ -451,8 +466,8 @@ func tagFuncIf(args map[string][]byte, cont []byte, opts map[string]interface{},
 
 			lastArg = arg1
 
-			if regex.Match(arg1, `^["'\'](.*)["'\']$`) {
-				arg1 = regex.RepFunc(arg1, `^["'\'](.*)["'\']$`, func(data func(int) []byte) []byte {
+			if regex.MatchRef(&arg1, `^["'\'](.*)["'\']$`) {
+				arg1 = regex.RepFuncRef(&arg1, `^["'\'](.*)["'\']$`, func(data func(int) []byte) []byte {
 					return data(1)
 				})
 				if arg1N, err := strconv.Atoi(string(arg1)); err == nil {
@@ -463,7 +478,7 @@ func tagFuncIf(args map[string][]byte, cont []byte, opts map[string]interface{},
 			} else if arg1N, err := strconv.Atoi(string(arg1)); err == nil {
 				arg1Any = arg1N
 			} else {
-				arg1Any = getOpt(opts, string(arg1), false)
+				arg1Any = getOpt(*opts, string(arg1), false)
 				if pre == 1 && arg1Any == nil {
 					return nil, true
 				}
@@ -479,8 +494,8 @@ func tagFuncIf(args map[string][]byte, cont []byte, opts map[string]interface{},
 			continue
 		}
 
-		if regex.Match(arg1, `^["'\'](.*)["'\']$`) {
-			arg1 = regex.RepFunc(arg1, `^["'\'](.*)["'\']$`, func(data func(int) []byte) []byte {
+		if regex.MatchRef(&arg1, `^["'\'](.*)["'\']$`) {
+			arg1 = regex.RepFuncRef(&arg1, `^["'\'](.*)["'\']$`, func(data func(int) []byte) []byte {
 				return data(1)
 			})
 			if arg1N, err := strconv.Atoi(string(arg1)); err == nil {
@@ -491,7 +506,7 @@ func tagFuncIf(args map[string][]byte, cont []byte, opts map[string]interface{},
 		} else if arg1N, err := strconv.Atoi(string(arg1)); err == nil {
 			arg1Any = arg1N
 		} else {
-			arg1Any = getOpt(opts, string(arg1), false)
+			arg1Any = getOpt(*opts, string(arg1), false)
 			if pre == 1 && arg1Any == nil {
 				return nil, true
 			}
@@ -505,8 +520,8 @@ func tagFuncIf(args map[string][]byte, cont []byte, opts map[string]interface{},
 
 		if len(arg2) == 0 {
 			arg2Any = nil
-		} else if regex.Match(arg2, `^["'\'](.*)["'\']$`) {
-			arg2 = regex.RepFunc(arg2, `^["'\'](.*)["'\']$`, func(data func(int) []byte) []byte {
+		} else if regex.MatchRef(&arg2, `^["'\'](.*)["'\']$`) {
+			arg2 = regex.RepFuncRef(&arg2, `^["'\'](.*)["'\']$`, func(data func(int) []byte) []byte {
 				return data(1)
 			})
 			if arg2N, err := strconv.Atoi(string(arg2)); err == nil {
@@ -517,7 +532,7 @@ func tagFuncIf(args map[string][]byte, cont []byte, opts map[string]interface{},
 		} else if arg2N, err := strconv.Atoi(string(arg2)); err == nil {
 			arg2Any = arg2N
 		} else {
-			arg2Any = getOpt(opts, string(arg2), false)
+			arg2Any = getOpt(*opts, string(arg2), false)
 			if pre == 1 && arg2Any == nil {
 				return nil, true
 			}
@@ -584,13 +599,13 @@ func tagFuncIf(args map[string][]byte, cont []byte, opts map[string]interface{},
 		i += 2
 	}
 
-	elseOpt := regex.Match(cont, `(?s)<_el(if|se):`+strconv.Itoa(level)+`(\s+[0-9]+|)/>(.*)$`)
+	elseOpt := regex.MatchRef(&cont, `(?s)<_el(if|se):`+strconv.Itoa(level)+`(\s+[0-9]+|)/>(.*)$`)
 	if elseOpt && isTrue {
-		return regex.RepStr(cont, `(?s)<_el(if|se):`+strconv.Itoa(level)+`(\s+[0-9]+|)/>(.*)$`, []byte("")), false
+		return regex.RepStrRef(&cont, `(?s)<_el(if|se):`+strconv.Itoa(level)+`(\s+[0-9]+|)/>(.*)$`, []byte("")), false
 	} else if elseOpt {
 		blankElse := false
 		newArgs, newCont := map[string][]byte{}, []byte{}
-		regex.RepFunc(cont, `(?s)<_el(if|se):`+strconv.Itoa(level)+`(\s+[0-9]+|)/>(.*)$`, func(data func(int) []byte) []byte {
+		regex.RepFuncRef(&cont, `(?s)<_el(if|se):`+strconv.Itoa(level)+`(\s+[0-9]+|)/>(.*)$`, func(data func(int) []byte) []byte {
 			argInt, err := strconv.Atoi(string(regex.RepStr(data(2), `\s`, []byte{})))
 			if err != nil {
 				blankElse = true
@@ -605,7 +620,7 @@ func tagFuncIf(args map[string][]byte, cont []byte, opts map[string]interface{},
 			return newCont, false
 		}
 
-		return tagFuncIf(newArgs, newCont, opts, level, file, pre)
+		return tagFuncIf(&newArgs, newCont, opts, level, file, pre)
 	} else if isTrue {
 		return cont, false
 	}

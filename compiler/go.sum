@@ -1,11 +1,11 @@
-github.com/AspieSoft/go-regex v1.4.4 h1:lVMlKBoLUGlieQ8PcR6j+41mqZNF5mmQCVyoAwlDB1k=
-github.com/AspieSoft/go-regex v1.4.4/go.mod h1:0SpGKvczEwt4D/RYg4u5+pMyP/fkd3Ubhbqvx/Uodn8=
+github.com/AspieSoft/go-regex/v2 v2.0.2 h1:BMlLcvGOs5FRTZKx97AH0o9mUy3+v5F3wttZ1zt0UOQ=
+github.com/AspieSoft/go-regex/v2 v2.0.2/go.mod h1:EC4YtfjBu0H64znDVlho7zR2btjVRgvQNAhsqZ/B+S4=
 github.com/AspieSoft/go-syncterval v1.0.2 h1:kIFS/ZHrySSLonCGN6lcpcwOKST3DmQfxIfqtcoj/lk=
 github.com/AspieSoft/go-syncterval v1.0.2/go.mod h1:KDPQRl3rF9/SDALWisEz2eb8APyFpRL0ufJY8QaHuKY=
 github.com/AspieSoft/go-ttlcache v1.0.2 h1:G7SdnxhD0JANMG/Swqk/VYM4AfzAQUFMCC36Y3HGETw=
 github.com/AspieSoft/go-ttlcache v1.0.2/go.mod h1:+bmizNKJhoosFnjMHjxadfTMQEhvrzAZIJugc5nJuhk=
-github.com/AspieSoft/goutil v1.0.4 h1:7rUEcaHjLl9M6jdiV0QSiDrseceMWhHmaNrYGtjVfVA=
-github.com/AspieSoft/goutil v1.0.4/go.mod h1:eQBbXdgI7U4xOc1xx9Pj0TMYGdZwvLFeN1XaswmXVgA=
+github.com/AspieSoft/goutil/v2 v2.0.0 h1:Yqh1LiAkeVdXer+e0/UEQWNS9S7D4bQVK9zKSgCLBCc=
+github.com/AspieSoft/goutil/v2 v2.0.0/go.mod h1:oecI4+2+/ejCWHm+xid9mHrsPQvBS5KAz4HpLhfrKVo=
 github.com/GRbit/go-pcre v1.0.0 h1:Qv/YZ/tr436mFgep3Y0WAzKOZvAKGOGD0cAMwUcsEJo=
 github.com/GRbit/go-pcre v1.0.0/go.mod h1:OuMGyux1WcDrKNwDn9MyQLa2kzxQS/xFyVqXFZ/ay0I=
 github.com/alphadose/haxmap v0.3.1 h1:P02INS0xIwY0R3E+KRJTPtrlwTvRPYoU2GgoeRk2KbU=

@@ -3,9 +3,9 @@ module compiler
 go 1.18
 
 require (
-	github.com/AspieSoft/go-regex v1.4.4
+	github.com/AspieSoft/go-regex/v2 v2.0.2
 	github.com/AspieSoft/go-ttlcache v1.0.2
-	github.com/AspieSoft/goutil v1.0.4
+	github.com/AspieSoft/goutil/v2 v2.0.0
 	github.com/alphadose/haxmap v0.3.1
 	github.com/drhodes/golorem v0.0.0-20220328165741-da82e5b29246
 	github.com/gomarkdown/markdown v0.0.0-20220905174103-7b278df48cfb
