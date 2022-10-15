@@ -45,7 +45,7 @@ type eachFnObj struct {
 var fileCache *ttlcache.Cache[string, fileData]
 
 // var OPTS map[string]string = map[string]string{}
-var OPTS *haxmap.HashMap[string, string] = haxmap.New[string, string]()
+var OPTS *haxmap.Map[string, string] = haxmap.New[string, string]()
 
 var encKey string
 var freeMem float64
