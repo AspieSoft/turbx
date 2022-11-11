@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -80,7 +81,7 @@ type Test struct {
 	Fn func(t int)
 }
 
-func PreCompile(path string, args map[string]interface{}) (string, error) {
+func PreCompile(path string, opts map[string]interface{}) (string, error) {
 	if rootPath == "" || cacheTmpPath == "" {
 		return "", errors.New("a root path was never chosen")
 	}
@@ -103,56 +104,55 @@ func PreCompile(path string, args map[string]interface{}) (string, error) {
 	}()
 
 	reader := bufio.NewReader(file)
-	_ = reader
 
 	tmpFile, tmpPath, err := tmpPath()
 	if err != nil {
 		return "", err
 	}
 	defer tmpFile.Close()
-	_ = tmpPath
 
 	writer := bufio.NewWriter(tmpFile)
+
+	_ = reader
 	_ = writer
 
 	// b, _ := reader.Peek(10)
 	// fmt.Println(string(b))
 
-	
+	//todo: compile components and pre funcs
+	//todo: convert other funcs to use {{#if}} in place of <_if>
+	//todo: compile const vars (leave unhandled vars for main compile method)
+
+	//// may read multiple bytes at a time, and check if they contain '<' in the first check (define read size with a const var)
+	//todo: compile markdown while reading file (may ignore above comment for this idea)
 
 	//todo: return temp file path (write result in temp folder)
-	// also verify precompile is not calling in the temp folder
-	return "", nil
+	return tmpPath, nil
 }
 
-func callFunc(name string, args *map[string][]byte, cont *[]byte, opts *map[string]interface{}) (interface{}, error) {
+func callFunc(name string, args *map[string][]byte, cont *[]byte, opts *map[string]interface{}, pre bool) (interface{}, error) {
 	name = string(regex.RepStr([]byte(name), regex.Compile(`[^\w_]`), []byte{}))
 
-	var val []reflect.Value
-	if opts == nil {
+	var m reflect.Value
+	if pre {
 		var t funcs.Pre
 		m := reflect.ValueOf(&t).MethodByName(name)
 		if goutil.IsZeroOfUnderlyingType(m) {
 			return nil, errors.New("method does not exist in Pre Compiled Functions")
 		}
-
-		val = m.Call([]reflect.Value{
-			reflect.ValueOf(args),
-			reflect.ValueOf(cont),
-		})
 	}else{
 		var t funcs.Comp
 		m := reflect.ValueOf(&t).MethodByName(name)
 		if goutil.IsZeroOfUnderlyingType(m) {
 			return nil, errors.New("method does not exist in Pre Compiled Functions")
 		}
-
-		val = m.Call([]reflect.Value{
-			reflect.ValueOf(args),
-			reflect.ValueOf(cont),
-			reflect.ValueOf(opts),
-		})
 	}
+
+	val := m.Call([]reflect.Value{
+		reflect.ValueOf(args),
+		reflect.ValueOf(cont),
+		reflect.ValueOf(opts),
+	})
 
 	var data interface{}
 	var err error
