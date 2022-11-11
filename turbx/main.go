@@ -7,6 +7,8 @@ import (
 )
 
 func main(){
+	defer compiler.Close()
+
 	args := goutil.MapArgs()
 
 	err := compiler.SetRoot(args["0"])
