@@ -2,9 +2,11 @@ package compiler
 
 import (
 	"bufio"
+	"bytes"
 	"crypto/rand"
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -19,8 +21,24 @@ import (
 
 var rootPath string
 var fileExt string = "html"
+var publicPath string
 
 var cacheTmpPath string
+
+type tagData struct {
+	tag []byte
+	attr []byte
+}
+
+var emptyContentTags []tagData = []tagData{
+	{[]byte("script"), []byte("src")},
+	{[]byte("iframe"), nil},
+}
+
+type elmVal struct {
+	ind uint
+	val []byte
+}
 
 func init(){
 	dir, err := os.MkdirTemp("", "turbx-cache." + string(randBytes(16, nil)) + ".")
@@ -64,6 +82,20 @@ func SetRoot(path string) error {
 	rootPath = path
 
 	go clearTmpCache()
+
+	return nil
+}
+
+func SetPublicPath(path string) error {
+	if path == "" {
+		return errors.New("path cannot be empty")
+	}
+	path, err := filepath.Abs(path)
+	if err != nil {
+		return err
+	}
+
+	publicPath = path
 
 	return nil
 }
@@ -125,9 +157,235 @@ func PreCompile(path string, opts map[string]interface{}) (string, error) {
 	//// may read multiple bytes at a time, and check if they contain '<' in the first check (define read size with a const var)
 	//todo: compile markdown while reading file (may ignore above comment for this idea)
 
+	tagInd := [][]byte{}
+	_ = tagInd
+
+	b, err := reader.Peek(1)
+	for err == nil {
+		if b[0] == '<' {
+			reader.Discard(1)
+			b, err = reader.Peek(1)
+
+			// elm := map[string][2][]byte{}
+			elm := map[string]elmVal{}
+			ind := uint(0)
+
+			selfClose := false
+			mode := uint8(0)
+			if b[0] == '_' {
+				mode = 1
+				reader.Discard(1)
+				b, err = reader.Peek(1)
+			}else if regex.MatchRef(&b, regex.Compile(`[A-Z]`)) {
+				mode = 2
+			}
+
+			// handle elm tag (use all caps to prevent conflicts with attributes)
+			tag := []byte{}
+			for err == nil && !regex.MatchRef(&b, regex.Compile(`[\s\r\n/>]`)) {
+				tag = append(tag, b[0])
+				reader.Discard(1)
+				b, err = reader.Peek(1)
+			}
+			elm["TAG"] = elmVal{ind, tag}
+			ind++
+
+			for err == nil {
+				skipWhitespace(reader, &b, &err)
+
+				// handle end of html tag
+				if b[0] == '/' {
+					b, err = reader.Peek(2)
+					if b[1] == '>' {
+						reader.Discard(2)
+						b, err = reader.Peek(1)
+						selfClose = true
+						break
+					}
+				}else if b[0] == '>' {
+					reader.Discard(1)
+					b, err = reader.Peek(1)
+					tagInd = append(tagInd, elm["TAG"].val)
+					break
+				}
+
+				// get key
+				key := []byte{}
+				for err == nil && !regex.MatchRef(&b, regex.Compile(`[\s\r\n/>!=]`)) {
+					key = append(key, b[0])
+					reader.Discard(1)
+					b, err = reader.Peek(1)
+				}
+
+				// handle '&' '|' '(' ')' chars for if statements and logic
+				if len(key) > 1 && (key[0] == '&' || key[0] == '|' || key[0] == '(' || key[0] == ')') {
+					elm[strconv.Itoa(int(ind))] = elmVal{ind, []byte{key[0]}}
+					ind++
+					key = key[1:]
+				}
+
+				val := []byte{}
+				if b[0] == '!' {
+					// handle not operator
+					val = []byte{'!'}
+					reader.Discard(1)
+					b, err = reader.Peek(1)
+				}
+				if b[0] == '=' {
+					reader.Discard(1)
+					b, err = reader.Peek(1)
+				}else{
+					// handle single key without value
+
+					// handle '&' '|' '(' ')' chars for if statements and logic
+					if len(key) == 1 && (key[0] == '&' || key[0] == '|' || key[0] == '(' || key[0] == ')') {
+						elm[strconv.Itoa(int(ind))] = elmVal{ind, key}
+						ind++
+					}else{
+						// handle '&' '|' '(' ')' chars for if statements and logic
+						if len(key) > 1 && (key[len(key)-1] == '&' || key[len(key)-1] == '|' || key[len(key)-1] == '(' || key[len(key)-1] == ')') {
+							elm[strconv.Itoa(int(ind))] = elmVal{ind, []byte{key[len(key)-1]}}
+							ind++
+							key = key[:len(key)-1]
+						}
+
+						k := string(bytes.ToLower(key))
+						if _, ok := elm[k]; !ok {
+							elm[k] = elmVal{ind, nil}
+							ind++
+						}
+					}
+					continue
+				}
+
+				// get quote type
+				q := byte(' ')
+				if b[0] == '"' {
+					q = '"'
+					reader.Discard(1)
+					b, err = reader.Peek(1)
+				}else if b[0] == '\'' {
+					q = '\''
+					reader.Discard(1)
+					b, err = reader.Peek(1)
+				}else if b[0] == '`' {
+					q = '`'
+					reader.Discard(1)
+					b, err = reader.Peek(1)
+				}
+
+				// get value
+				for err == nil && b[0] != q && (q != ' ' || !regex.MatchRef(&b, regex.Compile(`[\s\r\n/>]`))) {
+					if b[0] == '\\' {
+						b, err = reader.Peek(2)
+						if regex.MatchRef(&b, regex.Compile(`[A-Za-z]`)) {
+							val = append(val, b[0], b[1])
+						}else{
+							val = append(val, b[1])
+						}
+						// val = append(val, b[0], b[1])
+
+						reader.Discard(2)
+						b, err = reader.Peek(1)
+						continue
+					}
+					
+					val = append(val, b[0])
+					reader.Discard(1)
+					b, err = reader.Peek(1)
+				}
+
+				elm[string(bytes.ToLower(key))] = elmVal{ind, val}
+				ind++
+
+				if q != ' ' {
+					reader.Discard(1)
+					b, err = reader.Peek(1)
+				}
+			}
+
+			//todo: sort 'elm' map args
+			// time.Sleep(1000 * time.Nanosecond)
+
+			_, _ = mode, selfClose
+			if mode == 1 {
+				//todo: handle function
+			}else if mode == 2 {
+				//todo: handle component
+			}else{
+				if _, ok := elm["src"]; ok && publicPath != "" && elm["src"].val != nil && bytes.HasPrefix(elm["src"].val, []byte{'/'}) {
+					if regex.Match(elm["src"].val, regex.Compile(`(?<!\.min)\.(js|css)$`)) {
+						src := regex.RepStrComplex(elm["src"].val, regex.Compile(`\.(js|css)$`), []byte(".min.$1"))
+						if path, err := goutil.JoinPath(publicPath, string(src)); err == nil {
+							if _, err := os.Stat(path); err == nil {
+								elm["src"] = elmVal{elm["src"].ind, src}
+							}
+						}
+					}
+				}
+				//todo: handle html
+				// check for 'publicPath' var and check if a '.min' version of a '.js' or '.css' file exists
+				res := regex.JoinBytes('<', elm["TAG"].val)
+				for key, attr := range elm {
+					if regex.Match([]byte(key), regex.Compile(`^[A-Z]+$`)) || (len(attr.val) == 1 && (attr.val[0] == '&' || attr.val[0] == '|' || attr.val[0] == '(' || attr.val[0] == ')')) {
+						continue
+					}
+
+					res = regex.JoinBytes(res, ' ', key)
+					if attr.val != nil {
+						val := regex.RepStrComplex(attr.val, regex.Compile(`([\\"])`), []byte(`\$1`))
+						res = regex.JoinBytes(res, '=', '"', val, '"')
+					}
+				}
+
+				if selfClose {
+					hasEmptyContentTag := false
+					for _, cTag := range emptyContentTags {
+						if bytes.Equal(cTag.tag, elm["TAG"].val) {
+							if cTag.attr != nil {
+								if _, ok := elm[string(cTag.attr)]; ok {
+									hasEmptyContentTag = true
+								}
+							}else{
+								hasEmptyContentTag = true
+							}
+							break
+						}
+					}
+
+					if hasEmptyContentTag {
+						res = append(res, []byte("></script>")...)
+					}else{
+						res = append(res, '/', '>')
+					}
+				}else{
+					res = append(res, '>')
+				}
+
+				fmt.Println(string(res))
+				// writer.Write()
+			}
+		}
+
+		//temp
+		break
+		reader.Discard(1)
+		b, err = reader.Peek(1)
+	}
+
+
 	//todo: return temp file path (write result in temp folder)
 	return tmpPath, nil
 }
+
+
+func skipWhitespace(reader *bufio.Reader, b *[]byte, err *error){
+	for err != nil && regex.MatchRef(b, regex.Compile(`[\s\r\n]`)) {
+		reader.Discard(1)
+		*b, *err = reader.Peek(1)
+	}
+}
+
 
 func callFunc(name string, args *map[string][]byte, cont *[]byte, opts *map[string]interface{}, pre bool) (interface{}, error) {
 	name = string(regex.RepStr([]byte(name), regex.Compile(`[^\w_]`), []byte{}))

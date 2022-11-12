@@ -20,6 +20,10 @@ func main(){
 		compiler.SetExt(args["ext"])
 	}
 
+	if args["public"] != "" && args["public"] != "true" {
+		compiler.SetPublicPath(args["public"])
+	}
+
 	//temp: will remove
 	// will use "html" ext in production (or use md with custom markdown support by default)
 	// may create my own markdown compiler to fix issues with modules lack of html support
