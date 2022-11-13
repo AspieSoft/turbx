@@ -31,7 +31,7 @@ func main(){
 
 	//temp: test
 	path, err := compiler.PreCompile("index", map[string]interface{}{
-		"test": 1,
+		"$test": 1,
 		"key": "value",
 	})
 	if err != nil {

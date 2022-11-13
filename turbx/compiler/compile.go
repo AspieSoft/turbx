@@ -6,10 +6,10 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -28,6 +28,25 @@ var cacheTmpPath string
 type tagData struct {
 	tag []byte
 	attr []byte
+}
+
+var singleHtmlTags [][]byte = [][]byte{
+	[]byte("br"),
+	[]byte("hr"),
+	[]byte("wbr"),
+	[]byte("meta"),
+	[]byte("link"),
+	[]byte("param"),
+	[]byte("base"),
+	[]byte("input"),
+	[]byte("img"),
+	[]byte("area"),
+	[]byte("col"),
+	[]byte("command"),
+	[]byte("embed"),
+	[]byte("keygen"),
+	[]byte("source"),
+	[]byte("track"),
 }
 
 var emptyContentTags []tagData = []tagData{
@@ -209,6 +228,13 @@ func PreCompile(path string, opts map[string]interface{}) (string, error) {
 					break
 				}
 
+				useNot := false
+				if b[0] == '!' {
+					useNot = true
+					reader.Discard(1)
+					b, err = reader.Peek(1)
+				}
+
 				// get key
 				key := []byte{}
 				for err == nil && !regex.MatchRef(&b, regex.Compile(`[\s\r\n/>!=]`)) {
@@ -222,6 +248,9 @@ func PreCompile(path string, opts map[string]interface{}) (string, error) {
 					elm[strconv.Itoa(int(ind))] = elmVal{ind, []byte{key[0]}}
 					ind++
 					key = key[1:]
+				}else if useNot {
+					elm[strconv.Itoa(int(ind))] = elmVal{ind, []byte{'^'}}
+					ind++
 				}
 
 				val := []byte{}
@@ -304,15 +333,95 @@ func PreCompile(path string, opts map[string]interface{}) (string, error) {
 				}
 			}
 
-			//todo: sort 'elm' map args
-			// time.Sleep(1000 * time.Nanosecond)
-
-			_, _ = mode, selfClose
 			if mode == 1 {
 				//todo: handle function
+				// handle functions
+				if len(elm["TAG"].val) == 2 && elm["TAG"].val[0] == 'i' && elm["TAG"].val[1] == 'f' {
+					// handle if statements
+					intArgs := []elmVal{}
+					argSize := 0
+					for key, arg := range elm {
+						if !regex.Match([]byte(key), regex.Compile(`^([A-Z]+)$`)) {
+							intArgs = append(intArgs, elmVal{arg.ind, []byte(key)})
+							argSize++
+							if !regex.Match([]byte(key), regex.Compile(`^([0-9]+)$`)) && arg.val != nil {
+								argSize += 2
+							}
+						}
+					}
+					sort.Slice(intArgs, func(i, j int) bool {
+						if intArgs[i].ind < intArgs[j].ind {
+							return true
+						}
+						return false
+					})
+
+					args := make([][]byte, argSize)
+					i := 0
+					for _, arg := range intArgs {
+						if regex.Match([]byte(arg.val), regex.Compile(`^([0-9]+)$`)) {
+							args[i] = elm[string(arg.val)].val
+							i++
+						}else{
+							args[i] = arg.val
+							i++
+							if elm[string(arg.val)].val != nil {
+								val := elm[string(arg.val)].val
+								if val[0] == '<' || val[0] == '>' {
+									args[i] = []byte{val[0]}
+									val = val[1:]
+									if val[0] == '=' {
+										args[i] = append(args[i], val[0])
+										val = val[1:]
+									}
+								}else if val[0] == '!' || val[0] == '=' {
+									args[i] = []byte{val[0]}
+									val = val[1:]
+								}else{
+									args[i] = []byte{'='}
+								}
+								i++
+
+								args[i] = val
+								i++
+							}
+						}
+					}
+
+					res, err := callFuncArr("If", &args, nil, &opts, true)
+					if err != nil {
+						return "", err
+					}
+
+					if res == true {
+						//todo: get content up to close tag or next else statement (skip anything after the else statement)
+						// note: will need to detect another if statement inside and keep track of the nesting level
+					}else if res == true {
+						//todo: skip until the next else statement or to the close tag
+						// note: will need to detect another if statement inside and keep track of the nesting level
+					}else{
+						//todo: convert the if statement to run on main compile with {{#if args}}
+						// also check if a string was returned with modified args, or if nil was returned to keep the existing args
+					}
+				}else{
+					//todo: handle normal pre functions (each will not be a pre func)
+				}
 			}else if mode == 2 {
 				//todo: handle component
+				// @args: map[string][]byte
 			}else{
+				// handle html tags
+
+				// sort html args
+				argSort := []string{}
+				for key := range elm {
+					if !regex.Match([]byte(key), regex.Compile(`^([A-Z]+|[0-9]+)$`)) {
+						argSort = append(argSort, key)
+					}
+				}
+				sort.Strings(argSort)
+
+				// fix .min for .js and .css src attrs
 				if _, ok := elm["src"]; ok && publicPath != "" && elm["src"].val != nil && bytes.HasPrefix(elm["src"].val, []byte{'/'}) {
 					if regex.Match(elm["src"].val, regex.Compile(`(?<!\.min)\.(js|css)$`)) {
 						src := regex.RepStrComplex(elm["src"].val, regex.Compile(`\.(js|css)$`), []byte(".min.$1"))
@@ -323,17 +432,12 @@ func PreCompile(path string, opts map[string]interface{}) (string, error) {
 						}
 					}
 				}
-				//todo: handle html
-				// check for 'publicPath' var and check if a '.min' version of a '.js' or '.css' file exists
-				res := regex.JoinBytes('<', elm["TAG"].val)
-				for key, attr := range elm {
-					if regex.Match([]byte(key), regex.Compile(`^[A-Z]+$`)) || (len(attr.val) == 1 && (attr.val[0] == '&' || attr.val[0] == '|' || attr.val[0] == '(' || attr.val[0] == ')')) {
-						continue
-					}
 
-					res = regex.JoinBytes(res, ' ', key)
-					if attr.val != nil {
-						val := regex.RepStrComplex(attr.val, regex.Compile(`([\\"])`), []byte(`\$1`))
+				res := regex.JoinBytes('<', elm["TAG"].val)
+				for _, arg := range argSort {
+					res = regex.JoinBytes(res, ' ', arg)
+					if elm[arg].val != nil {
+						val := regex.RepStrComplex(elm[arg].val, regex.Compile(`([\\"])`), []byte(`\$1`))
 						res = regex.JoinBytes(res, '=', '"', val, '"')
 					}
 				}
@@ -359,11 +463,14 @@ func PreCompile(path string, opts map[string]interface{}) (string, error) {
 						res = append(res, '/', '>')
 					}
 				}else{
-					res = append(res, '>')
+					if goutil.Contains(singleHtmlTags, elm["TAG"].val) {
+						res = append(res, '/', '>')
+					}else{
+						res = append(res, '>')
+					}
 				}
 
-				fmt.Println(string(res))
-				// writer.Write()
+				writer.Write(res)
 			}
 		}
 
@@ -390,18 +497,68 @@ func skipWhitespace(reader *bufio.Reader, b *[]byte, err *error){
 func callFunc(name string, args *map[string][]byte, cont *[]byte, opts *map[string]interface{}, pre bool) (interface{}, error) {
 	name = string(regex.RepStr([]byte(name), regex.Compile(`[^\w_]`), []byte{}))
 
+	//todo: allow non-pre compile to run pre funcs if it fails to find the normal func
+
 	var m reflect.Value
 	if pre {
 		var t funcs.Pre
-		m := reflect.ValueOf(&t).MethodByName(name)
+		m = reflect.ValueOf(&t).MethodByName(name)
 		if goutil.IsZeroOfUnderlyingType(m) {
 			return nil, errors.New("method does not exist in Pre Compiled Functions")
 		}
 	}else{
 		var t funcs.Comp
-		m := reflect.ValueOf(&t).MethodByName(name)
+		m = reflect.ValueOf(&t).MethodByName(name)
+		if goutil.IsZeroOfUnderlyingType(m) {
+			// return nil, errors.New("method does not exist in Compiled Functions")
+			var t funcs.Pre
+			m = reflect.ValueOf(&t).MethodByName(name)
+			if goutil.IsZeroOfUnderlyingType(m) {
+				return nil, errors.New("method does not exist in Compiled Functions")
+			}
+		}
+	}
+
+	val := m.Call([]reflect.Value{
+		reflect.ValueOf(args),
+		reflect.ValueOf(cont),
+		reflect.ValueOf(opts),
+	})
+
+	var data interface{}
+	var err error
+	if val[0].CanInterface() {
+		data = val[0].Interface()
+	}
+	if val[1].CanInterface() {
+		if e := val[1].Interface(); e != nil {
+			err = e.(error)
+		}
+	}
+
+	return data, err
+}
+
+func callFuncArr(name string, args *[][]byte, cont *[]byte, opts *map[string]interface{}, pre bool) (interface{}, error) {
+	name = string(regex.RepStr([]byte(name), regex.Compile(`[^\w_]`), []byte{}))
+
+	var m reflect.Value
+	if pre {
+		var t funcs.Pre
+		m = reflect.ValueOf(&t).MethodByName(name)
 		if goutil.IsZeroOfUnderlyingType(m) {
 			return nil, errors.New("method does not exist in Pre Compiled Functions")
+		}
+	}else{
+		var t funcs.Comp
+		m = reflect.ValueOf(&t).MethodByName(name)
+		if goutil.IsZeroOfUnderlyingType(m) {
+			// return nil, errors.New("method does not exist in Compiled Functions")
+			var t funcs.Pre
+			m = reflect.ValueOf(&t).MethodByName(name)
+			if goutil.IsZeroOfUnderlyingType(m) {
+				return nil, errors.New("method does not exist in Compiled Functions")
+			}
 		}
 	}
 

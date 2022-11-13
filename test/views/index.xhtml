@@ -1,5 +1,7 @@
-<script src="/test.js" c="3" a="1" b="2"></script>
+<_if $test="'1'" & a="b"/>
+  <h1>This is a test</h1>
+</_if>
 
-<_if test="1" & (test2 | test3)/>
+<_if !$a & test="1" & (test2 | test3)/>
   <h1>This is a test</h1>
 </_if>
