@@ -457,6 +457,8 @@ func (t *Pre) If(args *[][]byte, cont *[]byte, opts *map[string]interface{}) (in
 		}
 	}
 
+	//todo: fix issue with unsolved list only adding first elm of inner groups
+
 	return pass[0], nil
 }
 

@@ -397,6 +397,11 @@ func PreCompile(path string, opts map[string]interface{}) (string, error) {
 
 				//todo: handle function
 				// handle functions
+
+				//todo: add seperate handler for 'each' and 'for' funcs
+				// have 'for' func use ';' seperators (may need to adjust arg compiler to accept multiple reapeats of a key as an indexed version)
+				// also ensure keys ending in ':[0-9]+' will allow the index to increase past them
+
 				if bytes.Equal(elm["TAG"].val, []byte("if")) {
 					// handle if statements
 					intArgs := []elmVal{}
