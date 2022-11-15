@@ -1,7 +1,7 @@
 package funcs
 
 import (
-	"fmt"
+	"bytes"
 	"reflect"
 	"strconv"
 
@@ -30,8 +30,7 @@ func (t *Pre) If(args *[][]byte, cont *[]byte, opts *map[string]interface{}) (in
 
 	lastArg := []byte{}
 
-	unsolved := [][]byte{{}}
-	_ = unsolved
+	unsolved := [][][]byte{{}}
 
 	for i := 0; i < len(*args); i++ {
 		if len((*args)[i]) == 1 {
@@ -48,10 +47,14 @@ func (t *Pre) If(args *[][]byte, cont *[]byte, opts *map[string]interface{}) (in
 				pass = append(pass, true)
 				inv = append(inv, false)
 				mode = append(mode, 0)
-				unsolved = append(unsolved, []byte{})
+				unsolved = append(unsolved, [][]byte{})
 				grp++
 				continue
 			}else if (*args)[i][0] == ')' {
+				if grp == 0 {
+					continue
+				}
+
 				if !inv[grp] {
 					if mode[grp-1] == 0 && !pass[grp] {
 						pass[grp-1] = false
@@ -68,9 +71,27 @@ func (t *Pre) If(args *[][]byte, cont *[]byte, opts *map[string]interface{}) (in
 				}
 				pass = pass[:grp]
 				mode = mode[:grp]
-				grp--
+				// grp--
 				//todo: have this method also handle the unsolved list
 
+				var modeB []byte
+				switch mode[grp-1] {
+					case 0:
+						modeB = []byte{'&'}
+					case 1:
+						modeB = []byte{'|'}
+				}
+
+				if unsolved[grp][0][0] == '&' {
+					unsolved[grp] = unsolved[grp][1:]
+				}
+
+				unsolved[grp-1] = append(unsolved[grp-1], modeB, []byte{'('})
+				unsolved[grp-1] = append(unsolved[grp-1], unsolved[grp]...)
+				unsolved[grp-1] = append(unsolved[grp-1], []byte{')'})
+				unsolved = unsolved[:grp]
+
+				grp--
 				continue
 			}
 
@@ -94,6 +115,9 @@ func (t *Pre) If(args *[][]byte, cont *[]byte, opts *map[string]interface{}) (in
 				hasArg2 = true
 			}else if arg1[0] == '>' {
 				sign = 3
+				hasArg2 = true
+			}else if arg1[0] == '~' {
+				sign = 6
 				hasArg2 = true
 			}
 		}else if len(arg1) == 2 && arg1[1] == '=' {
@@ -124,6 +148,9 @@ func (t *Pre) If(args *[][]byte, cont *[]byte, opts *map[string]interface{}) (in
 						hasArg2 = true
 					}else if (*args)[i+1][0] == '>' {
 						sign = 3
+						hasArg2 = true
+					}else if (*args)[i+1][0] == '~' {
+						sign = 6
 						hasArg2 = true
 					}
 				}else if len((*args)[i+1]) == 2 && (*args)[i+1][1] == '=' {
@@ -184,7 +211,19 @@ func (t *Pre) If(args *[][]byte, cont *[]byte, opts *map[string]interface{}) (in
 
 			if !arg1ok {
 				//todo add to unsolved list
-				// unsolved[grp] = append(unsolved[grp], )
+				var modeB []byte
+				switch mode[grp] {
+					case 0:
+						modeB = []byte{'&'}
+					case 1:
+						modeB = []byte{'|'}
+				}
+
+				if inv[grp] {
+					unsolved[grp] = append(unsolved[grp], modeB, []byte{'^'}, arg1)
+				}else{
+					unsolved[grp] = append(unsolved[grp], modeB, arg1)
+				}
 				continue
 			}
 
@@ -232,7 +271,10 @@ func (t *Pre) If(args *[][]byte, cont *[]byte, opts *map[string]interface{}) (in
 
 			var arg2Val interface{} = nil
 			arg2ok := false
-			if regex.MatchRef(&arg2, regex.Compile(`^(["'\']).*\1$`)) {
+			if sign == 6 {
+				arg2Val = goutil.ToString(arg2)
+				arg2ok = true
+			}else if regex.MatchRef(&arg2, regex.Compile(`^(["'\']).*\1$`)) {
 				arg2Val = string(arg2[1:len(arg2)-1])
 				if arg2Val.(string) == "true" {
 					arg2Val = true
@@ -265,13 +307,50 @@ func (t *Pre) If(args *[][]byte, cont *[]byte, opts *map[string]interface{}) (in
 
 			if !arg1ok || !arg2ok {
 				//todo add to unsolved list
-				// unsolved[grp] = append(unsolved[grp], )
+				var modeB []byte
+				switch mode[grp] {
+					case 0:
+						modeB = []byte{'&'}
+					case 1:
+						modeB = []byte{'|'}
+				}
+
+				var signB []byte
+				switch sign {
+					case 0:
+						signB = []byte{'='}
+					case 1:
+						signB = []byte{'!'}
+					case 2:
+						signB = []byte{'<'}
+					case 3:
+						signB = []byte{'>'}
+					case 4:
+						signB = []byte{'<', '='}
+					case 5:
+						signB = []byte{'>', '='}
+					case 6:
+						signB = []byte{'~'}
+				}
+
+				// unsolved[grp] = append(unsolved[grp], arg1, signB, arg2)
+				if inv[grp] {
+					unsolved[grp] = append(unsolved[grp], modeB, []byte{'^'}, arg1, signB, arg2)
+				}else{
+					unsolved[grp] = append(unsolved[grp], modeB, arg1, signB, arg2)
+				}
 				continue
 			}
 
 			p := false
 			t := uint8(0)
-			if reflect.TypeOf(arg1Val) != reflect.TypeOf(arg2Val) {
+
+			if sign == 6 {
+				// regex
+				arg1Val = goutil.ToByteArray(arg1Val)
+				arg2Val = goutil.ToString(arg2Val)
+				t = 6
+			}else if reflect.TypeOf(arg1Val) != reflect.TypeOf(arg2Val) {
 				if reflect.TypeOf(arg1Val) == goutil.VarType["string"] {
 					arg2Val = goutil.ToString(arg2Val)
 					t = 1
@@ -348,6 +427,10 @@ func (t *Pre) If(args *[][]byte, cont *[]byte, opts *map[string]interface{}) (in
 					}else if t == 4 && arg1Val.(float64) >= arg2Val.(float64) {
 						p = true
 					}
+				}else if sign == 6 && t == 6 {
+					if regex.Match(arg1Val.([]byte), regex.Compile(arg2Val.(string))) {
+						p = true
+					}
 				}
 			}
 
@@ -363,9 +446,18 @@ func (t *Pre) If(args *[][]byte, cont *[]byte, opts *map[string]interface{}) (in
 		}
 	}
 
-	fmt.Println(pass)
+	if len(unsolved[grp]) != 0 {
+		if !pass[0] && unsolved[grp][0][0] == '&' {
+			return false, nil
+		}else if pass[0] && unsolved[grp][0][0] == '|' {
+			return true, nil
+		}else{
+			unsolved[grp] = unsolved[grp][1:]
+			return bytes.Join(unsolved[0], []byte{' '}), nil
+		}
+	}
 
-	return nil, nil
+	return pass[0], nil
 }
 
 
