@@ -67,8 +67,9 @@ func (t *Pre) If(args *[][]byte, cont *[]byte, opts *map[string]interface{}) (in
 					}else if mode[grp-1] == 1 && !pass[grp] {
 						pass[grp-1] = true
 					}
-					inv[grp-1] = false
+					// inv[grp-1] = false
 				}
+
 				pass = pass[:grp]
 				mode = mode[:grp]
 				// grp--
@@ -82,20 +83,30 @@ func (t *Pre) If(args *[][]byte, cont *[]byte, opts *map[string]interface{}) (in
 						modeB = []byte{'|'}
 				}
 
-				if unsolved[grp][0][0] == '&' {
+				if (!pass[grp-1] && unsolved[grp][0][0] == '&') || (pass[grp-1] && unsolved[grp][0][0] == '|') {
 					unsolved[grp] = unsolved[grp][1:]
 				}
 
-				unsolved[grp-1] = append(unsolved[grp-1], modeB, []byte{'('})
+				if inv[grp-1] {
+					unsolved[grp-1] = append(unsolved[grp-1], modeB, []byte{'^', '('})
+					inv[grp-1] = false
+				}else{
+					unsolved[grp-1] = append(unsolved[grp-1], modeB, []byte{'('})
+				}
+
+				if len(unsolved[grp][0]) == 1 && unsolved[grp][0][0] == '&' {
+					unsolved[grp] = unsolved[grp][1:]
+				}
+
 				unsolved[grp-1] = append(unsolved[grp-1], unsolved[grp]...)
 				unsolved[grp-1] = append(unsolved[grp-1], []byte{')'})
 				unsolved = unsolved[:grp]
 
+				inv = inv[:grp]
+
 				grp--
 				continue
 			}
-
-			//todo: may use '~' for complex regex (note: will also have to update compiler to make this char a seperate arg)
 		}
 
 		arg1 := (*args)[i]
@@ -163,12 +174,13 @@ func (t *Pre) If(args *[][]byte, cont *[]byte, opts *map[string]interface{}) (in
 					}
 				}
 			}
-			i++
+			// i++
 		}
 
-		if hasArg2 && len(*args) > i+1 {
-			arg2 = (*args)[i+1]
-			i++
+		if hasArg2 && len(*args) > i+2 {
+			arg2 = (*args)[i+2]
+			// i++
+			i += 2
 		}
 
 
@@ -221,9 +233,11 @@ func (t *Pre) If(args *[][]byte, cont *[]byte, opts *map[string]interface{}) (in
 
 				if inv[grp] {
 					unsolved[grp] = append(unsolved[grp], modeB, []byte{'^'}, arg1)
+					inv[grp] = false
 				}else{
 					unsolved[grp] = append(unsolved[grp], modeB, arg1)
 				}
+
 				continue
 			}
 
@@ -336,9 +350,11 @@ func (t *Pre) If(args *[][]byte, cont *[]byte, opts *map[string]interface{}) (in
 				// unsolved[grp] = append(unsolved[grp], arg1, signB, arg2)
 				if inv[grp] {
 					unsolved[grp] = append(unsolved[grp], modeB, []byte{'^'}, arg1, signB, arg2)
+					inv[grp] = false
 				}else{
 					unsolved[grp] = append(unsolved[grp], modeB, arg1, signB, arg2)
 				}
+
 				continue
 			}
 
@@ -436,6 +452,7 @@ func (t *Pre) If(args *[][]byte, cont *[]byte, opts *map[string]interface{}) (in
 
 			if inv[grp] {
 				p = !p
+				inv[grp] = false
 			}
 
 			if p && mode[grp] == 1 {
@@ -456,8 +473,6 @@ func (t *Pre) If(args *[][]byte, cont *[]byte, opts *map[string]interface{}) (in
 			return bytes.Join(unsolved[0], []byte{' '}), nil
 		}
 	}
-
-	//todo: fix issue with unsolved list only adding first elm of inner groups
 
 	return pass[0], nil
 }

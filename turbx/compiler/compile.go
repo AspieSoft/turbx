@@ -272,31 +272,30 @@ func PreCompile(path string, opts map[string]interface{}) (string, error) {
 						b, err = reader.Peek(1)
 						tagInd = append(tagInd, elm["TAG"].val)
 						break
-					}
-	
-					useNot := false
-					if b[0] == '!' {
-						useNot = true
+					}else if b[0] == '!' {
+						elm[strconv.Itoa(int(ind))] = elmVal{ind, []byte{'^'}}
+						ind++
 						reader.Discard(1)
 						b, err = reader.Peek(1)
+						continue
+					}else if b[0] == '&' || b[0] == '|' || b[0] == '(' || b[0] == ')' {
+						elm[strconv.Itoa(int(ind))] = elmVal{ind, b}
+						ind++
+						reader.Discard(1)
+						b, err = reader.Peek(1)
+						continue
 					}
-	
+
 					// get key
 					key := []byte{}
-					for err == nil && !regex.MatchRef(&b, regex.Compile(`[\s\r\n/>!=]`)) {
+					for err == nil && !regex.MatchRef(&b, regex.Compile(`[\s\r\n/>!=&|\(\)]`)) {
 						key = append(key, b[0])
 						reader.Discard(1)
 						b, err = reader.Peek(1)
 					}
-	
-					// handle '&' '|' '(' ')' chars for if statements and logic
-					if len(key) > 1 && (key[0] == '&' || key[0] == '|' || key[0] == '(' || key[0] == ')') {
-						elm[strconv.Itoa(int(ind))] = elmVal{ind, []byte{key[0]}}
-						ind++
-						key = key[1:]
-					}else if useNot {
-						elm[strconv.Itoa(int(ind))] = elmVal{ind, []byte{'^'}}
-						ind++
+
+					if len(key) == 0 {
+						break
 					}
 	
 					val := []byte{}
@@ -311,24 +310,10 @@ func PreCompile(path string, opts map[string]interface{}) (string, error) {
 						b, err = reader.Peek(1)
 					}else{
 						// handle single key without value
-	
-						// handle '&' '|' '(' ')' chars for if statements and logic
-						if len(key) == 1 && (key[0] == '&' || key[0] == '|' || key[0] == '(' || key[0] == ')') {
-							elm[strconv.Itoa(int(ind))] = elmVal{ind, key}
+						k := string(bytes.ToLower(key))
+						if _, ok := elm[k]; !ok {
+							elm[k] = elmVal{ind, nil}
 							ind++
-						}else{
-							// handle '&' '|' '(' ')' chars for if statements and logic
-							if len(key) > 1 && (key[len(key)-1] == '&' || key[len(key)-1] == '|' || key[len(key)-1] == '(' || key[len(key)-1] == ')') {
-								elm[strconv.Itoa(int(ind))] = elmVal{ind, []byte{key[len(key)-1]}}
-								ind++
-								key = key[:len(key)-1]
-							}
-	
-							k := string(bytes.ToLower(key))
-							if _, ok := elm[k]; !ok {
-								elm[k] = elmVal{ind, nil}
-								ind++
-							}
 						}
 						continue
 					}
@@ -350,7 +335,7 @@ func PreCompile(path string, opts map[string]interface{}) (string, error) {
 					}
 	
 					// get value
-					for err == nil && b[0] != q && (q != ' ' || !regex.MatchRef(&b, regex.Compile(`[\s\r\n/>]`))) {
+					for err == nil && b[0] != q && (q != ' ' || !regex.MatchRef(&b, regex.Compile(`[\s\r\n/>!=&|\(\)]`))) {
 						if b[0] == '\\' {
 							b, err = reader.Peek(2)
 							if regex.MatchRef(&b, regex.Compile(`[A-Za-z]`)) {
@@ -372,7 +357,7 @@ func PreCompile(path string, opts map[string]interface{}) (string, error) {
 	
 					elm[string(bytes.ToLower(key))] = elmVal{ind, val}
 					ind++
-	
+
 					if q != ' ' {
 						reader.Discard(1)
 						b, err = reader.Peek(1)
