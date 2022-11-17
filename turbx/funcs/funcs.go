@@ -14,7 +14,8 @@ type Comp struct {}
 
 
 func getOpt(arg string, opts *map[string]interface{}) (interface{}, bool) {
-	//todo: handle object indexes
+	//todo: handle object indexes and nested objects
+	// also handle strings and optionally '|' seperators (ensure precompiled methods recognize all values and get disabled for reaching string values and non constant values)
 	if val, ok := (*opts)[arg]; ok {
 		return val, true
 	}
@@ -73,7 +74,8 @@ func (t *Pre) If(args *[][]byte, cont *[]byte, opts *map[string]interface{}) (in
 				pass = pass[:grp]
 				mode = mode[:grp]
 				// grp--
-				//todo: have this method also handle the unsolved list
+
+				// handle the unsolved list
 
 				var modeB []byte
 				switch mode[grp-1] {
@@ -222,7 +224,7 @@ func (t *Pre) If(args *[][]byte, cont *[]byte, opts *map[string]interface{}) (in
 			}
 
 			if !arg1ok {
-				//todo add to unsolved list
+				// add to unsolved list
 				var modeB []byte
 				switch mode[grp] {
 					case 0:
@@ -320,7 +322,7 @@ func (t *Pre) If(args *[][]byte, cont *[]byte, opts *map[string]interface{}) (in
 			}
 
 			if !arg1ok || !arg2ok {
-				//todo add to unsolved list
+				// add to unsolved list
 				var modeB []byte
 				switch mode[grp] {
 					case 0:

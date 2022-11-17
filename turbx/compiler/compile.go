@@ -29,6 +29,10 @@ var cacheTmpPath string
 const writeFlushSize = 1000
 var debugMode = false
 
+
+var preCompFuncs funcs.Pre
+var compFuncs funcs.Comp
+
 type tagData struct {
 	tag []byte
 	attr []byte
@@ -64,7 +68,12 @@ type elmVal struct {
 }
 
 func init(){
-	if strings.Contains(os.Args[0], "go-build") {
+	/* if regex.Match([]byte(os.Args[0]), regex.Compile(`^/tmp/go-build[0-9]+/`)) {
+		debugMode = true
+	} */
+
+	args := goutil.MapArgs()
+	if args["debug"] == "true" {
 		debugMode = true
 	}
 
@@ -448,8 +457,6 @@ func PreCompile(path string, opts map[string]interface{}) (string, error) {
 						//todo: skip until the next else statement or to the close tag
 						// note: will need to detect another if statement inside and keep track of the nesting level
 					}else if reflect.TypeOf(res) == goutil.VarType["byteArray"] {
-						//todo: convert the if statement to run on main compile with {{#if args}}
-						// also check if a string was returned with modified args, or if nil was returned to keep the existing args
 						write(regex.JoinBytes([]byte("{{#if:"), len(fnLevel), ' ', res, []byte("}}")))
 						fnLevel = append(fnLevel, "if")
 					}else{
@@ -457,7 +464,8 @@ func PreCompile(path string, opts map[string]interface{}) (string, error) {
 						fnLevel = append(fnLevel, "if")
 					}
 				}else{
-					//todo: handle normal pre functions (each will not be a pre func)
+					//todo: handle normal pre functions
+					//// (each will not be a pre func)
 				}
 			}else if mode == 2 {
 				//todo: handle component
@@ -480,7 +488,8 @@ func PreCompile(path string, opts map[string]interface{}) (string, error) {
 				}
 				sort.Strings(argSort)
 
-				// fix .min for .js and .css src attrs
+				// convert .min for .js and .css src attrs
+				//todo: may auto minify files instead of ignoring (may make optional)
 				if _, ok := elm["src"]; ok && publicPath != "" && elm["src"].val != nil && bytes.HasPrefix(elm["src"].val, []byte{'/'}) {
 					if regex.Match(elm["src"].val, regex.Compile(`(?<!\.min)\.(js|css)$`)) {
 						src := regex.RepStrComplex(elm["src"].val, regex.Compile(`\.(js|css)$`), []byte(".min.$1"))
@@ -544,7 +553,8 @@ func PreCompile(path string, opts map[string]interface{}) (string, error) {
 
 	writer.Flush()
 
-	//todo: return temp file path (write result in temp folder)
+	//todo: store tmpPath in a cache for compiler to reference
+	// remember to clear the cache and files occasionally and on detected dir changes with watchDir from goutil
 	return tmpPath, nil
 }
 
@@ -560,22 +570,17 @@ func skipWhitespace(reader *bufio.Reader, b *[]byte, err *error){
 func callFunc(name string, args *map[string][]byte, cont *[]byte, opts *map[string]interface{}, pre bool) (interface{}, error) {
 	name = string(regex.RepStr([]byte(name), regex.Compile(`[^\w_]`), []byte{}))
 
-	//todo: allow non-pre compile to run pre funcs if it fails to find the normal func
-
 	var m reflect.Value
 	if pre {
-		var t funcs.Pre
-		m = reflect.ValueOf(&t).MethodByName(name)
+		m = reflect.ValueOf(&preCompFuncs).MethodByName(name)
 		if goutil.IsZeroOfUnderlyingType(m) {
 			return nil, errors.New("method does not exist in Pre Compiled Functions")
 		}
 	}else{
-		var t funcs.Comp
-		m = reflect.ValueOf(&t).MethodByName(name)
+		m = reflect.ValueOf(&compFuncs).MethodByName(name)
 		if goutil.IsZeroOfUnderlyingType(m) {
 			// return nil, errors.New("method does not exist in Compiled Functions")
-			var t funcs.Pre
-			m = reflect.ValueOf(&t).MethodByName(name)
+			m = reflect.ValueOf(&preCompFuncs).MethodByName(name)
 			if goutil.IsZeroOfUnderlyingType(m) {
 				return nil, errors.New("method does not exist in Compiled Functions")
 			}
@@ -607,18 +612,15 @@ func callFuncArr(name string, args *[][]byte, cont *[]byte, opts *map[string]int
 
 	var m reflect.Value
 	if pre {
-		var t funcs.Pre
-		m = reflect.ValueOf(&t).MethodByName(name)
+		m = reflect.ValueOf(&preCompFuncs).MethodByName(name)
 		if goutil.IsZeroOfUnderlyingType(m) {
 			return nil, errors.New("method does not exist in Pre Compiled Functions")
 		}
 	}else{
-		var t funcs.Comp
-		m = reflect.ValueOf(&t).MethodByName(name)
+		m = reflect.ValueOf(&compFuncs).MethodByName(name)
 		if goutil.IsZeroOfUnderlyingType(m) {
 			// return nil, errors.New("method does not exist in Compiled Functions")
-			var t funcs.Pre
-			m = reflect.ValueOf(&t).MethodByName(name)
+			m = reflect.ValueOf(&preCompFuncs).MethodByName(name)
 			if goutil.IsZeroOfUnderlyingType(m) {
 				return nil, errors.New("method does not exist in Compiled Functions")
 			}
