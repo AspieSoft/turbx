@@ -377,7 +377,7 @@ func PreCompile(path string, opts map[string]interface{}) (string, error) {
 
 
 			if mode == 1 {
-				if selfClose == 2 && !bytes.Equal(elm["TAG"].val, []byte("else")) && !bytes.Equal(elm["TAG"].val, []byte("elif")) {
+				if selfClose == 2 && !bytes.Equal(elm["TAG"].val, []byte("if")) && !bytes.Equal(elm["TAG"].val, []byte("else")) && !bytes.Equal(elm["TAG"].val, []byte("elif")) {
 					for len(fnLevel) != 0 && fnLevel[len(fnLevel)-1] != string(elm["TAG"].val) {
 						fnLevel = fnLevel[:len(fnLevel)-1]
 						ifMode = ifMode[:len(ifMode)-1]
@@ -402,7 +402,7 @@ func PreCompile(path string, opts map[string]interface{}) (string, error) {
 				if bytes.Equal(elm["TAG"].val, []byte("if")) || bytes.Equal(elm["TAG"].val, []byte("else")) || bytes.Equal(elm["TAG"].val, []byte("elif")) {
 					elseMode := (bytes.Equal(elm["TAG"].val, []byte("else")) || bytes.Equal(elm["TAG"].val, []byte("elif")))
 
-					if len(ifMode) != 0 && ifMode[len(ifMode)-1] == 2 {
+					if len(ifMode) != 0 && (ifMode[len(ifMode)-1] == 2 || ifMode[len(ifMode)-1] == 3) {
 						for err == nil {
 							if b[0] == '<' {
 								b, err = reader.Peek(6)
@@ -420,6 +420,10 @@ func PreCompile(path string, opts map[string]interface{}) (string, error) {
 							}
 
 							skipObjStrComments(reader, &b, &err)
+						}
+
+						if ifMode[len(ifMode)-1] == 3 {
+							write(regex.JoinBytes([]byte("{{/if:"), len(fnLevel)-1, []byte("}}")))
 						}
 
 						fnLevel = fnLevel[:len(fnLevel)-1]
@@ -483,6 +487,7 @@ func PreCompile(path string, opts map[string]interface{}) (string, error) {
 					if res == true {
 						if elseMode && ifMode[len(ifMode)-1] != 1 {
 							write(regex.JoinBytes([]byte("{{#else:"), len(fnLevel)-1, []byte("}}")))
+							ifMode[len(ifMode)-1] = 3
 						}else{
 							//todo: get content up to close tag or next else statement (skip anything after the else statement)
 							// note: will need to detect another if statement inside and keep track of the nesting level

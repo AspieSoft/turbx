@@ -1,15 +1,6 @@
-{{#if:0 v}}
+{{#if:0 a}}
   Test 2
-{{#else:0}}
-  Test 1
-{{#else:0}}
-  Test 0
-{{/if:0}}
+  {{#if:1 key = val}}
+    a
+  >
 
-{{#if:0 key = 'value'}}
-  <h1>This is a test</h1>
-{{/if:0}}
-
-{{#if:0 ^ $a & test = 1 & ( test2 | test3 )}}
-  <h1>This is a test</h1>
-{{/if:0}}
