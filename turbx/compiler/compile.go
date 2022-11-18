@@ -492,19 +492,13 @@ func PreCompile(path string, opts map[string]interface{}) (string, error) {
 					}
 
 					if res == true {
-						// fmt.Println(elseMode, ifMode[len(ifMode)-1])
 						if elseMode && ifMode[len(ifMode)-1] != 1 {
 							write(regex.JoinBytes([]byte("{{#else:"), len(fnLevel)-1, []byte("}}")))
 							ifMode[len(ifMode)-1] = 3
 						}else{
-							//todo: get content up to close tag or next else statement (skip anything after the else statement)
-							// note: will need to detect another if statement inside and keep track of the nesting level
 							ifMode[len(ifMode)-1] = 2
 						}
 					}else if res == false {
-						//todo: skip until the next else statement or to the close tag
-						// note: will need to detect another if statement inside and keep track of the nesting level
-
 						for err == nil {
 							if b[0] == '<' {
 								b, err = reader.Peek(7)
@@ -526,7 +520,6 @@ func PreCompile(path string, opts map[string]interface{}) (string, error) {
 					}else if reflect.TypeOf(res) == goutil.VarType["byteArray"] {
 						if elseMode {
 							if ifMode[len(ifMode)-1] == 1 {
-								// ifMode = ifMode[:len(ifMode)-1]
 								ifMode[len(ifMode)-1] = 0
 								write(regex.JoinBytes([]byte("{{#if:"), len(fnLevel)-1, ' ', res, []byte("}}")))
 							}else{
@@ -540,7 +533,6 @@ func PreCompile(path string, opts map[string]interface{}) (string, error) {
 					}else{
 						if elseMode {
 							if ifMode[len(ifMode)-1] == 1 {
-								// ifMode = ifMode[:len(ifMode)-1]
 								ifMode[len(ifMode)-1] = 0
 								write(regex.JoinBytes([]byte("{{#if:"), len(fnLevel)-1, ' ', bytes.Join(args, []byte{' '}), []byte("}}")))
 							}else{
@@ -555,6 +547,7 @@ func PreCompile(path string, opts map[string]interface{}) (string, error) {
 				}else{
 					//todo: handle normal pre functions
 					//// (each will not be a pre func)
+					
 				}
 			}else if mode == 2 {
 				//todo: handle component
