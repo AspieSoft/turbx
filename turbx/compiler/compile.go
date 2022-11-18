@@ -395,7 +395,6 @@ func PreCompile(path string, opts map[string]interface{}) (string, error) {
 					b, err = reader.Peek(1)
 				}
 
-				//todo: handle function
 				// handle functions
 
 				//todo: add seperate handler for 'each' and 'for' funcs
