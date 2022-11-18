@@ -407,7 +407,6 @@ func PreCompile(path string, opts map[string]interface{}) (string, error) {
 
 					if selfClose != 0 && len(ifMode) != 0 && (ifMode[len(ifMode)-1] == 2 || ifMode[len(ifMode)-1] == 3) {
 
-						//todo: fix this preventing all
 						if elseMode {
 							for err == nil {
 								if b[0] == '<' {
