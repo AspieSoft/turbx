@@ -429,9 +429,10 @@ func PreCompile(path string, opts map[string]interface{}) (string, error) {
 
 						if ifMode[len(ifMode)-1] == 3 {
 							write(regex.JoinBytes([]byte("{{/if:"), len(fnLevel)-1, []byte("}}")))
+							fnLevel = fnLevel[:len(fnLevel)-1]
 						}
 
-						fnLevel = fnLevel[:len(fnLevel)-1]
+						// fnLevel = fnLevel[:len(fnLevel)-1]
 						ifMode = ifMode[:len(ifMode)-1]
 						continue
 					}

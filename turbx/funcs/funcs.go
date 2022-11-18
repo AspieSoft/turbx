@@ -249,6 +249,7 @@ func getOpt(arg []byte, opts *map[string]interface{}, pre ...bool) (interface{},
 }
 
 
+
 func (t *Pre) If(args *[][]byte, cont *[]byte, opts *map[string]interface{}) (interface{}, error) {
 	pass := []bool{true}
 	inv := []bool{false}
@@ -415,39 +416,7 @@ func (t *Pre) If(args *[][]byte, cont *[]byte, opts *map[string]interface{}) (in
 		// make '$' unique to const vars for pre compile to handle
 		// ignore in regular compiler
 		if !hasArg2 {
-			var arg1Val interface{} = nil
-			arg1ok := false
-
-			if regex.MatchRef(&arg1, regex.Compile(`^(["'\']).*\1$`)) {
-				arg1Val = string(arg1[1:len(arg1)-1])
-				if arg1Val.(string) == "true" {
-					arg1Val = true
-					arg1ok = true
-				}else if arg1Val.(string) == "false" {
-					arg1Val = false
-					arg1ok = true
-				}else if v, err := strconv.Atoi(arg1Val.(string)); err == nil {
-					arg1Val = v
-					arg1ok = true
-				}else if v, err := strconv.ParseFloat(arg1Val.(string), 64); err == nil {
-					arg1Val = v
-					arg1ok = true
-				}else if arg1Val.(string) == "nil" || arg1Val.(string) == "null" || arg1Val.(string) == "undefined" {
-					arg1Val = nil
-					arg1ok = true
-				}
-			}else if arg1[0] == '$' {
-				if val, ok := getOpt(string(arg1), opts); ok {
-					arg1Val = val
-					arg1ok = true
-				}else if val, ok := getOpt(string(arg1[1:]), opts); ok {
-					arg1Val = val
-					arg1ok = true
-				}
-			}else if val, ok := getOpt("$"+string(arg1), opts); ok {
-				arg1Val = val
-				arg1ok = true
-			}
+			arg1Val, arg1ok := getOpt(arg1, opts, true)
 
 			if !arg1ok {
 				// add to unsolved list
@@ -478,73 +447,16 @@ func (t *Pre) If(args *[][]byte, cont *[]byte, opts *map[string]interface{}) (in
 			}
 			inv[grp] = false
 		}else{
-			var arg1Val interface{} = nil
-			arg1ok := false
-			if regex.MatchRef(&arg1, regex.Compile(`^(["'\']).*\1$`)) {
-				arg1Val = string(arg1[1:len(arg1)-1])
-				if arg1Val.(string) == "true" {
-					arg1Val = true
-					arg1ok = true
-				}else if arg1Val.(string) == "false" {
-					arg1Val = false
-					arg1ok = true
-				}else if v, err := strconv.Atoi(arg1Val.(string)); err == nil {
-					arg1Val = v
-					arg1ok = true
-				}else if v, err := strconv.ParseFloat(arg1Val.(string), 64); err == nil {
-					arg1Val = v
-					arg1ok = true
-				}else if arg1Val.(string) == "nil" || arg1Val.(string) == "null" || arg1Val.(string) == "undefined" {
-					arg1Val = nil
-					arg1ok = true
-				}
-			}else if arg1[0] == '$' {
-				if val, ok := getOpt(string(arg1), opts); ok {
-					arg1Val = val
-					arg1ok = true
-				}else if val, ok := getOpt(string(arg1[1:]), opts); ok {
-					arg1Val = val
-					arg1ok = true
-				}
-			}else if val, ok := getOpt("$"+string(arg1), opts); ok {
-				arg1Val = val
-				arg1ok = true
-			}
+			arg1Val, arg1ok := getOpt(arg1, opts, true)
 
 			var arg2Val interface{} = nil
 			arg2ok := false
+
 			if sign == 6 {
 				arg2Val = goutil.ToString(arg2)
 				arg2ok = true
-			}else if regex.MatchRef(&arg2, regex.Compile(`^(["'\']).*\1$`)) {
-				arg2Val = string(arg2[1:len(arg2)-1])
-				if arg2Val.(string) == "true" {
-					arg2Val = true
-					arg2ok = true
-				}else if arg2Val.(string) == "false" {
-					arg2Val = false
-					arg2ok = true
-				}else if v, err := strconv.Atoi(arg2Val.(string)); err == nil {
-					arg2Val = v
-					arg2ok = true
-				}else if v, err := strconv.ParseFloat(arg2Val.(string), 64); err == nil {
-					arg2Val = v
-					arg2ok = true
-				}else if arg2Val.(string) == "nil" || arg2Val.(string) == "null" || arg2Val.(string) == "undefined" {
-					arg2Val = nil
-					arg2ok = true
-				}
-			}else if arg2[0] == '$' {
-				if val, ok := getOpt(string(arg2), opts); ok {
-					arg2Val = val
-					arg2ok = true
-				}else if val, ok := getOpt(string(arg2[1:]), opts); ok {
-					arg2Val = val
-					arg2ok = true
-				}
-			}else if val, ok := getOpt("$"+string(arg2), opts); ok {
-				arg2Val = val
-				arg2ok = true
+			}else{
+				arg2Val, arg2ok = getOpt(arg2, opts, true)
 			}
 
 			if !arg1ok || !arg2ok {
