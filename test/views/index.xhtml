@@ -1,13 +1,7 @@
-<_if $test="'2'" | a>
-  Test 2
-<_else $test="'1'" & a/>
-  Test 1
-<_else/>
-  Test 0
-</_if>
-
----
-
 <_if key="'value'">
   Test a
+<_else/>
+  <_if key>
+    {{key}}
+  </_if>
 </_if>
