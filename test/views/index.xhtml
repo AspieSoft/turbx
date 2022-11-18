@@ -1,10 +1,13 @@
 <_if $test="'2'" | a>
   Test 2
-  <_if key="val">
-    a
-  </_if>
 <_else $test="'1'" & a/>
   Test 1
 <_else/>
   Test 0
+</_if>
+
+---
+
+<_if key="'value'">
+  Test a
 </_if>

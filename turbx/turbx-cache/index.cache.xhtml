@@ -1,6 +1,13 @@
 {{#if:0 a}}
   Test 2
-  {{#if:1 key = val}}
-    a
-  >
+{{#else:0 a}}
+  Test 1
+{{#else:0}}
+  Test 0
+{{/if:0}}
 
+---
+
+{{#if:0 key = 'value'}}
+  Test a
+{{/if:0}}

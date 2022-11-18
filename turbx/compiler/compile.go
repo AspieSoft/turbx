@@ -377,7 +377,7 @@ func PreCompile(path string, opts map[string]interface{}) (string, error) {
 
 
 			if mode == 1 {
-				if selfClose == 2 && !bytes.Equal(elm["TAG"].val, []byte("if")) && !bytes.Equal(elm["TAG"].val, []byte("else")) && !bytes.Equal(elm["TAG"].val, []byte("elif")) {
+				if selfClose == 2 && !bytes.Equal(elm["TAG"].val, []byte("else")) && !bytes.Equal(elm["TAG"].val, []byte("elif")) {
 					for len(fnLevel) != 0 && fnLevel[len(fnLevel)-1] != string(elm["TAG"].val) {
 						fnLevel = fnLevel[:len(fnLevel)-1]
 						ifMode = ifMode[:len(ifMode)-1]
@@ -485,6 +485,7 @@ func PreCompile(path string, opts map[string]interface{}) (string, error) {
 					}
 
 					if res == true {
+						// fmt.Println(elseMode, ifMode[len(ifMode)-1])
 						if elseMode && ifMode[len(ifMode)-1] != 1 {
 							write(regex.JoinBytes([]byte("{{#else:"), len(fnLevel)-1, []byte("}}")))
 							ifMode[len(ifMode)-1] = 3
