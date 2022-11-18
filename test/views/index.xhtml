@@ -1,5 +1,9 @@
-<_if $test="'2'">
+<_if $test="'2'" | v>
   Test 2
+<_else $test="'1'"/>
+  Test 1
+<_else/>
+  Test 0
 </_if>
 
 <_if $test="'1'" & key="'value'"/>

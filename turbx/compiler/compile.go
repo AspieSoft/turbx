@@ -220,6 +220,7 @@ func PreCompile(path string, opts map[string]interface{}) (string, error) {
 	_ = tagInd
 
 	fnLevel := []string{}
+	ifMode := []uint8{0}
 
 	b, err := reader.Peek(1)
 	for err == nil {
@@ -379,9 +380,11 @@ func PreCompile(path string, opts map[string]interface{}) (string, error) {
 				if selfClose == 2 && !bytes.Equal(elm["TAG"].val, []byte("else")) && !bytes.Equal(elm["TAG"].val, []byte("elif")) {
 					for len(fnLevel) != 0 && fnLevel[len(fnLevel)-1] != string(elm["TAG"].val) {
 						fnLevel = fnLevel[:len(fnLevel)-1]
+						ifMode = ifMode[:len(ifMode)-1]
 					}
 					if len(fnLevel) != 0 {
 						fnLevel = fnLevel[:len(fnLevel)-1]
+						ifMode = ifMode[:len(ifMode)-1]
 						write(regex.JoinBytes([]byte("{{/"), elm["TAG"].val, ':', len(fnLevel), []byte("}}")))
 					}
 					reader.Discard(1)
@@ -398,7 +401,31 @@ func PreCompile(path string, opts map[string]interface{}) (string, error) {
 
 				if bytes.Equal(elm["TAG"].val, []byte("if")) || bytes.Equal(elm["TAG"].val, []byte("else")) || bytes.Equal(elm["TAG"].val, []byte("elif")) {
 					elseMode := (bytes.Equal(elm["TAG"].val, []byte("else")) || bytes.Equal(elm["TAG"].val, []byte("elif")))
-					_ = elseMode
+
+					if len(ifMode) != 0 && ifMode[len(ifMode)-1] == 2 {
+						for err == nil {
+							if b[0] == '<' {
+								b, err = reader.Peek(6)
+								if b[1] == '/' && b[2] == '_' && bytes.Equal(b[3:5], []byte("if")) && regex.MatchRef(&[]byte{b[5]}, regex.Compile(`^[\s\r\n/>]$`)) {
+									reader.Discard(5)
+									b, err = reader.Peek(1)
+									for err == nil && b[0] != '>' {
+										reader.Discard(1)
+										b, err = reader.Peek(1)
+									}
+									reader.Discard(1)
+									b, err = reader.Peek(1)
+									break
+								}
+							}
+
+							skipObjStrComments(reader, &b, &err)
+						}
+
+						fnLevel = fnLevel[:len(fnLevel)-1]
+						ifMode = ifMode[:len(ifMode)-1]
+						continue
+					}
 
 					// handle if statements
 					intArgs := []elmVal{}
@@ -454,28 +481,67 @@ func PreCompile(path string, opts map[string]interface{}) (string, error) {
 					}
 
 					if res == true {
-						if elseMode {
+						if elseMode && ifMode[len(ifMode)-1] != 1 {
 							write(regex.JoinBytes([]byte("{{#else:"), len(fnLevel)-1, []byte("}}")))
 						}else{
 							//todo: get content up to close tag or next else statement (skip anything after the else statement)
 							// note: will need to detect another if statement inside and keep track of the nesting level
+							ifMode[len(ifMode)-1] = 2
+							/* if ifMode[len(ifMode)-1] == 0 {
+								ifMode = append(ifMode, 2)
+							}else{
+								ifMode[len(ifMode)-1] = 2
+							} */
 						}
 					}else if res == false {
 						//todo: skip until the next else statement or to the close tag
 						// note: will need to detect another if statement inside and keep track of the nesting level
+
+						for err == nil {
+							if b[0] == '<' {
+								b, err = reader.Peek(7)
+								if b[1] == '_' && (bytes.Equal(b[2:6], []byte("else")) || bytes.Equal(b[2:6], []byte("elif"))) && regex.MatchRef(&[]byte{b[6]}, regex.Compile(`^[\s\r\n/>]$`)) {
+									b, err = reader.Peek(1)
+									fnLevel = append(fnLevel, "if")
+									// ifMode = append(ifMode, 1)
+									ifMode[len(ifMode)-1] = 1
+									break
+								}else if b[1] == '/' && b[2] == '_' && bytes.Equal(b[3:5], []byte("if")) && regex.MatchRef(&[]byte{b[5]}, regex.Compile(`^[\s\r\n/>]$`)) {
+									b, err = reader.Peek(1)
+									break
+								}
+							}
+
+							skipObjStrComments(reader, &b, &err)
+						}
+
 					}else if reflect.TypeOf(res) == goutil.VarType["byteArray"] {
 						if elseMode {
-							write(regex.JoinBytes([]byte("{{#else:"), len(fnLevel)-1, ' ', res, []byte("}}")))
+							if ifMode[len(ifMode)-1] == 1 {
+								// ifMode = ifMode[:len(ifMode)-1]
+								ifMode[len(ifMode)-1] = 0
+								write(regex.JoinBytes([]byte("{{#if:"), len(fnLevel)-1, ' ', res, []byte("}}")))
+							}else{
+								write(regex.JoinBytes([]byte("{{#else:"), len(fnLevel)-1, ' ', res, []byte("}}")))
+							}
 						}else{
 							write(regex.JoinBytes([]byte("{{#if:"), len(fnLevel), ' ', res, []byte("}}")))
 							fnLevel = append(fnLevel, "if")
+							ifMode = append(ifMode, 0)
 						}
 					}else{
 						if elseMode {
-							write(regex.JoinBytes([]byte("{{#else:"), len(fnLevel)-1, ' ', bytes.Join(args, []byte{' '}), []byte("}}")))
+							if ifMode[len(ifMode)-1] == 1 {
+								// ifMode = ifMode[:len(ifMode)-1]
+								ifMode[len(ifMode)-1] = 0
+								write(regex.JoinBytes([]byte("{{#if:"), len(fnLevel)-1, ' ', bytes.Join(args, []byte{' '}), []byte("}}")))
+							}else{
+								write(regex.JoinBytes([]byte("{{#else:"), len(fnLevel)-1, ' ', bytes.Join(args, []byte{' '}), []byte("}}")))
+							}
 						}else{
 							write(regex.JoinBytes([]byte("{{#if:"), len(fnLevel), ' ', bytes.Join(args, []byte{' '}), []byte("}}")))
 							fnLevel = append(fnLevel, "if")
+							ifMode = append(ifMode, 0)
 						}
 					}
 				}else{
@@ -578,6 +644,96 @@ func skipWhitespace(reader *bufio.Reader, b *[]byte, err *error){
 	for err != nil && regex.MatchRef(b, regex.Compile(`[\s\r\n]`)) {
 		reader.Discard(1)
 		*b, *err = reader.Peek(1)
+	}
+}
+
+func skipObjStrComments(reader *bufio.Reader, b *[]byte, err *error){
+	var search []byte
+	quote := false
+
+	*b, *err = reader.Peek(4)
+	if err != nil {
+		reader.Discard(1)
+		*b, *err = reader.Peek(1)
+		return
+	}
+
+	if (*b)[0] == '{' && (*b)[1] == '{' {
+		if (*b)[2] == '{' {
+			search = []byte("}}}")
+			reader.Discard(3)
+			*b, *err = reader.Peek(1)
+		}else{
+			search = []byte("}}")
+			reader.Discard(2)
+			*b, *err = reader.Peek(1)
+		}
+	}else if (*b)[0] == '<' && (*b)[1] == '!' && (*b)[2] == '-' && (*b)[3] == '-' {
+		search = []byte("-->")
+		reader.Discard(4)
+		*b, *err = reader.Peek(1)
+	}else if (*b)[0] == '/' {
+		if (*b)[1] == '*' {
+			search = []byte("*/")
+			reader.Discard(2)
+			*b, *err = reader.Peek(1)
+		}else if (*b)[1] == '/' {
+			search = []byte{'\n'}
+			reader.Discard(2)
+			*b, *err = reader.Peek(1)
+		}
+	}else if (*b)[0] == '"' {
+		search = []byte{'"'}
+		reader.Discard(1)
+		*b, *err = reader.Peek(1)
+		quote = true
+	}else if (*b)[0] == '\'' {
+		search = []byte{'\''}
+		reader.Discard(1)
+		*b, *err = reader.Peek(1)
+		quote = true
+	}else if (*b)[0] == '`' {
+		search = []byte{'`'}
+		reader.Discard(1)
+		*b, *err = reader.Peek(1)
+		quote = true
+	}
+
+	if search == nil || err != nil {
+		reader.Discard(1)
+		*b, *err = reader.Peek(1)
+		return
+	}
+
+	for err == nil {
+		if search[0] == '\n' {
+			if regex.MatchRef(b, regex.Compile(`^[\r\n]+$`)) {
+				*b, *err = reader.Peek(2)
+				if regex.MatchRef(b, regex.Compile(`^[\r\n]+$`)) {
+					reader.Discard(2)
+					*b, *err = reader.Peek(1)
+				}else{
+					reader.Discard(1)
+					*b, *err = reader.Peek(1)
+				}
+				break
+			}
+		}else if (*b)[0] == search[0] {
+			*b, *err = reader.Peek(len(search))
+			if bytes.Equal(*b, search) {
+				reader.Discard(len(search))
+				*b, *err = reader.Peek(1)
+				break
+			}
+		}
+
+		if quote && (*b)[0] == '\\' {
+			reader.Discard(2)
+			*b, *err = reader.Peek(1)
+			continue
+		}
+
+		skipObjStrComments(reader, b, err)
 	}
 }
 
