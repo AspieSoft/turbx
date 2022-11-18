@@ -618,8 +618,10 @@ func (t *Pre) If(args *[][]byte, cont *[]byte, opts *map[string]interface{}) (in
 }
 
 func (t *Pre) Each(args *map[string][]byte, cont *[]byte, opts *map[string]interface{}) (interface{}, error) {
-	// getOpt(string((*args)["test"]), opts)
-	
+
+	//todo: setup pre compiled each loop
+	//todo: have functions provide optional pointer to temp storage
+
 	if val, ok := (*args)["0"]; ok {
 		_ = val
 		// v, ok := getOpt(val, opts)

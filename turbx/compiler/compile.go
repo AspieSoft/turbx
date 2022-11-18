@@ -559,6 +559,7 @@ func PreCompile(path string, opts map[string]interface{}) (string, error) {
 						return intArgs[i].ind < intArgs[j].ind
 					}) */
 
+					//todo: finish setting up 'each' function
 					res, e := callFunc("Each", &args, nil, &opts, true)
 					if e != nil {
 						return "", e
@@ -567,7 +568,7 @@ func PreCompile(path string, opts map[string]interface{}) (string, error) {
 
 					// fmt.Println(res)
 				}else{
-					//todo: handle normal pre functions
+					//todo: handle normal pre functions (also auto capitalize first char)
 					//// (each will not be a pre func)
 				}
 			}else if mode == 2 {
