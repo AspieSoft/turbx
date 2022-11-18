@@ -547,7 +547,6 @@ func PreCompile(path string, opts map[string]interface{}) (string, error) {
 				}else{
 					//todo: handle normal pre functions
 					//// (each will not be a pre func)
-					
 				}
 			}else if mode == 2 {
 				//todo: handle component
