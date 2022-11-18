@@ -343,7 +343,7 @@ func PreCompile(path string, opts map[string]interface{}) (string, error) {
 						reader.Discard(1)
 						b, err = reader.Peek(1)
 					}
-	
+
 					// get value
 					for err == nil && b[0] != q && (q != ' ' || !regex.MatchRef(&b, regex.Compile(`[\s\r\n/>!=&|\(\)]`))) {
 						if b[0] == '\\' {
@@ -359,7 +359,7 @@ func PreCompile(path string, opts map[string]interface{}) (string, error) {
 							b, err = reader.Peek(1)
 							continue
 						}
-						
+
 						val = append(val, b[0])
 						reader.Discard(1)
 						b, err = reader.Peek(1)
@@ -542,6 +542,29 @@ func PreCompile(path string, opts map[string]interface{}) (string, error) {
 							ifMode = append(ifMode, 0)
 						}
 					}
+				}else if bytes.Equal(elm["TAG"].val, []byte("each")) {
+					args := map[string][]byte{}
+
+					ind := 0
+					for key, arg := range elm {
+						if arg.val == nil {
+							args[strconv.Itoa(ind)] = []byte(key)
+							ind++
+						}else{
+							args[key] = arg.val
+						}
+					}
+					/* sort.Slice(intArgs, func(i, j int) bool {
+						return intArgs[i].ind < intArgs[j].ind
+					}) */
+
+					res, e := callFunc("Each", &args, nil, &opts, true)
+					if e != nil {
+						return "", e
+					}
+					_ = res
+
+					// fmt.Println(res)
 				}else{
 					//todo: handle normal pre functions
 					//// (each will not be a pre func)

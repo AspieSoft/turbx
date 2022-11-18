@@ -13,12 +13,238 @@ type Pre struct {}
 type Comp struct {}
 
 
-func getOpt(arg string, opts *map[string]interface{}) (interface{}, bool) {
+type keyVal struct {
+	key []byte
+	val interface{}
+}
+
+
+func convertOpt(arg []byte, opts *map[string]interface{}, pre *bool) (interface{}, bool) {
+	if regex.MatchRef(&arg, regex.Compile(`^(["'\'])(.*)\1$`)) {
+		arg = regex.RepStrComplexRef(&arg, regex.Compile(`^(["'\'])(.*)\1$`), []byte("$2"))
+		
+		if bytes.Equal(arg, []byte("true")) {
+			return true, true
+		}else if bytes.Equal(arg, []byte("false")) {
+			return false, true
+		}else if bytes.Equal(arg, []byte("nil")) || bytes.Equal(arg, []byte("null")) || bytes.Equal(arg, []byte("undefined")) {
+			return nil, true
+		}else if v, err := strconv.Atoi(string(arg)); err == nil {
+			return v, true
+		}else if v, err := strconv.ParseFloat(string(arg), 64); err == nil {
+			return v, true
+		}
+
+		return []byte(arg), true
+	}
+
+	if *pre {
+		if arg[0] == '$' {
+			if val, ok := (*opts)[string(arg)]; ok {
+				return val, true
+			}else if val, ok := (*opts)[string(arg[1:])]; ok {
+				return val, true
+			}
+		}else if val, ok := (*opts)["$"+string(arg)]; ok {
+			return val, true
+		}
+
+		// first param true with a false 2nd param is used to break the loop in the getOpt method that calls this method because a const var did not exist in pre compile mode
+		return true, false
+	}
+
+	if val, ok := (*opts)[string(arg)]; ok {
+		return val, true
+	}else if arg[0] == '$' {
+		if val, ok := (*opts)[string(arg[1:])]; ok {
+			return val, true
+		}
+	}else{
+		if val, ok := (*opts)["$"+string(arg)]; ok {
+			return val, true
+		}
+	}
+
+	return nil, false
+}
+
+func getOptObj(arg []byte, opts *map[string]interface{}, pre *bool) (interface{}, bool) {
+	args := regex.SplitRef(&arg, regex.Compile(`\.|(\[(?:"(?:\\[\\"]|.)*?"|'(?:\\[\\']|.)*?'|\'(?:\\[\\\']|.)*?\'|.)*?\])`))
+	// args := regex.SplitRef(&arg, regex.Compile(`(\[[\w_]+\])|\.`))
+
+	res, ok := convertOpt(args[0], opts, pre)
+	if !ok {
+		return res, false
+	}
+	args = args[1:]
+
+	for _, arg := range args {
+		if bytes.HasPrefix(arg, []byte{'['}) && bytes.HasSuffix(arg, []byte{']'}) {
+			arg = arg[1:len(arg)-1]
+			v, ok := getOpt(arg, opts, *pre)
+			if !ok {
+				return v, false
+			}
+			arg = goutil.ToByteArray(v)
+			if arg == nil || len(arg) == 0 {
+				if *pre {
+					return true, false
+				}
+				return nil, false
+			}
+		}
+
+		rType := reflect.TypeOf(res)
+		if rType == goutil.VarType["map"] {
+			r := (res.(map[string]interface{}))
+			val, ok := convertOpt(arg, &r, pre)
+			if !ok {
+				return val, false
+			}
+			res = val
+		}else if rType == goutil.VarType["array"] {
+			r := map[string]interface{}{}
+			for i, v := range res.([]interface{}) {
+				r[strconv.Itoa(i)] = v
+			}
+			val, ok := convertOpt(arg, &r, pre)
+			if !ok {
+				return val, false
+			}
+			res = val
+		}else if rType == goutil.VarType["byteArray"] || rType == goutil.VarType["string"] {
+			if rType == goutil.VarType["string"] {
+				res = []byte(res.(string))
+			}
+			r := map[string]interface{}{}
+			for i, v := range res.([]byte) {
+				r[strconv.Itoa(i)] = v
+			}
+			val, ok := convertOpt(arg, &r, pre)
+			if !ok {
+				return val, false
+			}
+			res = val
+		}else{
+			return nil, false
+		}
+	}
+
+	return res, true
+}
+
+func getOpt(arg []byte, opts *map[string]interface{}, pre ...bool) (interface{}, bool) {
+	usePre := false
+	if len(pre) != 0 {
+		usePre = pre[0]
+	}
+
+	var key []byte
+	arg = regex.RepFuncRef(&arg, regex.Compile(`^{{{?([\w_-]+)=(["'\']|)(.*)\2}}}?$`), func(data func(int) []byte) []byte {
+		key = data(1)
+		return data(3)
+	})
+
+	arg = bytes.TrimLeft(arg, "{")
+	arg = bytes.TrimRight(arg, "}")
+	// arg = regex.RepStrComplexRef(&arg, regex.Compile(`^{{{?(.*)}}}?$`), []byte("$1"))
+
+	b := []byte{}
+	for i := 0; i < len(arg); i++ {
+		if arg[i] == '|' {
+			if len(b) == 0 {
+				continue
+			}
+
+			val, ok := getOptObj(b, opts, &usePre)
+			if ok {
+				if key != nil {
+					return keyVal{key, val}, true
+				}
+				return val, true
+			}
+			b = []byte{}
+
+			if usePre && val == true {
+				break
+			}
+			continue
+		}else if arg[i] == '"' || arg[i] == '\'' || arg[i] == '`' {
+			q := arg[i]
+			i++
+			b = append(b, q)
+			for ; i < len(arg); i++ {
+				if arg[i] == q {
+					b = append(b, q)
+					i++
+					break
+				}else if arg[i] == '\\' {
+					if regex.MatchRef(&[]byte{arg[i]}, regex.Compile(`[A-Za-z]`)) {
+						b = append(b, arg[i])
+					}
+					i++
+				}
+
+				b = append(b, arg[i])
+			}
+			continue
+		}else if arg[i] == '[' {
+			i++
+			b = append(b, '[')
+			for ; i < len(arg); i++ {
+				if arg[i] == ']' {
+					b = append(b, ']')
+					i++
+					break
+				}else if arg[i] == '"' || arg[i] == '\'' || arg[i] == '`' {
+					q := arg[i]
+					i++
+					b = append(b, q)
+					for ; i < len(arg); i++ {
+						if arg[i] == q {
+							b = append(b, q)
+							i++
+							break
+						}else if arg[i] == '\\' {
+							if regex.MatchRef(&[]byte{arg[i]}, regex.Compile(`[A-Za-z]`)) {
+								b = append(b, arg[i])
+							}
+							i++
+						}
+		
+						b = append(b, arg[i])
+					}
+					// continue
+				}else if arg[i] == '\\' {
+					if regex.MatchRef(&[]byte{arg[i]}, regex.Compile(`[A-Za-z]`)) {
+						b = append(b, arg[i])
+					}
+					i++
+				}
+
+				b = append(b, arg[i])
+			}
+
+			continue
+		}
+
+		b = append(b, arg[i])
+	}
+
+	if len(b) != 0 {
+		if val, ok := getOptObj(b, opts, &usePre); ok {
+			if key != nil {
+				return keyVal{key, val}, true
+			}
+			return val, true
+		}
+	}
+
 	//todo: handle object indexes and nested objects
 	// also handle strings and optionally '|' seperators (ensure precompiled methods recognize all values and get disabled for reaching string values and non constant values)
-	if val, ok := (*opts)[arg]; ok {
+	/* if val, ok := (*opts)[arg]; ok {
 		return val, true
-	}
+	} */
 	return nil, false
 }
 
@@ -477,6 +703,19 @@ func (t *Pre) If(args *[][]byte, cont *[]byte, opts *map[string]interface{}) (in
 	}
 
 	return pass[0], nil
+}
+
+func (t *Pre) Each(args *map[string][]byte, cont *[]byte, opts *map[string]interface{}) (interface{}, error) {
+	// getOpt(string((*args)["test"]), opts)
+	
+	if val, ok := (*args)["0"]; ok {
+		_ = val
+		// v, ok := getOpt(val, opts)
+	}else{
+		return nil, nil
+	}
+
+	return nil, nil
 }
 
 

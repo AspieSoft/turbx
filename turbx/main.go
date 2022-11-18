@@ -33,6 +33,11 @@ func main(){
 	path, err := compiler.PreCompile("index", map[string]interface{}{
 		"$test": 1,
 		"key": "value",
+		"$list": map[string]interface{}{
+			"item1": "value a",
+			"item2": "value b",
+			"item3": "value c",
+		},
 	})
 	if err != nil {
 		panic(err)
