@@ -8,7 +8,7 @@
 ![npm weekly downloads](https://img.shields.io/npm/dw/turbx)
 ![npm monthly downloads](https://img.shields.io/npm/dm/turbx)
 
-[![donation link](https://img.shields.io/badge/buy%20me%20a%20coffee-square-blue)](https://buymeacoffee.aspiesoft.com)
+[![donation link](https://img.shields.io/badge/buy%20me%20a%20coffee-paypal-blue)](https://paypal.me/shaynejrtaylor?country.x=US&locale.x=en_US)
 
 A Fast and Easy To Use View Engine, Compiled In Go.
 
