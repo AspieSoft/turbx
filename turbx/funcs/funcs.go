@@ -13,9 +13,16 @@ type Pre struct {}
 type Comp struct {}
 
 
-type keyVal struct {
-	key []byte
-	val interface{}
+type KeyVal struct {
+	Key []byte
+	Val interface{}
+}
+
+type EachList struct {
+	List []KeyVal
+	As []byte
+	Of []byte
+	In []byte
 }
 
 
@@ -159,7 +166,7 @@ func getOpt(arg []byte, opts *map[string]interface{}, pre ...bool) (interface{},
 			val, ok := getOptObj(b, opts, &usePre)
 			if ok {
 				if key != nil {
-					return keyVal{key, val}, true
+					return KeyVal{key, val}, true
 				}
 				return val, true
 			}
@@ -234,7 +241,7 @@ func getOpt(arg []byte, opts *map[string]interface{}, pre ...bool) (interface{},
 	if len(b) != 0 {
 		if val, ok := getOptObj(b, opts, &usePre); ok {
 			if key != nil {
-				return keyVal{key, val}, true
+				return KeyVal{key, val}, true
 			}
 			return val, true
 		}
@@ -621,15 +628,55 @@ func (t *Pre) Each(args *map[string][]byte, cont *[]byte, opts *map[string]inter
 
 	//todo: setup pre compiled each loop
 	//todo: have functions provide optional pointer to temp storage
+	list, ok := getOpt((*args)["0"], opts, true)
+	if !ok {
+		res := []byte{}
+		if (*args)["as"] != nil && len((*args)["as"]) != 0 {
+			res = regex.JoinBytes(res, []byte(" as "), (*args)["as"])
+		}
+		if (*args)["of"] != nil && len((*args)["of"]) != 0 {
+			res = regex.JoinBytes(res, []byte(" of "), (*args)["of"])
+		}
+		if (*args)["in"] != nil && len((*args)["in"]) != 0 {
+			res = regex.JoinBytes(res, []byte(" in "), (*args)["in"])
+		}
+		return res, nil
+	}
 
-	if val, ok := (*args)["0"]; ok {
-		_ = val
-		// v, ok := getOpt(val, opts)
+	var res []KeyVal
+
+	lt := reflect.TypeOf(list)
+	if lt == goutil.VarType["map"] {
+		res = make([]KeyVal, len(list.(map[string]interface{})))
+		ind := 0
+		for k, v := range list.(map[string]interface{}) {
+			res[ind] = KeyVal{[]byte(k), v}
+			ind++
+		}
+	}else if lt == goutil.VarType["array"] {
+		res = make([]KeyVal, len(list.([]interface{})))
+		ind := 0
+		for i, v := range list.([]interface{}) {
+			res[ind] = KeyVal{[]byte(strconv.Itoa(i)), v}
+			ind++
+		}
 	}else{
 		return nil, nil
 	}
 
-	return nil, nil
+	resData := EachList{List: res}
+
+	if (*args)["as"] != nil && len((*args)["as"]) != 0 {
+		resData.As = (*args)["as"]
+	}
+	if (*args)["of"] != nil && len((*args)["of"]) != 0 {
+		resData.Of = (*args)["of"]
+	}
+	if (*args)["in"] != nil && len((*args)["in"]) != 0 {
+		resData.In = (*args)["in"]
+	}
+
+	return resData, nil
 }
 
 

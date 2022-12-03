@@ -564,9 +564,15 @@ func PreCompile(path string, opts map[string]interface{}) (string, error) {
 					if e != nil {
 						return "", e
 					}
-					_ = res
 
-					// fmt.Println(res)
+					rt := reflect.TypeOf(res)
+					if rt == goutil.VarType["byteArray"] {
+						//todo: handle normal compiling each method
+					}else if rt == reflect.TypeOf(funcs.EachList{}) {
+						//todo: handle new compiling each method
+					}else{
+						//todo: handle removing each method
+					}
 				}else{
 					//todo: handle normal pre functions (also auto capitalize first char)
 					//// (each will not be a pre func)
