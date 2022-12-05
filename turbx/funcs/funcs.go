@@ -5,7 +5,7 @@ import (
 	"reflect"
 	"strconv"
 
-	"github.com/AspieSoft/go-regex/v3"
+	"github.com/AspieSoft/go-regex/v4"
 	"github.com/AspieSoft/goutil/v3"
 )
 
@@ -27,8 +27,8 @@ type EachList struct {
 
 
 func convertOpt(arg []byte, opts *map[string]interface{}, pre *bool) (interface{}, bool) {
-	if regex.MatchRef(&arg, regex.Compile(`^(["'\'])(.*)\1$`)) {
-		arg = regex.RepStrComplexRef(&arg, regex.Compile(`^(["'\'])(.*)\1$`), []byte("$2"))
+	if regex.Compile(`^(["'\'])(.*)\1$`).MatchRef(&arg) {
+		arg = regex.Compile(`^(["'\'])(.*)\1$`).RepStrComplexRef(&arg, []byte("$2"))
 		
 		if bytes.Equal(arg, []byte("true")) {
 			return true, true
@@ -76,8 +76,8 @@ func convertOpt(arg []byte, opts *map[string]interface{}, pre *bool) (interface{
 }
 
 func getOptObj(arg []byte, opts *map[string]interface{}, pre *bool) (interface{}, bool) {
-	args := regex.SplitRef(&arg, regex.Compile(`\.|(\[(?:"(?:\\[\\"]|.)*?"|'(?:\\[\\']|.)*?'|\'(?:\\[\\\']|.)*?\'|.)*?\])`))
-	// args := regex.SplitRef(&arg, regex.Compile(`(\[[\w_]+\])|\.`))
+	args := regex.Compile(`\.|(\[(?:"(?:\\[\\"]|.)*?"|'(?:\\[\\']|.)*?'|\'(?:\\[\\\']|.)*?\'|.)*?\])`).SplitRef(&arg)
+	// args := regex.Compile(`(\[[\w_]+\])|\.`).SplitRef(&arg)
 
 	res, ok := convertOpt(args[0], opts, pre)
 	if !ok {
@@ -147,7 +147,7 @@ func getOpt(arg []byte, opts *map[string]interface{}, pre ...bool) (interface{},
 	}
 
 	var key []byte
-	arg = regex.RepFuncRef(&arg, regex.Compile(`^{{{?([\w_-]+)=(["'\']|)(.*)\2}}}?$`), func(data func(int) []byte) []byte {
+	arg = regex.Compile(`^{{{?([\w_-]+)=(["'\']|)(.*)\2}}}?$`).RepFuncRef(&arg, func(data func(int) []byte) []byte {
 		key = data(1)
 		return data(3)
 	})
@@ -186,7 +186,7 @@ func getOpt(arg []byte, opts *map[string]interface{}, pre ...bool) (interface{},
 					i++
 					break
 				}else if arg[i] == '\\' {
-					if regex.MatchRef(&[]byte{arg[i]}, regex.Compile(`[A-Za-z]`)) {
+					if regex.Compile(`[A-Za-z]`).MatchRef(&[]byte{arg[i]}) {
 						b = append(b, arg[i])
 					}
 					i++
@@ -213,7 +213,7 @@ func getOpt(arg []byte, opts *map[string]interface{}, pre ...bool) (interface{},
 							i++
 							break
 						}else if arg[i] == '\\' {
-							if regex.MatchRef(&[]byte{arg[i]}, regex.Compile(`[A-Za-z]`)) {
+							if regex.Compile(`[A-Za-z]`).MatchRef(&[]byte{arg[i]}) {
 								b = append(b, arg[i])
 							}
 							i++
@@ -223,7 +223,7 @@ func getOpt(arg []byte, opts *map[string]interface{}, pre ...bool) (interface{},
 					}
 					// continue
 				}else if arg[i] == '\\' {
-					if regex.MatchRef(&[]byte{arg[i]}, regex.Compile(`[A-Za-z]`)) {
+					if regex.Compile(`[A-Za-z]`).MatchRef(&[]byte{arg[i]}) {
 						b = append(b, arg[i])
 					}
 					i++
@@ -591,7 +591,7 @@ func (t *Pre) If(args *[][]byte, cont *[]byte, opts *map[string]interface{}) (in
 						p = true
 					}
 				}else if sign == 6 && t == 6 {
-					if regex.Match(arg1Val.([]byte), regex.Compile(arg2Val.(string))) {
+					if regex.Compile(arg2Val.(string)).Match(arg1Val.([]byte)) {
 						p = true
 					}
 				}

@@ -16,7 +16,7 @@ import (
 	"time"
 	"turbx/funcs"
 
-	"github.com/AspieSoft/go-regex/v3"
+	"github.com/AspieSoft/go-regex/v4"
 	"github.com/AspieSoft/goutil/v3"
 )
 
@@ -151,7 +151,7 @@ func SetPublicPath(path string) error {
 
 func SetExt(ext string) {
 	if ext != "" {
-		fileExt = string(regex.RepStr([]byte(ext), regex.Compile(`[^\w_-]`), []byte{}))
+		fileExt = string(regex.Compile(`[^\w_-]`).RepStr([]byte(ext), []byte{}))
 	}
 }
 
@@ -238,7 +238,7 @@ func PreCompile(path string, opts map[string]interface{}) (string, error) {
 				mode = 1
 				reader.Discard(1)
 				b, err = reader.Peek(1)
-			}else if regex.MatchRef(&b, regex.Compile(`[A-Z]`)) {
+			}else if regex.Compile(`[A-Z]`).MatchRef(&b) {
 				mode = 2
 			}else if b[0] == '/' {
 				selfClose = 2
@@ -249,14 +249,14 @@ func PreCompile(path string, opts map[string]interface{}) (string, error) {
 					mode = 1
 					reader.Discard(1)
 					b, err = reader.Peek(1)
-				}else if regex.MatchRef(&b, regex.Compile(`[A-Z]`)) {
+				}else if regex.Compile(`[A-Z]`).MatchRef(&b) {
 					mode = 2
 				}
 			}
 
 			// handle elm tag (use all caps to prevent conflicts with attributes)
 			tag := []byte{}
-			for err == nil && !regex.MatchRef(&b, regex.Compile(`[\s\r\n/>]`)) {
+			for err == nil && !regex.Compile(`[\s\r\n/>]`).MatchRef(&b) {
 				tag = append(tag, b[0])
 				reader.Discard(1)
 				b, err = reader.Peek(1)
@@ -298,7 +298,7 @@ func PreCompile(path string, opts map[string]interface{}) (string, error) {
 
 					// get key
 					key := []byte{}
-					for err == nil && !regex.MatchRef(&b, regex.Compile(`[\s\r\n/>!=&|\(\)]`)) {
+					for err == nil && !regex.Compile(`[\s\r\n/>!=&|\(\)]`).MatchRef(&b) {
 						key = append(key, b[0])
 						reader.Discard(1)
 						b, err = reader.Peek(1)
@@ -345,10 +345,10 @@ func PreCompile(path string, opts map[string]interface{}) (string, error) {
 					}
 
 					// get value
-					for err == nil && b[0] != q && (q != ' ' || !regex.MatchRef(&b, regex.Compile(`[\s\r\n/>!=&|\(\)]`))) {
+					for err == nil && b[0] != q && (q != ' ' || !regex.Compile(`[\s\r\n/>!=&|\(\)]`).MatchRef(&b)) {
 						if b[0] == '\\' {
 							b, err = reader.Peek(2)
-							if regex.MatchRef(&b, regex.Compile(`[A-Za-z]`)) {
+							if regex.Compile(`[A-Za-z]`).MatchRef(&b) {
 								val = append(val, b[0], b[1])
 							}else{
 								val = append(val, b[1])
@@ -410,7 +410,7 @@ func PreCompile(path string, opts map[string]interface{}) (string, error) {
 							for err == nil {
 								if b[0] == '<' {
 									b, err = reader.Peek(6)
-									if b[1] == '/' && b[2] == '_' && bytes.Equal(b[3:5], []byte("if")) && regex.MatchRef(&[]byte{b[5]}, regex.Compile(`^[\s\r\n/>]$`)) {
+									if b[1] == '/' && b[2] == '_' && bytes.Equal(b[3:5], []byte("if")) && regex.Compile(`^[\s\r\n/>]$`).MatchRef(&[]byte{b[5]}) {
 										reader.Discard(5)
 										b, err = reader.Peek(1)
 										for err == nil && b[0] != '>' {
@@ -441,10 +441,10 @@ func PreCompile(path string, opts map[string]interface{}) (string, error) {
 					intArgs := []elmVal{}
 					argSize := 0
 					for key, arg := range elm {
-						if !regex.Match([]byte(key), regex.Compile(`^([A-Z]+)$`)) {
+						if !regex.Compile(`^([A-Z]+)$`).Match([]byte(key)) {
 							intArgs = append(intArgs, elmVal{arg.ind, []byte(key)})
 							argSize++
-							if !regex.Match([]byte(key), regex.Compile(`^([0-9]+)$`)) && arg.val != nil {
+							if !regex.Compile(`^([0-9]+)$`).Match([]byte(key)) && arg.val != nil {
 								argSize += 2
 							}
 						}
@@ -456,7 +456,7 @@ func PreCompile(path string, opts map[string]interface{}) (string, error) {
 					args := make([][]byte, argSize)
 					i := 0
 					for _, arg := range intArgs {
-						if regex.Match([]byte(arg.val), regex.Compile(`^([0-9]+)$`)) {
+						if regex.Compile(`^([0-9]+)$`).Match([]byte(arg.val)) {
 							args[i] = elm[string(arg.val)].val
 							i++
 						}else{
@@ -501,13 +501,13 @@ func PreCompile(path string, opts map[string]interface{}) (string, error) {
 						for err == nil {
 							if b[0] == '<' {
 								b, err = reader.Peek(7)
-								if b[1] == '_' && (bytes.Equal(b[2:6], []byte("else")) || bytes.Equal(b[2:6], []byte("elif"))) && regex.MatchRef(&[]byte{b[6]}, regex.Compile(`^[\s\r\n/>]$`)) {
+								if b[1] == '_' && (bytes.Equal(b[2:6], []byte("else")) || bytes.Equal(b[2:6], []byte("elif"))) && regex.Compile(`^[\s\r\n/>]$`).MatchRef(&[]byte{b[6]}) {
 									b, err = reader.Peek(1)
 									fnLevel = append(fnLevel, "if")
 									// ifMode = append(ifMode, 1)
 									ifMode[len(ifMode)-1] = 1
 									break
-								}else if b[1] == '/' && b[2] == '_' && bytes.Equal(b[3:5], []byte("if")) && regex.MatchRef(&[]byte{b[5]}, regex.Compile(`^[\s\r\n/>]$`)) {
+								}else if b[1] == '/' && b[2] == '_' && bytes.Equal(b[3:5], []byte("if")) && regex.Compile(`^[\s\r\n/>]$`).MatchRef(&[]byte{b[5]}) {
 									b, err = reader.Peek(1)
 									break
 								}
@@ -592,7 +592,7 @@ func PreCompile(path string, opts map[string]interface{}) (string, error) {
 				// sort html args
 				argSort := []string{}
 				for key := range elm {
-					if !regex.Match([]byte(key), regex.Compile(`^([A-Z]+|[0-9]+)$`)) {
+					if !regex.Compile(`^([A-Z]+|[0-9]+)$`).Match([]byte(key)) {
 						argSort = append(argSort, key)
 					}
 				}
@@ -601,8 +601,8 @@ func PreCompile(path string, opts map[string]interface{}) (string, error) {
 				// convert .min for .js and .css src attrs
 				//todo: may auto minify files instead of ignoring (may make optional)
 				if _, ok := elm["src"]; ok && publicPath != "" && elm["src"].val != nil && bytes.HasPrefix(elm["src"].val, []byte{'/'}) {
-					if regex.Match(elm["src"].val, regex.Compile(`(?<!\.min)\.(js|css)$`)) {
-						src := regex.RepStrComplex(elm["src"].val, regex.Compile(`\.(js|css)$`), []byte(".min.$1"))
+					if regex.Compile(`(?<!\.min)\.(js|css)$`).Match(elm["src"].val) {
+						src := regex.Compile(`\.(js|css)$`).RepStrComplex(elm["src"].val, []byte(".min.$1"))
 						if path, e := goutil.JoinPath(publicPath, string(src)); e == nil {
 							if _, e := os.Stat(path); e == nil {
 								elm["src"] = elmVal{elm["src"].ind, src}
@@ -615,7 +615,7 @@ func PreCompile(path string, opts map[string]interface{}) (string, error) {
 				for _, arg := range argSort {
 					res = regex.JoinBytes(res, ' ', arg)
 					if elm[arg].val != nil {
-						val := regex.RepStrComplex(elm[arg].val, regex.Compile(`([\\"])`), []byte(`\$1`))
+						val := regex.Compile(`([\\"])`).RepStrComplex(elm[arg].val, []byte(`\$1`))
 						res = regex.JoinBytes(res, '=', '"', val, '"')
 					}
 				}
@@ -670,7 +670,7 @@ func PreCompile(path string, opts map[string]interface{}) (string, error) {
 
 
 func skipWhitespace(reader *bufio.Reader, b *[]byte, err *error){
-	for err != nil && regex.MatchRef(b, regex.Compile(`[\s\r\n]`)) {
+	for err != nil && regex.Compile(`[\s\r\n]`).MatchRef(b) {
 		reader.Discard(1)
 		*b, *err = reader.Peek(1)
 	}
@@ -736,9 +736,9 @@ func skipObjStrComments(reader *bufio.Reader, b *[]byte, err *error){
 
 	for err == nil {
 		if search[0] == '\n' {
-			if regex.MatchRef(b, regex.Compile(`^[\r\n]+$`)) {
+			if regex.Compile(`^[\r\n]+$`).MatchRef(b) {
 				*b, *err = reader.Peek(2)
-				if regex.MatchRef(b, regex.Compile(`^[\r\n]+$`)) {
+				if regex.Compile(`^[\r\n]+$`).MatchRef(b) {
 					reader.Discard(2)
 					*b, *err = reader.Peek(1)
 				}else{
@@ -768,7 +768,7 @@ func skipObjStrComments(reader *bufio.Reader, b *[]byte, err *error){
 
 
 func callFunc(name string, args *map[string][]byte, cont *[]byte, opts *map[string]interface{}, pre bool) (interface{}, error) {
-	name = string(regex.RepStr([]byte(name), regex.Compile(`[^\w_]`), []byte{}))
+	name = string(regex.Compile(`[^\w_]`).RepStr([]byte(name), []byte{}))
 
 	var m reflect.Value
 	if pre {
@@ -808,7 +808,7 @@ func callFunc(name string, args *map[string][]byte, cont *[]byte, opts *map[stri
 }
 
 func callFuncArr(name string, args *[][]byte, cont *[]byte, opts *map[string]interface{}, pre bool) (interface{}, error) {
-	name = string(regex.RepStr([]byte(name), regex.Compile(`[^\w_]`), []byte{}))
+	name = string(regex.Compile(`[^\w_]`).RepStr([]byte(name), []byte{}))
 
 	var m reflect.Value
 	if pre {
@@ -927,15 +927,15 @@ func randBytes(size int, exclude ...[]byte) []byte {
 
 	if len(exclude) >= 2 {
 		if exclude[0] == nil || len(exclude[0]) == 0 {
-			b = regex.RepStr(b, regex.Compile(`[^\w_-]`), exclude[1])
+			b = regex.Compile(`[^\w_-]`).RepStr(b, exclude[1])
 		}else{
-			b = regex.RepStr(b, regex.Compile(`[%1]`, string(exclude[0])), exclude[1])
+			b = regex.Compile(`[%1]`, string(exclude[0])).RepStr(b, exclude[1])
 		}
 	}else if len(exclude) >= 1 {
 		if exclude[0] == nil || len(exclude[0]) == 0 {
-			b = regex.RepStr(b, regex.Compile(`[^\w_-]`), []byte{})
+			b = regex.Compile(`[^\w_-]`).RepStr(b, []byte{})
 		}else{
-			b = regex.RepStr(b, regex.Compile(`[%1]`, string(exclude[0])), []byte{})
+			b = regex.Compile(`[%1]`, string(exclude[0])).RepStr(b, []byte{})
 		}
 	}
 
@@ -946,15 +946,15 @@ func randBytes(size int, exclude ...[]byte) []byte {
 	
 		if len(exclude) >= 2 {
 			if exclude[0] == nil || len(exclude[0]) == 0 {
-				a = regex.RepStr(a, regex.Compile(`[^\w_-]`), exclude[1])
+				a = regex.Compile(`[^\w_-]`).RepStr(a, exclude[1])
 			}else{
-				a = regex.RepStr(a, regex.Compile(`[%1]`, string(exclude[0])), exclude[1])
+				a = regex.Compile(`[%1]`, string(exclude[0])).RepStr(a, exclude[1])
 			}
 		}else if len(exclude) >= 1 {
 			if exclude[0] == nil || len(exclude[0]) == 0 {
-				a = regex.RepStr(a, regex.Compile(`[^\w_-]`), []byte{})
+				a = regex.Compile(`[^\w_-]`).RepStr(a, []byte{})
 			}else{
-				a = regex.RepStr(a, regex.Compile(`[%1]`, string(exclude[0])), []byte{})
+				a = regex.Compile(`[%1]`, string(exclude[0])).RepStr(a, []byte{})
 			}
 		}
 
