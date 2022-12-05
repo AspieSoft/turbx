@@ -3,6 +3,7 @@ package funcs
 import (
 	"bytes"
 	"reflect"
+	"sort"
 	"strconv"
 
 	"github.com/AspieSoft/go-regex/v4"
@@ -23,6 +24,7 @@ type EachList struct {
 	As []byte
 	Of []byte
 	In []byte
+	Cont []byte
 }
 
 
@@ -88,7 +90,7 @@ func getOptObj(arg []byte, opts *map[string]interface{}, pre *bool) (interface{}
 	for _, arg := range args {
 		if bytes.HasPrefix(arg, []byte{'['}) && bytes.HasSuffix(arg, []byte{']'}) {
 			arg = arg[1:len(arg)-1]
-			v, ok := getOpt(arg, opts, *pre)
+			v, ok := GetOpt(arg, opts, *pre)
 			if !ok {
 				return v, false
 			}
@@ -140,7 +142,7 @@ func getOptObj(arg []byte, opts *map[string]interface{}, pre *bool) (interface{}
 	return res, true
 }
 
-func getOpt(arg []byte, opts *map[string]interface{}, pre ...bool) (interface{}, bool) {
+func GetOpt(arg []byte, opts *map[string]interface{}, pre ...bool) (interface{}, bool) {
 	usePre := false
 	if len(pre) != 0 {
 		usePre = pre[0]
@@ -423,7 +425,7 @@ func (t *Pre) If(args *[][]byte, cont *[]byte, opts *map[string]interface{}) (in
 		// make '$' unique to const vars for pre compile to handle
 		// ignore in regular compiler
 		if !hasArg2 {
-			arg1Val, arg1ok := getOpt(arg1, opts, true)
+			arg1Val, arg1ok := GetOpt(arg1, opts, true)
 
 			if !arg1ok {
 				// add to unsolved list
@@ -454,7 +456,7 @@ func (t *Pre) If(args *[][]byte, cont *[]byte, opts *map[string]interface{}) (in
 			}
 			inv[grp] = false
 		}else{
-			arg1Val, arg1ok := getOpt(arg1, opts, true)
+			arg1Val, arg1ok := GetOpt(arg1, opts, true)
 
 			var arg2Val interface{} = nil
 			arg2ok := false
@@ -463,7 +465,7 @@ func (t *Pre) If(args *[][]byte, cont *[]byte, opts *map[string]interface{}) (in
 				arg2Val = goutil.ToString(arg2)
 				arg2ok = true
 			}else{
-				arg2Val, arg2ok = getOpt(arg2, opts, true)
+				arg2Val, arg2ok = GetOpt(arg2, opts, true)
 			}
 
 			if !arg1ok || !arg2ok {
@@ -626,11 +628,67 @@ func (t *Pre) If(args *[][]byte, cont *[]byte, opts *map[string]interface{}) (in
 
 func (t *Pre) Each(args *map[string][]byte, cont *[]byte, opts *map[string]interface{}) (interface{}, error) {
 
-	//todo: setup pre compiled each loop
+	var from int
+	var to int
+
+	if (*args)["range"] != nil && len((*args)["range"]) != 0 {
+		r := regex.Compile(`[^0-9\-]+`).Split((*args)["range"])
+		if i, err := strconv.Atoi(string(bytes.TrimSpace(r[0]))); err == nil {
+			from = i
+		}
+		if i, err := strconv.Atoi(string(bytes.TrimSpace(r[1]))); err == nil {
+			to = i
+		}
+	}else{
+		if (*args)["from"] != nil && len((*args)["from"]) != 0 {
+			if i, err := strconv.Atoi(string(bytes.TrimSpace((*args)["from"]))); err == nil {
+				from = i
+			}
+		}
+	
+		if (*args)["to"] != nil && len((*args)["to"]) != 0 {
+			if i, err := strconv.Atoi(string(bytes.TrimSpace((*args)["to"]))); err == nil {
+				to = i
+			}
+		}
+	}
+
+	if (*args)["0"] == nil || len((*args)["0"]) == 0 {
+		res := []KeyVal{}
+		if from <= to {
+			for i := from; i <= to; i++ {
+				res = append(res, KeyVal{[]byte(strconv.Itoa(i)), i})
+			}
+		}else{
+			for i := from; i >= to; i-- {
+				res = append(res, KeyVal{[]byte(strconv.Itoa(i)), i})
+			}
+		}
+
+		resData := EachList{List: res, Cont: []byte{}}
+
+		if (*args)["as"] != nil && len((*args)["as"]) != 0 {
+			resData.As = (*args)["as"]
+		}
+		if (*args)["of"] != nil && len((*args)["of"]) != 0 {
+			resData.Of = (*args)["of"]
+		}
+		if (*args)["in"] != nil && len((*args)["in"]) != 0 {
+			resData.In = (*args)["in"]
+		}
+
+		return resData, nil
+	}
+
+	//// setup pre compiled each loop
 	//todo: have functions provide optional pointer to temp storage
-	list, ok := getOpt((*args)["0"], opts, true)
+	list, ok := GetOpt((*args)["0"], opts, true)
 	if !ok {
-		res := []byte{}
+		if bytes.HasPrefix((*args)["0"], []byte{'$'}) {
+			return nil, nil
+		}
+
+		res := (*args)["0"]
 		if (*args)["as"] != nil && len((*args)["as"]) != 0 {
 			res = regex.JoinBytes(res, []byte(" as "), (*args)["as"])
 		}
@@ -649,10 +707,44 @@ func (t *Pre) Each(args *map[string][]byte, cont *[]byte, opts *map[string]inter
 	if lt == goutil.VarType["map"] {
 		res = make([]KeyVal, len(list.(map[string]interface{})))
 		ind := 0
+
 		for k, v := range list.(map[string]interface{}) {
 			res[ind] = KeyVal{[]byte(k), v}
 			ind++
 		}
+
+		sort.Slice(res, func(i, j int) bool {
+			k1 := []byte(res[i].Key)
+			k2 := []byte(res[j].Key)
+			l := len(k1)
+			if len(k2) < l {
+				l = len(k2)
+			}
+
+			res := 0
+			for i := 0; i < l; i++ {
+				if k1[i] < k2[i] {
+					res = 1
+					break
+				}else if k1[i] > k2[i] {
+					res = -1
+					break
+				}
+			}
+
+			if from > to {
+				if res == 0 {
+					return len(k1) > len(k2)
+				}
+				return res == -1
+			}
+
+			if res == 0 {
+				return len(k1) < len(k2)
+			}
+			return res == 1
+		})
+
 	}else if lt == goutil.VarType["array"] {
 		res = make([]KeyVal, len(list.([]interface{})))
 		ind := 0
@@ -660,11 +752,17 @@ func (t *Pre) Each(args *map[string][]byte, cont *[]byte, opts *map[string]inter
 			res[ind] = KeyVal{[]byte(strconv.Itoa(i)), v}
 			ind++
 		}
+
+		if from > to {
+			sort.Slice(res, func(i, j int) bool {
+				return i > j
+			})
+		}
 	}else{
 		return nil, nil
 	}
 
-	resData := EachList{List: res}
+	resData := EachList{List: res, Cont: []byte{}}
 
 	if (*args)["as"] != nil && len((*args)["as"]) != 0 {
 		resData.As = (*args)["as"]
@@ -685,7 +783,13 @@ func (t *Comp) If(args *[][]byte, cont *[]byte, opts *map[string]interface{}) (i
 	return nil, nil
 }
 
+func (t *Comp) Each(args *[][]byte, cont *[]byte, opts *map[string]interface{}) (interface{}, error) {
+	//todo: setup normal each handler
+	return nil, nil
+}
 
+
+// examples
 func (t *Pre) PreFn(args *map[string][]byte, cont *[]byte, opts *map[string]interface{}) (interface{}, error) {
 	return nil, nil
 }

@@ -193,8 +193,17 @@ func PreCompile(path string, opts map[string]interface{}) (string, error) {
 
 	writer := bufio.NewWriter(tmpFile)
 
+	fnLevel := []string{}
+	ifMode := []uint8{0}
+	eachCont := []funcs.EachList{}
+
 	wSize := uint(0)
 	write := func(b []byte){
+		if len(eachCont) != 0 {
+			eachCont[len(eachCont)-1].Cont = append(eachCont[len(eachCont)-1].Cont, b...)
+			return
+		}
+
 		writer.Write(b)
 		wSize += uint(len(b))
 		if wSize >= writeFlushSize {
@@ -217,10 +226,6 @@ func PreCompile(path string, opts map[string]interface{}) (string, error) {
 	//todo: compile markdown while reading file (may ignore above comment for this idea)
 
 	tagInd := [][]byte{}
-	_ = tagInd
-
-	fnLevel := []string{}
-	ifMode := []uint8{0}
 
 	b, err := reader.Peek(1)
 	for err == nil {
@@ -377,7 +382,61 @@ func PreCompile(path string, opts map[string]interface{}) (string, error) {
 
 
 			if mode == 1 {
-				if selfClose == 2 && (len(ifMode) == 0 || ifMode[len(ifMode)-1] == 0) && !bytes.Equal(elm["TAG"].val, []byte("else")) && !bytes.Equal(elm["TAG"].val, []byte("elif")) {
+				if selfClose == 2 && len(eachCont) != 0 && bytes.Equal(elm["TAG"].val, []byte("each")) {
+					eachLoop := eachCont[len(eachCont)-1]
+					eachCont = eachCont[:len(eachCont)-1]
+
+					eachOpts, e := goutil.DeepCopyJson(opts)
+					if e != nil {
+						return "", e
+					}
+					for i := range eachOpts {
+						if !strings.HasPrefix(i, "$") {
+							delete(eachOpts, i)
+						}
+					}
+
+					if eachLoop.In != nil {
+						eachOpts[string(eachLoop.In)] = eachLoop.List
+					}
+
+					for _, list := range eachLoop.List {
+						b := regex.Compile(`(?s){{({|)\s*((?:"(?:\\[\\"]|[^"])*"|'(?:\\[\\']|[^'])*'|\'(?:\\[\\\']|[^\'])*\'|.)*?)\s*}}(}|)`, string(eachLoop.As), string(eachLoop.Of), string(eachLoop.In)).RepFuncRef(&eachLoop.Cont, func(data func(int) []byte) []byte {
+							allowHTML := false
+							_ = allowHTML
+							if len(data(1)) != 0 && len(data(3)) != 0 {
+								allowHTML = true
+							}
+
+							if eachLoop.As != nil {
+								eachOpts[string(eachLoop.As)] = list.Val
+							}else{
+								eachOpts[string(eachLoop.As)] = nil
+							}
+							if eachLoop.Of != nil {
+								eachOpts[string(eachLoop.Of)] = list.Key
+							}else{
+								eachOpts[string(eachLoop.Of)] = nil
+							}
+
+							if opt, ok := funcs.GetOpt(data(0), &eachOpts); ok {
+								b := goutil.ToByteArray(opt)
+								if !allowHTML {
+									b = goutil.EscapeHTML(b)
+								}
+								return b
+							}
+
+							return data(0)
+						})
+
+						write(b)
+					}
+
+					reader.Discard(1)
+					b, err = reader.Peek(1)
+					continue
+				}else if selfClose == 2 && (len(ifMode) == 0 || ifMode[len(ifMode)-1] == 0) && !bytes.Equal(elm["TAG"].val, []byte("else")) && !bytes.Equal(elm["TAG"].val, []byte("elif")) {
 					for len(fnLevel) != 0 && fnLevel[len(fnLevel)-1] != string(elm["TAG"].val) {
 						fnLevel = fnLevel[:len(fnLevel)-1]
 						ifMode = ifMode[:len(ifMode)-1]
@@ -396,11 +455,6 @@ func PreCompile(path string, opts map[string]interface{}) (string, error) {
 				}
 
 				// handle functions
-
-				//todo: add seperate handler for 'each' and 'for' funcs
-				// have 'for' func use ';' seperators (may need to adjust arg compiler to accept multiple reapeats of a key as an indexed version)
-				// also ensure keys ending in ':[0-9]+' will allow the index to increase past them
-
 				if bytes.Equal(elm["TAG"].val, []byte("if")) || bytes.Equal(elm["TAG"].val, []byte("else")) || bytes.Equal(elm["TAG"].val, []byte("elif")) {
 					elseMode := (bytes.Equal(elm["TAG"].val, []byte("else")) || bytes.Equal(elm["TAG"].val, []byte("elif")))
 
@@ -410,7 +464,7 @@ func PreCompile(path string, opts map[string]interface{}) (string, error) {
 							for err == nil {
 								if b[0] == '<' {
 									b, err = reader.Peek(6)
-									if b[1] == '/' && b[2] == '_' && bytes.Equal(b[3:5], []byte("if")) && regex.Compile(`^[\s\r\n/>]$`).MatchRef(&[]byte{b[5]}) {
+									if err == nil && b[1] == '/' && b[2] == '_' && bytes.Equal(b[3:5], []byte("if")) && regex.Compile(`^[\s\r\n/>]$`).MatchRef(&[]byte{b[5]}) {
 										reader.Discard(5)
 										b, err = reader.Peek(1)
 										for err == nil && b[0] != '>' {
@@ -501,13 +555,13 @@ func PreCompile(path string, opts map[string]interface{}) (string, error) {
 						for err == nil {
 							if b[0] == '<' {
 								b, err = reader.Peek(7)
-								if b[1] == '_' && (bytes.Equal(b[2:6], []byte("else")) || bytes.Equal(b[2:6], []byte("elif"))) && regex.Compile(`^[\s\r\n/>]$`).MatchRef(&[]byte{b[6]}) {
+								if err == nil && b[1] == '_' && (bytes.Equal(b[2:6], []byte("else")) || bytes.Equal(b[2:6], []byte("elif"))) && regex.Compile(`^[\s\r\n/>]$`).MatchRef(&[]byte{b[6]}) {
 									b, err = reader.Peek(1)
 									fnLevel = append(fnLevel, "if")
 									// ifMode = append(ifMode, 1)
 									ifMode[len(ifMode)-1] = 1
 									break
-								}else if b[1] == '/' && b[2] == '_' && bytes.Equal(b[3:5], []byte("if")) && regex.Compile(`^[\s\r\n/>]$`).MatchRef(&[]byte{b[5]}) {
+								}else if err == nil && b[1] == '/' && b[2] == '_' && bytes.Equal(b[3:5], []byte("if")) && regex.Compile(`^[\s\r\n/>]$`).MatchRef(&[]byte{b[5]}) {
 									b, err = reader.Peek(1)
 									break
 								}
@@ -559,7 +613,6 @@ func PreCompile(path string, opts map[string]interface{}) (string, error) {
 						return intArgs[i].ind < intArgs[j].ind
 					}) */
 
-					//todo: finish setting up 'each' function
 					res, e := callFunc("Each", &args, nil, &opts, true)
 					if e != nil {
 						return "", e
@@ -567,15 +620,112 @@ func PreCompile(path string, opts map[string]interface{}) (string, error) {
 
 					rt := reflect.TypeOf(res)
 					if rt == goutil.VarType["byteArray"] {
-						//todo: handle normal compiling each method
+						write(regex.JoinBytes([]byte("{{#each:"), len(fnLevel), ' ', res, []byte("}}")))
+						fnLevel = append(fnLevel, "each")
 					}else if rt == reflect.TypeOf(funcs.EachList{}) {
-						//todo: handle new compiling each method
+						eachCont = append(eachCont, res.(funcs.EachList))
 					}else{
-						//todo: handle removing each method
+						eachLevel := 0
+
+						for err == nil {
+							if b[0] == '<' {
+								b, err = reader.Peek(8)
+								if err == nil && b[1] == '/' && b[2] == '_' && bytes.Equal(b[3:7], []byte("each")) && regex.Compile(`^[\s\r\n/>]$`).MatchRef(&[]byte{b[7]}) {
+									reader.Discard(7)
+									b, err = reader.Peek(1)
+
+									for err == nil && b[0] != '>' {
+										if b[0] == '\\' {
+											reader.Discard(1)
+										}
+
+										reader.Discard(1)
+										b, err = reader.Peek(1)
+										if b[0] == '"' {
+											for err == nil && b[0] != '"' {
+												if b[0] == '\\' {
+													reader.Discard(1)
+												}
+												reader.Discard(1)
+												b, err = reader.Peek(1)
+											}
+										}else if b[0] == '\'' {
+											for err == nil && b[0] != '\'' {
+												if b[0] == '\\' {
+													reader.Discard(1)
+												}
+												reader.Discard(1)
+												b, err = reader.Peek(1)
+											}
+										}else if b[0] == '`' {
+											for err == nil && b[0] != '`' {
+												if b[0] == '\\' {
+													reader.Discard(1)
+												}
+												reader.Discard(1)
+												b, err = reader.Peek(1)
+											}
+										}
+									}
+
+									reader.Discard(1)
+									b, err = reader.Peek(1)
+
+									eachLevel--
+									if eachLevel < 0 {
+										break
+									}
+								}else if err == nil && b[1] == '_' && bytes.Equal(b[2:6], []byte("each")) && regex.Compile(`^[\s\r\n/>]$`).MatchRef(&[]byte{b[6]}) {
+									reader.Discard(6)
+									b, err = reader.Peek(1)
+									
+									for err == nil && b[0] != '>' {
+										if b[0] == '\\' {
+											reader.Discard(1)
+										}
+
+										reader.Discard(1)
+										b, err = reader.Peek(1)
+										if b[0] == '"' {
+											for err == nil && b[0] != '"' {
+												if b[0] == '\\' {
+													reader.Discard(1)
+												}
+												reader.Discard(1)
+												b, err = reader.Peek(1)
+											}
+										}else if b[0] == '\'' {
+											for err == nil && b[0] != '\'' {
+												if b[0] == '\\' {
+													reader.Discard(1)
+												}
+												reader.Discard(1)
+												b, err = reader.Peek(1)
+											}
+										}else if b[0] == '`' {
+											for err == nil && b[0] != '`' {
+												if b[0] == '\\' {
+													reader.Discard(1)
+												}
+												reader.Discard(1)
+												b, err = reader.Peek(1)
+											}
+										}
+									}
+									
+									eachLevel++
+								}
+							}
+
+							reader.Discard(1)
+							b, err = reader.Peek(1)
+						}
+
+						continue
 					}
 				}else{
 					//todo: handle normal pre functions (also auto capitalize first char)
-					//// (each will not be a pre func)
+					
 				}
 			}else if mode == 2 {
 				//todo: handle component
@@ -656,6 +806,7 @@ func PreCompile(path string, opts map[string]interface{}) (string, error) {
 
 		//temp
 		// break
+
 		write(b)
 		reader.Discard(1)
 		b, err = reader.Peek(1)
