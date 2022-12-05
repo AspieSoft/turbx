@@ -725,10 +725,12 @@ func PreCompile(path string, opts map[string]interface{}) (string, error) {
 					}
 				}else{
 					//todo: handle normal pre functions (also auto capitalize first char)
+					// auto grab content through similar method to each statements
 					
 				}
 			}else if mode == 2 {
 				//todo: handle component
+				// may auto grab content through similar method to each statements
 				// @args: map[string][]byte
 			}else{
 				// handle html tags
