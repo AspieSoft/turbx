@@ -955,6 +955,7 @@ func PreCompile(path string, opts map[string]interface{}, componentOf ...string)
 						ind++
 					}else{
 						if bytes.HasPrefix(arg.val, []byte("{{")) && bytes.HasSuffix(arg.val, []byte("}}")) {
+							//todo: handle {{$vars}} within components
 							args[key] = arg.val
 						}else{
 							args["$"+key] = arg.val
@@ -1031,6 +1032,8 @@ func PreCompile(path string, opts map[string]interface{}, componentOf ...string)
 					b, err = reader.Peek(1)
 					continue
 				}
+
+				//todo: handle {{$vars}} within html elements
 
 				// sort html args
 				argSort := []string{}
@@ -1109,10 +1112,12 @@ func PreCompile(path string, opts map[string]interface{}, componentOf ...string)
 			continue
 		}
 
+
+		//todo: handle {{$vars}}
+
+
 		//temp
 		// break
-
-		
 
 		write(b)
 		reader.Discard(1)
