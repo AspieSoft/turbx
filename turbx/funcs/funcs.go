@@ -677,8 +677,6 @@ func (t *Pre) Each(args *map[string][]byte, cont *[]byte, opts *map[string]inter
 		return resData, nil
 	}
 
-	//// setup pre compiled each loop
-	//todo: have functions provide optional pointer to temp storage
 	list, ok := GetOpt((*args)["0"], opts, true)
 	if !ok {
 		if bytes.HasPrefix((*args)["0"], []byte{'$'}) {

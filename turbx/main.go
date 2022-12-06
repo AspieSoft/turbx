@@ -20,6 +20,10 @@ func main(){
 		compiler.SetExt(args["ext"])
 	}
 
+	if args["component"] != "" && args["component"] != "true" {
+		compiler.SetComponentPath(args["component"])
+	}
+
 	if args["public"] != "" && args["public"] != "true" {
 		compiler.SetPublicPath(args["public"])
 	}
@@ -31,7 +35,7 @@ func main(){
 
 	//temp: test
 	path, err := compiler.PreCompile("index", map[string]interface{}{
-		"$test": 1,
+		"$test": 3,
 		"key": "value",
 		"$list": map[string]interface{}{
 			"item1": "value a",

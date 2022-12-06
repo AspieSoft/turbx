@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -18,10 +19,12 @@ import (
 
 	"github.com/AspieSoft/go-regex/v4"
 	"github.com/AspieSoft/goutil/v3"
+	"github.com/alphadose/haxmap"
 )
 
 var rootPath string
 var fileExt string = "html"
+var componentPath string = "components"
 var publicPath string
 
 var cacheTmpPath string
@@ -73,7 +76,12 @@ type fnData struct {
 	fnName []byte
 	cont []byte
 	each funcs.EachList
+	isComponent bool
 }
+
+
+var pathCache *haxmap.Map[string, string] = haxmap.New[string, string]()
+
 
 func init(){
 	/* if regex.Match([]byte(os.Args[0]), regex.Compile(`^/tmp/go-build[0-9]+/`)) {
@@ -143,6 +151,18 @@ func SetRoot(path string) error {
 	return nil
 }
 
+func SetComponentPath(path string) error {
+	if path == componentPath {
+		return errors.New("path is already set")
+	}
+
+	componentPath = path
+
+	go clearTmpCache()
+
+	return nil
+}
+
 func SetPublicPath(path string) error {
 	if path == "" {
 		return errors.New("path cannot be empty")
@@ -163,14 +183,30 @@ func SetExt(ext string) {
 	}
 }
 
-func PreCompile(path string, opts map[string]interface{}) (string, error) {
+func PreCompile(path string, opts map[string]interface{}, componentOf ...string) (string, error) {
 	if rootPath == "" || cacheTmpPath == "" {
 		return "", errors.New("a root path was never chosen")
 	}
 
-	fullPath, err := goutil.JoinPath(rootPath, path + "." + fileExt)
-	if err != nil {
-		return "", err
+	var fullPath string
+	if len(componentOf) != 0 {
+		if p, err := goutil.JoinPath(rootPath, componentPath, path + "." + fileExt); err == nil {
+			fullPath = p
+		}
+	}
+
+	if fullPath == "" {
+		var err error
+		fullPath, err = goutil.JoinPath(rootPath, path + "." + fileExt)
+		if err != nil {
+			return "", err
+		}
+	}
+
+	for _, cPath := range componentOf {
+		if fullPath == cPath {
+			return "", errors.New("Recursive Component Detected!")
+		}
 	}
 
 	if strings.HasPrefix(fullPath, cacheTmpPath) {
@@ -222,6 +258,72 @@ func PreCompile(path string, opts map[string]interface{}) (string, error) {
 		if b[0] == '<' {
 			reader.Discard(1)
 			b, err = reader.Peek(1)
+
+			if err != nil {
+				write([]byte{'<'})
+				break
+			}
+
+			if b[0] == '!' {
+				b, err = reader.Peek(3)
+				if err == nil && b[1] == '-' && b[2] == '-' {
+					reader.Discard(3)
+					b, err = reader.Peek(1)
+					
+					skipWhitespace(reader, &b, &err)
+
+					if err == nil && b[0] == '!' {
+						reader.Discard(1)
+						comment := []byte("<!--!")
+
+						b, err = reader.Peek(3)
+						for err == nil && !(b[0] == '-' && b[1] == '-' && b[2] == '>') {
+							comment = append(comment, b[0])
+							reader.Discard(1)
+							b, err = reader.Peek(3)
+						}
+						reader.Discard(3)
+						b, err = reader.Peek(1)
+
+						write(append(comment, '-', '-', '>'))
+					}else if err == nil {
+						b, err = reader.Peek(3)
+						for err == nil && !(b[0] == '-' && b[1] == '-' && b[2] == '>') {
+							reader.Discard(1)
+							b, err = reader.Peek(3)
+						}
+						reader.Discard(3)
+						b, err = reader.Peek(1)
+					}
+
+					continue
+				}
+
+				b, err = reader.Peek(1)
+			}else if b[0] == '/' || b[0] == 'B' {
+				b, err = reader.Peek(7)
+				if err == nil && (bytes.Contains(b, []byte("BODY")) || bytes.Contains(b, []byte("Body"))) {
+					i := 0
+					if b[0] == '/' {
+						i++
+					}
+					if bytes.Equal(b[i:i+4], []byte("BODY")) || bytes.Equal(b[i:i+4], []byte("Body")) {
+						i += 4
+						if b[i] == '/' {
+							i++
+						}
+						if b[i] == '>' {
+							i++
+							write([]byte("{{{BODY}}}"))
+							reader.Discard(i)
+							b, err = reader.Peek(1)
+							continue
+						}
+					}
+				}
+
+				b, err = reader.Peek(1)
+			}
 
 			// elm := map[string][2][]byte{}
 			elm := map[string]elmVal{}
@@ -359,20 +461,44 @@ func PreCompile(path string, opts map[string]interface{}) (string, error) {
 						reader.Discard(1)
 						b, err = reader.Peek(1)
 					}
-	
-					elm[string(bytes.ToLower(key))] = elmVal{ind, val}
-					ind++
 
 					if q != ' ' {
 						reader.Discard(1)
 						b, err = reader.Peek(1)
 					}
+
+					// fix opts for {{key="val"}} attrs
+					if len(key) > 2 && key[0] == '{' && key[1] == '{' {
+						if len(key) > 3 && key[2] == '{' {
+							b, err = reader.Peek(3)
+							if err == nil && b[0] == '}' && b[1] == '}' && b[2] == '}' {
+								reader.Discard(3)
+								key = key[3:]
+								val = regex.JoinBytes('{', '{', '{', val, '}', '}', '}')
+							}else if err == nil && b[0] == '}' && b[1] == '}' {
+								reader.Discard(2)
+								key = key[3:]
+								val = regex.JoinBytes('{', '{', val, '}', '}')
+							}
+						}else{
+							b, err = reader.Peek(2)
+							if err == nil && b[0] == '}' && b[1] == '}' {
+								reader.Discard(2)
+								key = key[2:]
+								val = regex.JoinBytes('{', '{', val, '}', '}')
+							}
+						}
+
+						b, err = reader.Peek(1)
+					}
+
+					elm[string(bytes.ToLower(key))] = elmVal{ind, val}
+					ind++
 				}
 			}
 
-
 			if mode == 1 {
-				if selfClose == 2 && len(fnCont) != 0 && bytes.Equal(elm["TAG"].val, fnCont[len(fnCont)-1].tag) {
+				if selfClose == 2 && len(fnCont) != 0 && !fnCont[len(fnCont)-1].isComponent && bytes.Equal(elm["TAG"].val, fnCont[len(fnCont)-1].tag) {
 					fn := fnCont[len(fnCont)-1]
 					fnCont = fnCont[:len(fnCont)-1]
 
@@ -761,9 +887,142 @@ func PreCompile(path string, opts map[string]interface{}) (string, error) {
 					}
 				}
 			}else if mode == 2 {
-				//todo: handle component
-				// may auto grab content through similar method to each statements
-				// @args: map[string][]byte
+				if selfClose == 2 && len(fnCont) != 0 && fnCont[len(fnCont)-1].isComponent && bytes.Equal(elm["TAG"].val, fnCont[len(fnCont)-1].tag) {
+					fn := fnCont[len(fnCont)-1]
+					fnCont = fnCont[:len(fnCont)-1]
+
+					compOpts, e := goutil.DeepCopyJson(opts)
+					if e != nil {
+						return "", e
+					}
+
+					for key, val := range fn.args {
+						compOpts[key] = val
+					}
+
+					var comp []byte
+					cPath, compErr := PreCompile(string(fn.fnName), compOpts, append(componentOf, fullPath)...)
+					if compErr == nil {
+						if c, e := os.ReadFile(cPath); e == nil {
+							comp = c
+						}
+
+						pathCache.ForEach(func(key, val string) bool {
+							if cPath == val {
+								pathCache.Del(key)
+								return false
+							}
+
+							return true
+						})
+						os.Remove(cPath)
+					}
+
+					if comp == nil || compErr != nil {
+						if debugMode {
+							fmt.Println(compErr)
+							if compErr != nil {
+								write([]byte("{{#Error: Turbx Component Failed: '"+string(fn.fnName)+"'\n"+compErr.Error()+"}}"))
+							}else{
+								write([]byte("{{#Error: Turbx Component Failed: '"+string(fn.fnName)+"}}"))
+							}
+						}
+
+						reader.Discard(1)
+						b, err = reader.Peek(1)
+						continue
+					}
+
+					write(regex.Compile(`(?i){{({|)body}}(}|)`).RepFunc(comp, func(data func(int) []byte) []byte {
+						if len(data(1)) == 0 && len(data(2)) == 0 {
+							return goutil.EscapeHTML(fn.cont)
+						}
+
+						return fn.cont
+					}))
+
+					reader.Discard(1)
+					b, err = reader.Peek(1)
+					continue
+				}
+
+				args := map[string][]byte{}
+
+				ind := 0
+				for key, arg := range elm {
+					if arg.val == nil {
+						args[strconv.Itoa(ind)] = []byte(key)
+						ind++
+					}else{
+						if bytes.HasPrefix(arg.val, []byte("{{")) && bytes.HasSuffix(arg.val, []byte("}}")) {
+							args[key] = arg.val
+						}else{
+							args["$"+key] = arg.val
+						}
+					}
+				}
+
+				fnName := regex.Compile(`[^\w_\-\.]`).RepStr(elm["TAG"].val, []byte{})
+				fnNameList := bytes.Split(fnName, []byte("."))
+				ind = 0
+				for _, v := range fnNameList {
+					if len(v) == 1 {
+						fnNameList[ind] = bytes.ToUpper(v)
+						ind++
+					}else if len(v) != 0 {
+						fnNameList[ind] = append(bytes.ToUpper([]byte{v[0]}), v[1:]...)
+						ind++
+					}
+				}
+				fnName = bytes.Join(fnNameList[:ind], []byte("/"))
+
+				if selfClose == 1 {
+					compOpts, e := goutil.DeepCopyJson(opts)
+					if e != nil {
+						return "", e
+					}
+
+					for key, val := range args {
+						compOpts[key] = val
+					}
+
+					var comp []byte
+					cPath, compErr := PreCompile(string(fnName), compOpts, append(componentOf, fullPath)...)
+					if compErr == nil {
+						if c, e := os.ReadFile(cPath); e == nil {
+							comp = c
+						}
+
+						pathCache.ForEach(func(key, val string) bool {
+							if cPath == val {
+								pathCache.Del(key)
+								return false
+							}
+
+							return true
+						})
+						os.Remove(cPath)
+					}
+
+					if comp == nil || compErr != nil {
+						if debugMode {
+							fmt.Println(compErr)
+							if compErr != nil {
+								write([]byte("{{#Error: Turbx Component Failed: '"+string(fnName)+"'\n"+compErr.Error()+"}}"))
+							}else{
+								write([]byte("{{#Error: Turbx Component Failed: '"+string(fnName)+"}}"))
+							}
+						}
+
+						reader.Discard(1)
+						b, err = reader.Peek(1)
+						continue
+					}
+
+					write(regex.Compile(`(?i){{({|)body}}(}|)`).RepStr(comp, []byte{}))
+				}else{
+					fnCont = append(fnCont, fnData{tag: elm["TAG"].val, fnName: fnName, args: args, isComponent: true, cont: []byte{}})
+				}
 			}else{
 				// handle html tags
 				if selfClose == 2 {
@@ -852,6 +1111,8 @@ func PreCompile(path string, opts map[string]interface{}) (string, error) {
 
 		//temp
 		// break
+
+		
 
 		write(b)
 		reader.Discard(1)
