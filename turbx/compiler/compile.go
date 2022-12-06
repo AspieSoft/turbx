@@ -67,6 +67,14 @@ type elmVal struct {
 	val []byte
 }
 
+type fnData struct {
+	tag []byte
+	args map[string][]byte
+	fnName []byte
+	cont []byte
+	each funcs.EachList
+}
+
 func init(){
 	/* if regex.Match([]byte(os.Args[0]), regex.Compile(`^/tmp/go-build[0-9]+/`)) {
 		debugMode = true
@@ -155,12 +163,6 @@ func SetExt(ext string) {
 	}
 }
 
-type Test struct {
-	Key string
-	Value []byte
-	Fn func(t int)
-}
-
 func PreCompile(path string, opts map[string]interface{}) (string, error) {
 	if rootPath == "" || cacheTmpPath == "" {
 		return "", errors.New("a root path was never chosen")
@@ -195,12 +197,13 @@ func PreCompile(path string, opts map[string]interface{}) (string, error) {
 
 	fnLevel := []string{}
 	ifMode := []uint8{0}
-	eachCont := []funcs.EachList{}
+	tagInd := [][]byte{}
+	fnCont := []fnData{}
 
 	wSize := uint(0)
 	write := func(b []byte){
-		if len(eachCont) != 0 {
-			eachCont[len(eachCont)-1].Cont = append(eachCont[len(eachCont)-1].Cont, b...)
+		if len(fnCont) != 0 {
+			fnCont[len(fnCont)-1].cont = append(fnCont[len(fnCont)-1].cont, b...)
 			return
 		}
 
@@ -212,20 +215,7 @@ func PreCompile(path string, opts map[string]interface{}) (string, error) {
 		}
 	}
 
-	_ = reader
-	_ = writer
-
-	// b, _ := reader.Peek(10)
-	// fmt.Println(string(b))
-
-	//todo: compile components and pre funcs
-	//todo: convert other funcs to use {{#if}} in place of <_if>
-	//todo: compile const vars (leave unhandled vars for main compile method)
-
-	//// may read multiple bytes at a time, and check if they contain '<' in the first check (define read size with a const var)
 	//todo: compile markdown while reading file (may ignore above comment for this idea)
-
-	tagInd := [][]byte{}
 
 	b, err := reader.Peek(1)
 	for err == nil {
@@ -382,55 +372,70 @@ func PreCompile(path string, opts map[string]interface{}) (string, error) {
 
 
 			if mode == 1 {
-				if selfClose == 2 && len(eachCont) != 0 && bytes.Equal(elm["TAG"].val, []byte("each")) {
-					eachLoop := eachCont[len(eachCont)-1]
-					eachCont = eachCont[:len(eachCont)-1]
+				if selfClose == 2 && len(fnCont) != 0 && bytes.Equal(elm["TAG"].val, fnCont[len(fnCont)-1].tag) {
+					fn := fnCont[len(fnCont)-1]
+					fnCont = fnCont[:len(fnCont)-1]
 
-					eachOpts, e := goutil.DeepCopyJson(opts)
+					if bytes.Equal(elm["TAG"].val, []byte("each")) {
+						eachOpts, e := goutil.DeepCopyJson(opts)
+						if e != nil {
+							return "", e
+						}
+						for i := range eachOpts {
+							if !strings.HasPrefix(i, "$") {
+								delete(eachOpts, i)
+							}
+						}
+
+						if fn.each.In != nil {
+							eachOpts[string(fn.each.In)] = fn.each.List
+						}
+
+						for _, list := range fn.each.List {
+							b := regex.Compile(`(?s){{({|)\s*((?:"(?:\\[\\"]|[^"])*"|'(?:\\[\\']|[^'])*'|\'(?:\\[\\\']|[^\'])*\'|.)*?)\s*}}(}|)`, string(fn.each.As), string(fn.each.Of), string(fn.each.In)).RepFuncRef(&fn.cont, func(data func(int) []byte) []byte {
+								allowHTML := false
+								_ = allowHTML
+								if len(data(1)) != 0 && len(data(3)) != 0 {
+									allowHTML = true
+								}
+
+								if fn.each.As != nil {
+									eachOpts[string(fn.each.As)] = list.Val
+								}else{
+									eachOpts[string(fn.each.As)] = nil
+								}
+								if fn.each.Of != nil {
+									eachOpts[string(fn.each.Of)] = list.Key
+								}else{
+									eachOpts[string(fn.each.Of)] = nil
+								}
+
+								if opt, ok := funcs.GetOpt(data(0), &eachOpts); ok {
+									b := goutil.ToByteArray(opt)
+									if !allowHTML {
+										b = goutil.EscapeHTML(b)
+									}
+									return b
+								}
+
+								return data(0)
+							})
+
+							write(b)
+						}
+
+						reader.Discard(1)
+						b, err = reader.Peek(1)
+						continue
+					}
+
+					res, e := callFunc(string(fn.fnName), &fn.args, &fn.cont, &opts, true)
 					if e != nil {
 						return "", e
 					}
-					for i := range eachOpts {
-						if !strings.HasPrefix(i, "$") {
-							delete(eachOpts, i)
-						}
-					}
 
-					if eachLoop.In != nil {
-						eachOpts[string(eachLoop.In)] = eachLoop.List
-					}
-
-					for _, list := range eachLoop.List {
-						b := regex.Compile(`(?s){{({|)\s*((?:"(?:\\[\\"]|[^"])*"|'(?:\\[\\']|[^'])*'|\'(?:\\[\\\']|[^\'])*\'|.)*?)\s*}}(}|)`, string(eachLoop.As), string(eachLoop.Of), string(eachLoop.In)).RepFuncRef(&eachLoop.Cont, func(data func(int) []byte) []byte {
-							allowHTML := false
-							_ = allowHTML
-							if len(data(1)) != 0 && len(data(3)) != 0 {
-								allowHTML = true
-							}
-
-							if eachLoop.As != nil {
-								eachOpts[string(eachLoop.As)] = list.Val
-							}else{
-								eachOpts[string(eachLoop.As)] = nil
-							}
-							if eachLoop.Of != nil {
-								eachOpts[string(eachLoop.Of)] = list.Key
-							}else{
-								eachOpts[string(eachLoop.Of)] = nil
-							}
-
-							if opt, ok := funcs.GetOpt(data(0), &eachOpts); ok {
-								b := goutil.ToByteArray(opt)
-								if !allowHTML {
-									b = goutil.EscapeHTML(b)
-								}
-								return b
-							}
-
-							return data(0)
-						})
-
-						write(b)
+					if res != nil {
+						write(goutil.ToByteArray(res))
 					}
 
 					reader.Discard(1)
@@ -598,6 +603,10 @@ func PreCompile(path string, opts map[string]interface{}) (string, error) {
 						}
 					}
 				}else if bytes.Equal(elm["TAG"].val, []byte("each")) {
+					if selfClose == 1 {
+						continue
+					}
+
 					args := map[string][]byte{}
 
 					ind := 0
@@ -609,9 +618,6 @@ func PreCompile(path string, opts map[string]interface{}) (string, error) {
 							args[key] = arg.val
 						}
 					}
-					/* sort.Slice(intArgs, func(i, j int) bool {
-						return intArgs[i].ind < intArgs[j].ind
-					}) */
 
 					res, e := callFunc("Each", &args, nil, &opts, true)
 					if e != nil {
@@ -620,11 +626,14 @@ func PreCompile(path string, opts map[string]interface{}) (string, error) {
 
 					rt := reflect.TypeOf(res)
 					if rt == goutil.VarType["byteArray"] {
+						// return normal func for compiler
 						write(regex.JoinBytes([]byte("{{#each:"), len(fnLevel), ' ', res, []byte("}}")))
 						fnLevel = append(fnLevel, "each")
 					}else if rt == reflect.TypeOf(funcs.EachList{}) {
-						eachCont = append(eachCont, res.(funcs.EachList))
+						// get content to run in each loop
+						fnCont = append(fnCont, fnData{tag: []byte("each"), each: res.(funcs.EachList), cont: []byte{}})
 					}else{
+						// skip and remove blank const value each loop
 						eachLevel := 0
 
 						for err == nil {
@@ -724,9 +733,32 @@ func PreCompile(path string, opts map[string]interface{}) (string, error) {
 						continue
 					}
 				}else{
-					//todo: handle normal pre functions (also auto capitalize first char)
-					// auto grab content through similar method to each statements
-					
+					fnName := append(bytes.ToUpper([]byte{elm["TAG"].val[0]}), elm["TAG"].val[1:]...)
+
+					args := map[string][]byte{}
+
+					ind := 0
+					for key, arg := range elm {
+						if arg.val == nil {
+							args[strconv.Itoa(ind)] = []byte(key)
+							ind++
+						}else{
+							args[key] = arg.val
+						}
+					}
+
+					if selfClose == 1 {
+						res, e := callFunc(string(fnName), &args, nil, &opts, true)
+						if e != nil {
+							return "", e
+						}
+
+						if res != nil {
+							write(goutil.ToByteArray(res))
+						}
+					}else{
+						fnCont = append(fnCont, fnData{tag: elm["TAG"].val, args: args, fnName: fnName, cont: []byte{}})
+					}
 				}
 			}else if mode == 2 {
 				//todo: handle component

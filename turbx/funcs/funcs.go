@@ -24,7 +24,6 @@ type EachList struct {
 	As []byte
 	Of []byte
 	In []byte
-	Cont []byte
 }
 
 
@@ -627,10 +626,8 @@ func (t *Pre) If(args *[][]byte, cont *[]byte, opts *map[string]interface{}) (in
 }
 
 func (t *Pre) Each(args *map[string][]byte, cont *[]byte, opts *map[string]interface{}) (interface{}, error) {
-
 	var from int
 	var to int
-
 	if (*args)["range"] != nil && len((*args)["range"]) != 0 {
 		r := regex.Compile(`[^0-9\-]+`).Split((*args)["range"])
 		if i, err := strconv.Atoi(string(bytes.TrimSpace(r[0]))); err == nil {
@@ -665,7 +662,7 @@ func (t *Pre) Each(args *map[string][]byte, cont *[]byte, opts *map[string]inter
 			}
 		}
 
-		resData := EachList{List: res, Cont: []byte{}}
+		resData := EachList{List: res}
 
 		if (*args)["as"] != nil && len((*args)["as"]) != 0 {
 			resData.As = (*args)["as"]
@@ -762,7 +759,7 @@ func (t *Pre) Each(args *map[string][]byte, cont *[]byte, opts *map[string]inter
 		return nil, nil
 	}
 
-	resData := EachList{List: res, Cont: []byte{}}
+	resData := EachList{List: res}
 
 	if (*args)["as"] != nil && len((*args)["as"]) != 0 {
 		resData.As = (*args)["as"]
@@ -791,7 +788,13 @@ func (t *Comp) Each(args *[][]byte, cont *[]byte, opts *map[string]interface{}) 
 
 // examples
 func (t *Pre) PreFn(args *map[string][]byte, cont *[]byte, opts *map[string]interface{}) (interface{}, error) {
-	return nil, nil
+	if cont == nil {
+		return append([]byte("Hello "), bytes.Replace((*args)["name"], []byte("This is "), []byte{}, 1)...), nil
+	}
+
+	*cont = bytes.TrimSpace(*cont)
+	return append([]byte("Hello "), bytes.Replace(*cont, []byte("This is "), []byte{}, 1)...), nil
+	// return nil, nil
 }
 
 func (t *Comp) CompFn(args *map[string][]byte, cont *[]byte, opts *map[string]interface{}) (interface{}, error) {
