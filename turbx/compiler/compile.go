@@ -782,14 +782,26 @@ func PreCompile(path string, opts map[string]interface{}) (string, error) {
 				}
 				sort.Strings(argSort)
 
-				// convert .min for .js and .css src attrs
-				//todo: may auto minify files instead of ignoring (may make optional)
-				if _, ok := elm["src"]; ok && publicPath != "" && elm["src"].val != nil && bytes.HasPrefix(elm["src"].val, []byte{'/'}) {
-					if regex.Compile(`(?<!\.min)\.(js|css)$`).Match(elm["src"].val) {
-						src := regex.Compile(`\.(js|css)$`).RepStrComplex(elm["src"].val, []byte(".min.$1"))
-						if path, e := goutil.JoinPath(publicPath, string(src)); e == nil {
-							if _, e := os.Stat(path); e == nil {
-								elm["src"] = elmVal{elm["src"].ind, src}
+
+				if publicPath != "" {
+					link := ""
+					if _, ok := elm["src"]; ok {
+						link = "src"
+					}else if _, ok := elm["href"]; ok && bytes.Equal(elm["TAG"].val, []byte("link")) {
+						link = "href"
+					}
+
+					if link != "" && bytes.HasPrefix(elm[link].val, []byte{'/'}) {
+						if regex.Compile(`(?<!\.min)\.(\w+)$`).Match(elm[link].val) {
+							minSrc := regex.Compile(`\.(\w+)$`).RepStrComplex(elm[link].val, []byte(".min.$1"))
+							if path, e := goutil.JoinPath(publicPath, string(minSrc)); e == nil {
+								if _, e := os.Stat(path); e == nil {
+									elm[link] = elmVal{elm[link].ind, minSrc}
+								}
+							}else if bytes.HasSuffix(elm[link].val, []byte(".js")) {
+								//todo: auto minify js
+							}else if bytes.HasSuffix(elm[link].val, []byte(".css")) {
+								//todo: auto minify css
 							}
 						}
 					}
