@@ -328,6 +328,18 @@ func PreCompile(path string, opts map[string]interface{}, componentOf ...string)
 		defer file.Close()
 
 
+		// add constOpts where not already defined
+		if constOpts != nil {
+			if defOpts, err := goutil.DeepCopyJson(constOpts); err == nil {
+				for key, val := range defOpts {
+					if _, ok := opts[key]; !ok {
+						opts[key] = val
+					}
+				}
+			}
+		}
+
+
 		// get layout data
 		var layoutData pathCacheData
 		if len(componentOf) == 0 && !isLayout {
