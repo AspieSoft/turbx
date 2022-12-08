@@ -128,6 +128,21 @@ func init(){
 func Close(){
 	if !debugMode {
 		os.RemoveAll(cacheTmpPath)
+	}else{
+		done := false
+
+		for !done {
+			time.Sleep(10 * time.Millisecond)
+
+			done = true
+			pathCache.ForEach(func(s string, pcd pathCacheData) bool {
+				if !*pcd.Ready && *pcd.Err == nil {
+					done = false
+					return false
+				}
+				return true
+			})
+		}
 	}
 }
 
@@ -384,7 +399,7 @@ func PreCompile(path string, opts map[string]interface{}, componentOf ...string)
 
 		// handle layout
 		var layoutEnd []byte
-		if len(componentOf) == 0 && !isLayout {
+		if len(componentOf) == 0 && !isLayout && !debugMode {
 			for layoutData.Ready == nil || (!*layoutData.Ready && *layoutData.Err == nil) {
 				time.Sleep(10 * time.Nanosecond)
 			}
@@ -393,11 +408,8 @@ func PreCompile(path string, opts map[string]interface{}, componentOf ...string)
 				if layout, e := os.ReadFile(layoutData.tmp); e == nil {
 					layoutParts := regex.Compile(`(?i){{{?body}}}?`).SplitRef(&layout)
 					write(layoutParts[0])
-					layoutEnd = layoutParts[1]
+					layoutEnd = bytes.Join(layoutParts[1:], []byte{})
 				}
-	
-				pathCache.Del(layoutData.cachePath)
-				os.Remove(layoutData.tmp)
 			}
 		}
 
