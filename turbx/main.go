@@ -1,6 +1,7 @@
 package main
 
 import (
+	"time"
 	"turbx/compiler"
 
 	"github.com/AspieSoft/goutil/v3"
@@ -34,7 +35,7 @@ func main(){
 	compiler.SetExt("xhtml")
 
 	//temp: test
-	path, err := compiler.PreCompile("index", map[string]interface{}{
+	compData := compiler.PreCompile("index", map[string]interface{}{
 		"$test": 3,
 		"key": "value",
 		"$list": map[string]interface{}{
@@ -43,11 +44,19 @@ func main(){
 			"item3": "value c",
 		},
 	})
-	if err != nil {
-		panic(err)
+
+	for !*compData.Ready && *compData.Err == nil {
+		time.Sleep(10 * time.Nanosecond)
 	}
+
+	if *compData.Err != nil {
+		panic(*compData.Err)
+	}
+
+	// fmt.Println(compData)
+
 	// path is the temp dir to be stored in the cache (do not use ttlcache, the file will need to be removed when an object expires)
 	// may update ttlCache to accept an optional OnExpire callback
-	_ = path
+	// _ = path
 	// fmt.Println(path)
 }

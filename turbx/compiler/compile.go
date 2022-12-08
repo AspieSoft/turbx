@@ -25,13 +25,15 @@ import (
 var rootPath string
 var fileExt string = "html"
 var componentPath string = "components"
+var defaultLayoutPath string = "layout"
 var publicPath string
-
-var cacheTmpPath string
 
 const writeFlushSize = 1000
 var debugMode = false
 
+var constOpts map[string]interface{}
+
+var cacheTmpPath string
 
 var preCompFuncs funcs.Pre
 var compFuncs funcs.Comp
@@ -80,7 +82,15 @@ type fnData struct {
 }
 
 
-var pathCache *haxmap.Map[string, string] = haxmap.New[string, string]()
+type pathCacheData struct {
+	path string
+	tmp string
+	cachePath string
+	Ready *bool
+	Err *error
+}
+
+var pathCache *haxmap.Map[string, pathCacheData] = haxmap.New[string, pathCacheData]()
 
 
 func init(){
@@ -163,6 +173,18 @@ func SetComponentPath(path string) error {
 	return nil
 }
 
+func SetLayoutPath(path string) error {
+	if path == defaultLayoutPath {
+		return errors.New("path is already set")
+	}
+
+	defaultLayoutPath = path
+
+	go clearTmpCache()
+
+	return nil
+}
+
 func SetPublicPath(path string) error {
 	if path == "" {
 		return errors.New("path cannot be empty")
@@ -174,24 +196,85 @@ func SetPublicPath(path string) error {
 
 	publicPath = path
 
+	//todo: may auto minify js and css files in public root (make optional)
+
 	return nil
 }
 
 func SetExt(ext string) {
 	if ext != "" {
 		fileExt = string(regex.Compile(`[^\w_-]`).RepStr([]byte(ext), []byte{}))
+
+		go clearTmpCache()
 	}
 }
 
-func PreCompile(path string, opts map[string]interface{}, componentOf ...string) (string, error) {
-	if rootPath == "" || cacheTmpPath == "" {
-		return "", errors.New("a root path was never chosen")
+func SetConstOpts(opts map[string]interface{}) error {
+	o, err := goutil.DeepCopyJson(opts)
+	if err != nil {
+		return err
+	}
+	constOpts = o
+
+	go clearTmpCache()
+
+	return nil
+}
+
+
+func PreCompile(path string, opts map[string]interface{}, componentOf ...string) pathCacheData {
+	var cacheReady bool = false
+	var cacheError error
+
+	isLayout := false
+	if len(componentOf) == 1 && componentOf[0] == "@layout" {
+		isLayout = true
+		componentOf = []string{}
 	}
 
+	if rootPath == "" || cacheTmpPath == "" {
+		err := errors.New("a root path was never chosen")
+		return pathCacheData{Ready: &cacheReady, Err: &err}
+	}
+
+	// handle modified cache and layout paths
+	cachePath := ""
+	layoutPath := ""
+	layoutCachePath := ""
+	if regex.Compile(`@([\w_-]+)(:[\w_-]+|)$`).Match([]byte(path)) {
+		path = string(regex.Compile(`@([\w_-]+)(:[\w_-]+|)$`).RepFunc([]byte(path), func(data func(int) []byte) []byte {
+			layoutPath = string(data(1))
+
+			if len(data(2)) > 1 {
+				layoutCachePath = string(data(2))
+			}
+
+			return []byte{}
+		}))
+	}
+
+	if regex.Compile(`(:[\w_-]+)$`).Match([]byte(path)) {
+		path = string(regex.Compile(`(:[\w_-]+)$`).RepFunc([]byte(path), func(data func(int) []byte) []byte {
+			cachePath = string(data(1))
+
+			return []byte{}
+		}))
+	}
+
+	// resolve full file path within root
 	var fullPath string
 	if len(componentOf) != 0 {
 		if p, err := goutil.JoinPath(rootPath, componentPath, path + "." + fileExt); err == nil {
-			fullPath = p
+			// prevent path from leaking into tmp cache
+			if strings.HasPrefix(p, cacheTmpPath) {
+				err := errors.New("path leaked into tmp cache")
+				return pathCacheData{Ready: &cacheReady, Err: &err}
+			}
+
+			// ensure the file actually exists
+			if stat, err := os.Stat(p); err == nil && !stat.IsDir() {
+				fullPath = p
+			}
 		}
 	}
 
@@ -199,939 +282,994 @@ func PreCompile(path string, opts map[string]interface{}, componentOf ...string)
 		var err error
 		fullPath, err = goutil.JoinPath(rootPath, path + "." + fileExt)
 		if err != nil {
-			return "", err
+			return pathCacheData{Ready: &cacheReady, Err: &err}
 		}
 	}
 
+	// prevent path from leaking into tmp cache
+	if strings.HasPrefix(fullPath, cacheTmpPath) {
+		err := errors.New("path leaked into tmp cache")
+		return pathCacheData{Ready: &cacheReady, Err: &err}
+	}
+
+	// prevent components from recursively containing themselves
 	for _, cPath := range componentOf {
 		if fullPath == cPath {
-			return "", errors.New("Recursive Component Detected!")
+			err := errors.New("recursive component detected")
+			return pathCacheData{Ready: &cacheReady, Err: &err}
 		}
 	}
 
-	if strings.HasPrefix(fullPath, cacheTmpPath) {
-		return "", errors.New("path leaked into tmp cache")
+	// ensure the file actually exists
+	if stat, err := os.Stat(fullPath); err != nil || stat.IsDir() {
+		return pathCacheData{Ready: &cacheReady, Err: &err}
 	}
 
-	file, err := os.OpenFile(fullPath, os.O_RDONLY, 0)
-	if err != nil {
-		return "", err
-	}
-	defer func(){
-		file.Close()
-	}()
-
-	reader := bufio.NewReader(file)
-
+	// create a tmp file for the cache
 	tmpFile, tmpPath, err := tmpPath(path)
 	if err != nil {
-		return "", err
+		return pathCacheData{Ready: &cacheReady, Err: &err}
 	}
-	defer tmpFile.Close()
 
-	writer := bufio.NewWriter(tmpFile)
 
-	fnLevel := []string{}
-	ifMode := []uint8{0}
-	tagInd := [][]byte{}
-	fnCont := []fnData{}
+	// prepare the cache vars and info
+	cacheRes := pathCacheData{path: fullPath, tmp: tmpPath, cachePath: fullPath + cachePath, Ready: &cacheReady, Err: &cacheError}
+	pathCache.Set(fullPath + cachePath, cacheRes)
 
-	wSize := uint(0)
-	write := func(b []byte){
-		if len(fnCont) != 0 {
-			fnCont[len(fnCont)-1].cont = append(fnCont[len(fnCont)-1].cont, b...)
+	// run pre compiler concurrently
+	go func(){
+		defer tmpFile.Close()
+
+		file, err := os.OpenFile(fullPath, os.O_RDONLY, 0)
+		if err != nil {
+			cacheError = err
 			return
 		}
+		defer file.Close()
 
-		writer.Write(b)
-		wSize += uint(len(b))
-		if wSize >= writeFlushSize {
-			writer.Flush()
-			wSize = 0
+
+		// get layout data
+		var layoutData pathCacheData
+		if len(componentOf) == 0 && !isLayout {
+			if layoutPath != "" {
+				go func(){
+					layoutData = PreCompile(layoutPath + layoutCachePath, opts, "@layout")
+				}()
+			}else if defaultLayoutPath != "" {
+				go func(){
+					layoutData = PreCompile(defaultLayoutPath + layoutCachePath, opts, "@layout")
+				}()
+			}else{
+				err := errors.New("layout not found")
+				layoutData = pathCacheData{Ready: &cacheReady, Err: &err}
+			}
 		}
-	}
 
-	//todo: compile markdown while reading file (may ignore above comment for this idea)
 
-	b, err := reader.Peek(1)
-	for err == nil {
-		if b[0] == '<' {
-			reader.Discard(1)
-			b, err = reader.Peek(1)
+		reader := bufio.NewReader(file)
+		writer := bufio.NewWriter(tmpFile)
 
-			if err != nil {
-				write([]byte{'<'})
-				break
+		fnLevel := []string{}
+		ifMode := []uint8{0}
+		tagInd := [][]byte{}
+		fnCont := []fnData{}
+
+		wSize := uint(0)
+		write := func(b []byte){
+			if len(fnCont) != 0 {
+				fnCont[len(fnCont)-1].cont = append(fnCont[len(fnCont)-1].cont, b...)
+				return
 			}
 
-			if b[0] == '!' {
-				b, err = reader.Peek(3)
-				if err == nil && b[1] == '-' && b[2] == '-' {
-					reader.Discard(3)
-					b, err = reader.Peek(1)
-					
-					skipWhitespace(reader, &b, &err)
+			writer.Write(b)
+			wSize += uint(len(b))
+			if wSize >= writeFlushSize {
+				writer.Flush()
+				wSize = 0
+			}
+		}
 
-					if err == nil && b[0] == '!' {
-						reader.Discard(1)
-						comment := []byte("<!--!")
 
-						b, err = reader.Peek(3)
-						for err == nil && !(b[0] == '-' && b[1] == '-' && b[2] == '>') {
-							comment = append(comment, b[0])
-							reader.Discard(1)
-							b, err = reader.Peek(3)
-						}
-						reader.Discard(3)
-						b, err = reader.Peek(1)
+		// handle layout
+		var layoutEnd []byte
+		if len(componentOf) == 0 && !isLayout {
+			for layoutData.Ready == nil || (!*layoutData.Ready && *layoutData.Err == nil) {
+				time.Sleep(10 * time.Nanosecond)
+			}
 
-						write(append(comment, '-', '-', '>'))
-					}else if err == nil {
-						b, err = reader.Peek(3)
-						for err == nil && !(b[0] == '-' && b[1] == '-' && b[2] == '>') {
-							reader.Discard(1)
-							b, err = reader.Peek(3)
-						}
-						reader.Discard(3)
-						b, err = reader.Peek(1)
-					}
+			if *layoutData.Err == nil {
+				if layout, e := os.ReadFile(layoutData.tmp); e == nil {
+					layoutParts := regex.Compile(`(?i){{{?body}}}?`).SplitRef(&layout)
+					write(layoutParts[0])
+					layoutEnd = layoutParts[1]
+				}
+	
+				pathCache.Del(layoutData.cachePath)
+				os.Remove(layoutData.tmp)
+			}
+		}
 
-					continue
+
+		//todo: compile markdown while reading file
+
+		b, err := reader.Peek(1)
+		for err == nil {
+			if b[0] == '<' {
+				reader.Discard(1)
+				b, err = reader.Peek(1)
+
+				if err != nil {
+					write([]byte{'<'})
+					break
 				}
 
-				b, err = reader.Peek(1)
-			}else if b[0] == '/' || b[0] == 'B' {
-				b, err = reader.Peek(7)
-				if err == nil && (bytes.Contains(b, []byte("BODY")) || bytes.Contains(b, []byte("Body"))) {
-					i := 0
-					if b[0] == '/' {
-						i++
-					}
-					if bytes.Equal(b[i:i+4], []byte("BODY")) || bytes.Equal(b[i:i+4], []byte("Body")) {
-						i += 4
-						if b[i] == '/' {
-							i++
-						}
-						if b[i] == '>' {
-							i++
-							write([]byte("{{{BODY}}}"))
-							reader.Discard(i)
+				if b[0] == '!' {
+					b, err = reader.Peek(3)
+					if err == nil && b[1] == '-' && b[2] == '-' {
+						reader.Discard(3)
+						b, err = reader.Peek(1)
+						
+						skipWhitespace(reader, &b, &err)
+
+						if err == nil && b[0] == '!' {
+							reader.Discard(1)
+							comment := []byte("<!--!")
+
+							b, err = reader.Peek(3)
+							for err == nil && !(b[0] == '-' && b[1] == '-' && b[2] == '>') {
+								comment = append(comment, b[0])
+								reader.Discard(1)
+								b, err = reader.Peek(3)
+							}
+							reader.Discard(3)
 							b, err = reader.Peek(1)
-							continue
+
+							write(append(comment, '-', '-', '>'))
+						}else if err == nil {
+							b, err = reader.Peek(3)
+							for err == nil && !(b[0] == '-' && b[1] == '-' && b[2] == '>') {
+								reader.Discard(1)
+								b, err = reader.Peek(3)
+							}
+							reader.Discard(3)
+							b, err = reader.Peek(1)
+						}
+
+						continue
+					}
+
+					b, err = reader.Peek(1)
+				}else if b[0] == '/' || b[0] == 'B' {
+					b, err = reader.Peek(7)
+					if err == nil && (bytes.Contains(b, []byte("BODY")) || bytes.Contains(b, []byte("Body"))) {
+						i := 0
+						if b[0] == '/' {
+							i++
+						}
+						if bytes.Equal(b[i:i+4], []byte("BODY")) || bytes.Equal(b[i:i+4], []byte("Body")) {
+							i += 4
+							if b[i] == '/' {
+								i++
+							}
+							if b[i] == '>' {
+								i++
+								write([]byte("{{{BODY}}}"))
+								reader.Discard(i)
+								b, err = reader.Peek(1)
+								continue
+							}
 						}
 					}
+
+					b, err = reader.Peek(1)
 				}
 
-				b, err = reader.Peek(1)
-			}
+				elm := map[string]elmVal{}
+				ind := uint(0)
 
-			// elm := map[string][2][]byte{}
-			elm := map[string]elmVal{}
-			ind := uint(0)
-
-			selfClose := 0
-			mode := uint8(0)
-			if b[0] == '_' {
-				mode = 1
-				reader.Discard(1)
-				b, err = reader.Peek(1)
-			}else if regex.Compile(`[A-Z]`).MatchRef(&b) {
-				mode = 2
-			}else if b[0] == '/' {
-				selfClose = 2
-				reader.Discard(1)
-				b, err = reader.Peek(1)
-
+				selfClose := 0
+				mode := uint8(0)
 				if b[0] == '_' {
 					mode = 1
 					reader.Discard(1)
 					b, err = reader.Peek(1)
 				}else if regex.Compile(`[A-Z]`).MatchRef(&b) {
 					mode = 2
+				}else if b[0] == '/' {
+					selfClose = 2
+					reader.Discard(1)
+					b, err = reader.Peek(1)
+
+					if b[0] == '_' {
+						mode = 1
+						reader.Discard(1)
+						b, err = reader.Peek(1)
+					}else if regex.Compile(`[A-Z]`).MatchRef(&b) {
+						mode = 2
+					}
 				}
-			}
 
-			// handle elm tag (use all caps to prevent conflicts with attributes)
-			tag := []byte{}
-			for err == nil && !regex.Compile(`[\s\r\n/>]`).MatchRef(&b) {
-				tag = append(tag, b[0])
-				reader.Discard(1)
-				b, err = reader.Peek(1)
-			}
-			elm["TAG"] = elmVal{ind, tag}
-			ind++
+				// handle elm tag (use all caps to prevent conflicts with attributes)
+				tag := []byte{}
+				for err == nil && !regex.Compile(`[\s\r\n/>]`).MatchRef(&b) {
+					tag = append(tag, b[0])
+					reader.Discard(1)
+					b, err = reader.Peek(1)
+				}
+				elm["TAG"] = elmVal{ind, tag}
+				ind++
 
-			if selfClose != 2 {
-				for err == nil {
-					skipWhitespace(reader, &b, &err)
+				if selfClose != 2 {
+					for err == nil {
+						skipWhitespace(reader, &b, &err)
 
-					// handle end of html tag
-					if b[0] == '/' {
-						b, err = reader.Peek(2)
-						if b[1] == '>' {
-							reader.Discard(2)
-							b, err = reader.Peek(1)
-							selfClose = 1
-							break
-						}
-					}else if b[0] == '>' {
-						reader.Discard(1)
-						b, err = reader.Peek(1)
-						tagInd = append(tagInd, elm["TAG"].val)
-						break
-					}else if b[0] == '!' {
-						elm[strconv.Itoa(int(ind))] = elmVal{ind, []byte{'^'}}
-						ind++
-						reader.Discard(1)
-						b, err = reader.Peek(1)
-						continue
-					}else if b[0] == '&' || b[0] == '|' || b[0] == '(' || b[0] == ')' {
-						elm[strconv.Itoa(int(ind))] = elmVal{ind, b}
-						ind++
-						reader.Discard(1)
-						b, err = reader.Peek(1)
-						continue
-					}
-
-					// get key
-					key := []byte{}
-					for err == nil && !regex.Compile(`[\s\r\n/>!=&|\(\)]`).MatchRef(&b) {
-						key = append(key, b[0])
-						reader.Discard(1)
-						b, err = reader.Peek(1)
-					}
-
-					if len(key) == 0 {
-						break
-					}
-	
-					val := []byte{}
-					if b[0] == '!' {
-						// handle not operator
-						val = []byte{'!'}
-						reader.Discard(1)
-						b, err = reader.Peek(1)
-					}
-					if b[0] == '=' {
-						reader.Discard(1)
-						b, err = reader.Peek(1)
-					}else{
-						// handle single key without value
-						k := string(bytes.ToLower(key))
-						if _, ok := elm[k]; !ok {
-							elm[k] = elmVal{ind, nil}
-							ind++
-						}
-						continue
-					}
-	
-					// get quote type
-					q := byte(' ')
-					if b[0] == '"' {
-						q = '"'
-						reader.Discard(1)
-						b, err = reader.Peek(1)
-					}else if b[0] == '\'' {
-						q = '\''
-						reader.Discard(1)
-						b, err = reader.Peek(1)
-					}else if b[0] == '`' {
-						q = '`'
-						reader.Discard(1)
-						b, err = reader.Peek(1)
-					}
-
-					// get value
-					for err == nil && b[0] != q && (q != ' ' || !regex.Compile(`[\s\r\n/>!=&|\(\)]`).MatchRef(&b)) {
-						if b[0] == '\\' {
+						// handle end of html tag
+						if b[0] == '/' {
 							b, err = reader.Peek(2)
-							if regex.Compile(`[A-Za-z]`).MatchRef(&b) {
-								val = append(val, b[0], b[1])
-							}else{
-								val = append(val, b[1])
+							if b[1] == '>' {
+								reader.Discard(2)
+								b, err = reader.Peek(1)
+								selfClose = 1
+								break
 							}
-							// val = append(val, b[0], b[1])
-	
-							reader.Discard(2)
+						}else if b[0] == '>' {
+							reader.Discard(1)
+							b, err = reader.Peek(1)
+							tagInd = append(tagInd, elm["TAG"].val)
+							break
+						}else if b[0] == '!' {
+							elm[strconv.Itoa(int(ind))] = elmVal{ind, []byte{'^'}}
+							ind++
+							reader.Discard(1)
+							b, err = reader.Peek(1)
+							continue
+						}else if b[0] == '&' || b[0] == '|' || b[0] == '(' || b[0] == ')' {
+							elm[strconv.Itoa(int(ind))] = elmVal{ind, b}
+							ind++
+							reader.Discard(1)
 							b, err = reader.Peek(1)
 							continue
 						}
 
-						val = append(val, b[0])
-						reader.Discard(1)
-						b, err = reader.Peek(1)
-					}
-
-					if q != ' ' {
-						reader.Discard(1)
-						b, err = reader.Peek(1)
-					}
-
-					// fix opts for {{key="val"}} attrs
-					if len(key) > 2 && key[0] == '{' && key[1] == '{' {
-						if len(key) > 3 && key[2] == '{' {
-							b, err = reader.Peek(3)
-							if err == nil && b[0] == '}' && b[1] == '}' && b[2] == '}' {
-								reader.Discard(3)
-								key = key[3:]
-								val = regex.JoinBytes('{', '{', '{', val, '}', '}', '}')
-							}else if err == nil && b[0] == '}' && b[1] == '}' {
-								reader.Discard(2)
-								key = key[3:]
-								val = regex.JoinBytes('{', '{', val, '}', '}')
-							}
-						}else{
-							b, err = reader.Peek(2)
-							if err == nil && b[0] == '}' && b[1] == '}' {
-								reader.Discard(2)
-								key = key[2:]
-								val = regex.JoinBytes('{', '{', val, '}', '}')
-							}
-						}
-
-						b, err = reader.Peek(1)
-					}
-
-					elm[string(bytes.ToLower(key))] = elmVal{ind, val}
-					ind++
-				}
-			}
-
-			if mode == 1 {
-				if selfClose == 2 && len(fnCont) != 0 && !fnCont[len(fnCont)-1].isComponent && bytes.Equal(elm["TAG"].val, fnCont[len(fnCont)-1].tag) {
-					fn := fnCont[len(fnCont)-1]
-					fnCont = fnCont[:len(fnCont)-1]
-
-					if bytes.Equal(elm["TAG"].val, []byte("each")) {
-						eachOpts, e := goutil.DeepCopyJson(opts)
-						if e != nil {
-							return "", e
-						}
-						for i := range eachOpts {
-							if !strings.HasPrefix(i, "$") {
-								delete(eachOpts, i)
-							}
-						}
-
-						if fn.each.In != nil {
-							eachOpts[string(fn.each.In)] = fn.each.List
-						}
-
-						for _, list := range fn.each.List {
-							b := regex.Compile(`(?s){{({|)\s*((?:"(?:\\[\\"]|[^"])*"|'(?:\\[\\']|[^'])*'|\'(?:\\[\\\']|[^\'])*\'|.)*?)\s*}}(}|)`, string(fn.each.As), string(fn.each.Of), string(fn.each.In)).RepFuncRef(&fn.cont, func(data func(int) []byte) []byte {
-								allowHTML := false
-								_ = allowHTML
-								if len(data(1)) != 0 && len(data(3)) != 0 {
-									allowHTML = true
-								}
-
-								if fn.each.As != nil {
-									eachOpts[string(fn.each.As)] = list.Val
-								}else{
-									eachOpts[string(fn.each.As)] = nil
-								}
-								if fn.each.Of != nil {
-									eachOpts[string(fn.each.Of)] = list.Key
-								}else{
-									eachOpts[string(fn.each.Of)] = nil
-								}
-
-								if opt, ok := funcs.GetOpt(data(0), &eachOpts); ok {
-									b := goutil.ToByteArray(opt)
-									if !allowHTML {
-										b = goutil.EscapeHTML(b)
-									}
-									return b
-								}
-
-								return data(0)
-							})
-
-							write(b)
-						}
-
-						reader.Discard(1)
-						b, err = reader.Peek(1)
-						continue
-					}
-
-					res, e := callFunc(string(fn.fnName), &fn.args, &fn.cont, &opts, true)
-					if e != nil {
-						return "", e
-					}
-
-					if res != nil {
-						write(goutil.ToByteArray(res))
-					}
-
-					reader.Discard(1)
-					b, err = reader.Peek(1)
-					continue
-				}else if selfClose == 2 && (len(ifMode) == 0 || ifMode[len(ifMode)-1] == 0) && !bytes.Equal(elm["TAG"].val, []byte("else")) && !bytes.Equal(elm["TAG"].val, []byte("elif")) {
-					for len(fnLevel) != 0 && fnLevel[len(fnLevel)-1] != string(elm["TAG"].val) {
-						fnLevel = fnLevel[:len(fnLevel)-1]
-						ifMode = ifMode[:len(ifMode)-1]
-					}
-					if len(fnLevel) != 0 {
-						fnLevel = fnLevel[:len(fnLevel)-1]
-						ifMode = ifMode[:len(ifMode)-1]
-						write(regex.JoinBytes([]byte("{{/"), elm["TAG"].val, ':', len(fnLevel), []byte("}}")))
-					}
-					reader.Discard(1)
-					b, err = reader.Peek(1)
-					continue
-				}else if selfClose == 2 {
-					reader.Discard(1)
-					b, err = reader.Peek(1)
-				}
-
-				// handle functions
-				if bytes.Equal(elm["TAG"].val, []byte("if")) || bytes.Equal(elm["TAG"].val, []byte("else")) || bytes.Equal(elm["TAG"].val, []byte("elif")) {
-					elseMode := (bytes.Equal(elm["TAG"].val, []byte("else")) || bytes.Equal(elm["TAG"].val, []byte("elif")))
-
-					if selfClose != 0 && len(ifMode) != 0 && (ifMode[len(ifMode)-1] == 2 || ifMode[len(ifMode)-1] == 3) {
-
-						if elseMode {
-							for err == nil {
-								if b[0] == '<' {
-									b, err = reader.Peek(6)
-									if err == nil && b[1] == '/' && b[2] == '_' && bytes.Equal(b[3:5], []byte("if")) && regex.Compile(`^[\s\r\n/>]$`).MatchRef(&[]byte{b[5]}) {
-										reader.Discard(5)
-										b, err = reader.Peek(1)
-										for err == nil && b[0] != '>' {
-											reader.Discard(1)
-											b, err = reader.Peek(1)
-										}
-										reader.Discard(1)
-										b, err = reader.Peek(1)
-										break
-									}
-								}
-	
-								skipObjStrComments(reader, &b, &err)
-							}
-						}
-
-						if ifMode[len(ifMode)-1] == 3 {
-							write(regex.JoinBytes([]byte("{{/if:"), len(fnLevel)-1, []byte("}}")))
-							fnLevel = fnLevel[:len(fnLevel)-1]
-						}
-
-						// fnLevel = fnLevel[:len(fnLevel)-1]
-						ifMode = ifMode[:len(ifMode)-1]
-						continue
-					}
-
-					// handle if statements
-					intArgs := []elmVal{}
-					argSize := 0
-					for key, arg := range elm {
-						if !regex.Compile(`^([A-Z]+)$`).Match([]byte(key)) {
-							intArgs = append(intArgs, elmVal{arg.ind, []byte(key)})
-							argSize++
-							if !regex.Compile(`^([0-9]+)$`).Match([]byte(key)) && arg.val != nil {
-								argSize += 2
-							}
-						}
-					}
-					sort.Slice(intArgs, func(i, j int) bool {
-						return intArgs[i].ind < intArgs[j].ind
-					})
-
-					args := make([][]byte, argSize)
-					i := 0
-					for _, arg := range intArgs {
-						if regex.Compile(`^([0-9]+)$`).Match([]byte(arg.val)) {
-							args[i] = elm[string(arg.val)].val
-							i++
-						}else{
-							args[i] = arg.val
-							i++
-							if elm[string(arg.val)].val != nil {
-								val := elm[string(arg.val)].val
-								if val[0] == '<' || val[0] == '>' {
-									args[i] = []byte{val[0]}
-									val = val[1:]
-									if val[0] == '=' {
-										args[i] = append(args[i], val[0])
-										val = val[1:]
-									}
-								}else if val[0] == '!' || val[0] == '=' || val[0] == '~' {
-									args[i] = []byte{val[0]}
-									val = val[1:]
-								}else{
-									args[i] = []byte{'='}
-								}
-								i++
-
-								args[i] = val
-								i++
-							}
-						}
-					}
-
-					res, e := callFuncArr("If", &args, nil, &opts, true)
-					if e != nil {
-						return "", e
-					}
-
-					if res == true {
-						if elseMode && ifMode[len(ifMode)-1] != 1 {
-							write(regex.JoinBytes([]byte("{{#else:"), len(fnLevel)-1, []byte("}}")))
-							ifMode[len(ifMode)-1] = 3
-						}else{
-							ifMode[len(ifMode)-1] = 2
-						}
-					}else if res == false {
-						for err == nil {
-							if b[0] == '<' {
-								b, err = reader.Peek(7)
-								if err == nil && b[1] == '_' && (bytes.Equal(b[2:6], []byte("else")) || bytes.Equal(b[2:6], []byte("elif"))) && regex.Compile(`^[\s\r\n/>]$`).MatchRef(&[]byte{b[6]}) {
-									b, err = reader.Peek(1)
-									fnLevel = append(fnLevel, "if")
-									// ifMode = append(ifMode, 1)
-									ifMode[len(ifMode)-1] = 1
-									break
-								}else if err == nil && b[1] == '/' && b[2] == '_' && bytes.Equal(b[3:5], []byte("if")) && regex.Compile(`^[\s\r\n/>]$`).MatchRef(&[]byte{b[5]}) {
-									b, err = reader.Peek(1)
-									break
-								}
-							}
-
-							skipObjStrComments(reader, &b, &err)
-						}
-
-					}else if reflect.TypeOf(res) == goutil.VarType["byteArray"] {
-						if elseMode {
-							if ifMode[len(ifMode)-1] == 1 {
-								ifMode[len(ifMode)-1] = 0
-								write(regex.JoinBytes([]byte("{{#if:"), len(fnLevel)-1, ' ', res, []byte("}}")))
-							}else{
-								write(regex.JoinBytes([]byte("{{#else:"), len(fnLevel)-1, ' ', res, []byte("}}")))
-							}
-						}else{
-							write(regex.JoinBytes([]byte("{{#if:"), len(fnLevel), ' ', res, []byte("}}")))
-							fnLevel = append(fnLevel, "if")
-							ifMode = append(ifMode, 0)
-						}
-					}else{
-						if elseMode {
-							if ifMode[len(ifMode)-1] == 1 {
-								ifMode[len(ifMode)-1] = 0
-								write(regex.JoinBytes([]byte("{{#if:"), len(fnLevel)-1, ' ', bytes.Join(args, []byte{' '}), []byte("}}")))
-							}else{
-								write(regex.JoinBytes([]byte("{{#else:"), len(fnLevel)-1, ' ', bytes.Join(args, []byte{' '}), []byte("}}")))
-							}
-						}else{
-							write(regex.JoinBytes([]byte("{{#if:"), len(fnLevel), ' ', bytes.Join(args, []byte{' '}), []byte("}}")))
-							fnLevel = append(fnLevel, "if")
-							ifMode = append(ifMode, 0)
-						}
-					}
-				}else if bytes.Equal(elm["TAG"].val, []byte("each")) {
-					if selfClose == 1 {
-						continue
-					}
-
-					args := map[string][]byte{}
-
-					ind := 0
-					for key, arg := range elm {
-						if arg.val == nil {
-							args[strconv.Itoa(ind)] = []byte(key)
-							ind++
-						}else{
-							args[key] = arg.val
-						}
-					}
-
-					res, e := callFunc("Each", &args, nil, &opts, true)
-					if e != nil {
-						return "", e
-					}
-
-					rt := reflect.TypeOf(res)
-					if rt == goutil.VarType["byteArray"] {
-						// return normal func for compiler
-						write(regex.JoinBytes([]byte("{{#each:"), len(fnLevel), ' ', res, []byte("}}")))
-						fnLevel = append(fnLevel, "each")
-					}else if rt == reflect.TypeOf(funcs.EachList{}) {
-						// get content to run in each loop
-						fnCont = append(fnCont, fnData{tag: []byte("each"), each: res.(funcs.EachList), cont: []byte{}})
-					}else{
-						// skip and remove blank const value each loop
-						eachLevel := 0
-
-						for err == nil {
-							if b[0] == '<' {
-								b, err = reader.Peek(8)
-								if err == nil && b[1] == '/' && b[2] == '_' && bytes.Equal(b[3:7], []byte("each")) && regex.Compile(`^[\s\r\n/>]$`).MatchRef(&[]byte{b[7]}) {
-									reader.Discard(7)
-									b, err = reader.Peek(1)
-
-									for err == nil && b[0] != '>' {
-										if b[0] == '\\' {
-											reader.Discard(1)
-										}
-
-										reader.Discard(1)
-										b, err = reader.Peek(1)
-										if b[0] == '"' {
-											for err == nil && b[0] != '"' {
-												if b[0] == '\\' {
-													reader.Discard(1)
-												}
-												reader.Discard(1)
-												b, err = reader.Peek(1)
-											}
-										}else if b[0] == '\'' {
-											for err == nil && b[0] != '\'' {
-												if b[0] == '\\' {
-													reader.Discard(1)
-												}
-												reader.Discard(1)
-												b, err = reader.Peek(1)
-											}
-										}else if b[0] == '`' {
-											for err == nil && b[0] != '`' {
-												if b[0] == '\\' {
-													reader.Discard(1)
-												}
-												reader.Discard(1)
-												b, err = reader.Peek(1)
-											}
-										}
-									}
-
-									reader.Discard(1)
-									b, err = reader.Peek(1)
-
-									eachLevel--
-									if eachLevel < 0 {
-										break
-									}
-								}else if err == nil && b[1] == '_' && bytes.Equal(b[2:6], []byte("each")) && regex.Compile(`^[\s\r\n/>]$`).MatchRef(&[]byte{b[6]}) {
-									reader.Discard(6)
-									b, err = reader.Peek(1)
-									
-									for err == nil && b[0] != '>' {
-										if b[0] == '\\' {
-											reader.Discard(1)
-										}
-
-										reader.Discard(1)
-										b, err = reader.Peek(1)
-										if b[0] == '"' {
-											for err == nil && b[0] != '"' {
-												if b[0] == '\\' {
-													reader.Discard(1)
-												}
-												reader.Discard(1)
-												b, err = reader.Peek(1)
-											}
-										}else if b[0] == '\'' {
-											for err == nil && b[0] != '\'' {
-												if b[0] == '\\' {
-													reader.Discard(1)
-												}
-												reader.Discard(1)
-												b, err = reader.Peek(1)
-											}
-										}else if b[0] == '`' {
-											for err == nil && b[0] != '`' {
-												if b[0] == '\\' {
-													reader.Discard(1)
-												}
-												reader.Discard(1)
-												b, err = reader.Peek(1)
-											}
-										}
-									}
-									
-									eachLevel++
-								}
-							}
-
+						// get key
+						key := []byte{}
+						for err == nil && !regex.Compile(`[\s\r\n/>!=&|\(\)]`).MatchRef(&b) {
+							key = append(key, b[0])
 							reader.Discard(1)
 							b, err = reader.Peek(1)
 						}
 
-						continue
-					}
-				}else{
-					fnName := append(bytes.ToUpper([]byte{elm["TAG"].val[0]}), elm["TAG"].val[1:]...)
-
-					args := map[string][]byte{}
-
-					ind := 0
-					for key, arg := range elm {
-						if arg.val == nil {
-							args[strconv.Itoa(ind)] = []byte(key)
-							ind++
-						}else{
-							args[key] = arg.val
+						if len(key) == 0 {
+							break
 						}
-					}
+		
+						val := []byte{}
+						if b[0] == '!' {
+							// handle not operator
+							val = []byte{'!'}
+							reader.Discard(1)
+							b, err = reader.Peek(1)
+						}
+						if b[0] == '=' {
+							reader.Discard(1)
+							b, err = reader.Peek(1)
+						}else{
+							// handle single key without value
+							k := string(bytes.ToLower(key))
+							if _, ok := elm[k]; !ok {
+								elm[k] = elmVal{ind, nil}
+								ind++
+							}
+							continue
+						}
+		
+						// get quote type
+						q := byte(' ')
+						if b[0] == '"' {
+							q = '"'
+							reader.Discard(1)
+							b, err = reader.Peek(1)
+						}else if b[0] == '\'' {
+							q = '\''
+							reader.Discard(1)
+							b, err = reader.Peek(1)
+						}else if b[0] == '`' {
+							q = '`'
+							reader.Discard(1)
+							b, err = reader.Peek(1)
+						}
 
-					if selfClose == 1 {
-						res, e := callFunc(string(fnName), &args, nil, &opts, true)
+						// get value
+						for err == nil && b[0] != q && (q != ' ' || !regex.Compile(`[\s\r\n/>!=&|\(\)]`).MatchRef(&b)) {
+							if b[0] == '\\' {
+								b, err = reader.Peek(2)
+								if regex.Compile(`[A-Za-z]`).MatchRef(&b) {
+									val = append(val, b[0], b[1])
+								}else{
+									val = append(val, b[1])
+								}
+								// val = append(val, b[0], b[1])
+		
+								reader.Discard(2)
+								b, err = reader.Peek(1)
+								continue
+							}
+
+							val = append(val, b[0])
+							reader.Discard(1)
+							b, err = reader.Peek(1)
+						}
+
+						if q != ' ' {
+							reader.Discard(1)
+							b, err = reader.Peek(1)
+						}
+
+						// fix opts for {{key="val"}} attrs
+						if len(key) > 2 && key[0] == '{' && key[1] == '{' {
+							if len(key) > 3 && key[2] == '{' {
+								b, err = reader.Peek(3)
+								if err == nil && b[0] == '}' && b[1] == '}' && b[2] == '}' {
+									reader.Discard(3)
+									key = key[3:]
+									val = regex.JoinBytes('{', '{', '{', val, '}', '}', '}')
+								}else if err == nil && b[0] == '}' && b[1] == '}' {
+									reader.Discard(2)
+									key = key[3:]
+									val = regex.JoinBytes('{', '{', val, '}', '}')
+								}
+							}else{
+								b, err = reader.Peek(2)
+								if err == nil && b[0] == '}' && b[1] == '}' {
+									reader.Discard(2)
+									key = key[2:]
+									val = regex.JoinBytes('{', '{', val, '}', '}')
+								}
+							}
+
+							b, err = reader.Peek(1)
+						}
+
+						elm[string(bytes.ToLower(key))] = elmVal{ind, val}
+						ind++
+					}
+				}
+
+				if mode == 1 {
+					if selfClose == 2 && len(fnCont) != 0 && !fnCont[len(fnCont)-1].isComponent && bytes.Equal(elm["TAG"].val, fnCont[len(fnCont)-1].tag) {
+						fn := fnCont[len(fnCont)-1]
+						fnCont = fnCont[:len(fnCont)-1]
+
+						if bytes.Equal(elm["TAG"].val, []byte("each")) {
+							eachOpts, e := goutil.DeepCopyJson(opts)
+							if e != nil {
+								cacheError = e
+								return
+							}
+							for i := range eachOpts {
+								if !strings.HasPrefix(i, "$") {
+									delete(eachOpts, i)
+								}
+							}
+
+							if fn.each.In != nil {
+								eachOpts[string(fn.each.In)] = fn.each.List
+							}
+
+							for _, list := range fn.each.List {
+								b := regex.Compile(`(?s){{({|)\s*((?:"(?:\\[\\"]|[^"])*"|'(?:\\[\\']|[^'])*'|\'(?:\\[\\\']|[^\'])*\'|.)*?)\s*}}(}|)`, string(fn.each.As), string(fn.each.Of), string(fn.each.In)).RepFuncRef(&fn.cont, func(data func(int) []byte) []byte {
+									allowHTML := false
+									_ = allowHTML
+									if len(data(1)) != 0 && len(data(3)) != 0 {
+										allowHTML = true
+									}
+
+									if fn.each.As != nil {
+										eachOpts[string(fn.each.As)] = list.Val
+									}else{
+										eachOpts[string(fn.each.As)] = nil
+									}
+									if fn.each.Of != nil {
+										eachOpts[string(fn.each.Of)] = list.Key
+									}else{
+										eachOpts[string(fn.each.Of)] = nil
+									}
+
+									if opt, ok := funcs.GetOpt(data(0), &eachOpts); ok {
+										b := goutil.ToByteArray(opt)
+										if !allowHTML {
+											b = goutil.EscapeHTML(b)
+										}
+										return b
+									}
+
+									return data(0)
+								})
+
+								write(b)
+							}
+
+							reader.Discard(1)
+							b, err = reader.Peek(1)
+							continue
+						}
+
+						res, e := callFunc(string(fn.fnName), &fn.args, &fn.cont, &opts, true)
 						if e != nil {
-							return "", e
+							cacheError = e
+							return
 						}
 
 						if res != nil {
 							write(goutil.ToByteArray(res))
 						}
-					}else{
-						fnCont = append(fnCont, fnData{tag: elm["TAG"].val, args: args, fnName: fnName, cont: []byte{}})
-					}
-				}
-			}else if mode == 2 {
-				if selfClose == 2 && len(fnCont) != 0 && fnCont[len(fnCont)-1].isComponent && bytes.Equal(elm["TAG"].val, fnCont[len(fnCont)-1].tag) {
-					fn := fnCont[len(fnCont)-1]
-					fnCont = fnCont[:len(fnCont)-1]
-
-					compOpts, e := goutil.DeepCopyJson(opts)
-					if e != nil {
-						return "", e
-					}
-
-					for key, val := range fn.args {
-						compOpts[key] = val
-					}
-
-					var comp []byte
-					cPath, compErr := PreCompile(string(fn.fnName), compOpts, append(componentOf, fullPath)...)
-					if compErr == nil {
-						if c, e := os.ReadFile(cPath); e == nil {
-							comp = c
-						}
-
-						pathCache.ForEach(func(key, val string) bool {
-							if cPath == val {
-								pathCache.Del(key)
-								return false
-							}
-
-							return true
-						})
-						os.Remove(cPath)
-					}
-
-					if comp == nil || compErr != nil {
-						if debugMode {
-							fmt.Println(compErr)
-							if compErr != nil {
-								write([]byte("{{#Error: Turbx Component Failed: '"+string(fn.fnName)+"'\n"+compErr.Error()+"}}"))
-							}else{
-								write([]byte("{{#Error: Turbx Component Failed: '"+string(fn.fnName)+"}}"))
-							}
-						}
 
 						reader.Discard(1)
 						b, err = reader.Peek(1)
 						continue
-					}
-
-					write(regex.Compile(`(?i){{({|)body}}(}|)`).RepFunc(comp, func(data func(int) []byte) []byte {
-						if len(data(1)) == 0 && len(data(2)) == 0 {
-							return goutil.EscapeHTML(fn.cont)
+					}else if selfClose == 2 && (len(ifMode) == 0 || ifMode[len(ifMode)-1] == 0) && !bytes.Equal(elm["TAG"].val, []byte("else")) && !bytes.Equal(elm["TAG"].val, []byte("elif")) {
+						for len(fnLevel) != 0 && fnLevel[len(fnLevel)-1] != string(elm["TAG"].val) {
+							fnLevel = fnLevel[:len(fnLevel)-1]
+							ifMode = ifMode[:len(ifMode)-1]
 						}
-
-						return fn.cont
-					}))
-
-					reader.Discard(1)
-					b, err = reader.Peek(1)
-					continue
-				}
-
-				args := map[string][]byte{}
-
-				ind := 0
-				for key, arg := range elm {
-					if arg.val == nil {
-						args[strconv.Itoa(ind)] = []byte(key)
-						ind++
-					}else{
-						if bytes.HasPrefix(arg.val, []byte("{{")) && bytes.HasSuffix(arg.val, []byte("}}")) {
-							//todo: handle {{$vars}} within components
-							// will also need to handle in a similar way for html elements
-							// html elements may be easier to start with
-							args[key] = arg.val
-						}else{
-							args["$"+key] = arg.val
+						if len(fnLevel) != 0 {
+							fnLevel = fnLevel[:len(fnLevel)-1]
+							ifMode = ifMode[:len(ifMode)-1]
+							write(regex.JoinBytes([]byte("{{/"), elm["TAG"].val, ':', len(fnLevel), []byte("}}")))
 						}
-					}
-				}
-
-				fnName := regex.Compile(`[^\w_\-\.]`).RepStr(elm["TAG"].val, []byte{})
-				fnNameList := bytes.Split(fnName, []byte("."))
-				ind = 0
-				for _, v := range fnNameList {
-					if len(v) == 1 {
-						fnNameList[ind] = bytes.ToUpper(v)
-						ind++
-					}else if len(v) != 0 {
-						fnNameList[ind] = append(bytes.ToUpper([]byte{v[0]}), v[1:]...)
-						ind++
-					}
-				}
-				fnName = bytes.Join(fnNameList[:ind], []byte("/"))
-
-				if selfClose == 1 {
-					compOpts, e := goutil.DeepCopyJson(opts)
-					if e != nil {
-						return "", e
-					}
-
-					for key, val := range args {
-						compOpts[key] = val
-					}
-
-					var comp []byte
-					cPath, compErr := PreCompile(string(fnName), compOpts, append(componentOf, fullPath)...)
-					if compErr == nil {
-						if c, e := os.ReadFile(cPath); e == nil {
-							comp = c
-						}
-
-						pathCache.ForEach(func(key, val string) bool {
-							if cPath == val {
-								pathCache.Del(key)
-								return false
-							}
-
-							return true
-						})
-						os.Remove(cPath)
-					}
-
-					if comp == nil || compErr != nil {
-						if debugMode {
-							fmt.Println(compErr)
-							if compErr != nil {
-								write([]byte("{{#Error: Turbx Component Failed: '"+string(fnName)+"'\n"+compErr.Error()+"}}"))
-							}else{
-								write([]byte("{{#Error: Turbx Component Failed: '"+string(fnName)+"}}"))
-							}
-						}
-
 						reader.Discard(1)
 						b, err = reader.Peek(1)
 						continue
+					}else if selfClose == 2 {
+						reader.Discard(1)
+						b, err = reader.Peek(1)
 					}
 
-					write(regex.Compile(`(?i){{({|)body}}(}|)`).RepStr(comp, []byte{}))
-				}else{
-					fnCont = append(fnCont, fnData{tag: elm["TAG"].val, fnName: fnName, args: args, isComponent: true, cont: []byte{}})
-				}
-			}else{
-				// handle html tags
-				if selfClose == 2 {
-					write(regex.JoinBytes('<', '/', elm["TAG"].val, '>'))
-					reader.Discard(1)
-					b, err = reader.Peek(1)
-					continue
-				}
+					// handle functions
+					if bytes.Equal(elm["TAG"].val, []byte("if")) || bytes.Equal(elm["TAG"].val, []byte("else")) || bytes.Equal(elm["TAG"].val, []byte("elif")) {
+						elseMode := (bytes.Equal(elm["TAG"].val, []byte("else")) || bytes.Equal(elm["TAG"].val, []byte("elif")))
 
-				//todo: handle {{$vars}} within html elements
-				// will also need to handle in a similar way for components
+						if selfClose != 0 && len(ifMode) != 0 && (ifMode[len(ifMode)-1] == 2 || ifMode[len(ifMode)-1] == 3) {
 
-				// sort html args
-				argSort := []string{}
-				for key := range elm {
-					if !regex.Compile(`^([A-Z]+|[0-9]+)$`).Match([]byte(key)) {
-						argSort = append(argSort, key)
-					}
-				}
-				sort.Strings(argSort)
-
-
-				if publicPath != "" {
-					link := ""
-					if _, ok := elm["src"]; ok {
-						link = "src"
-					}else if _, ok := elm["href"]; ok && bytes.Equal(elm["TAG"].val, []byte("link")) {
-						link = "href"
-					}
-
-					if link != "" && bytes.HasPrefix(elm[link].val, []byte{'/'}) {
-						if regex.Compile(`(?<!\.min)\.(\w+)$`).Match(elm[link].val) {
-							minSrc := regex.Compile(`\.(\w+)$`).RepStrComplex(elm[link].val, []byte(".min.$1"))
-							if path, e := goutil.JoinPath(publicPath, string(minSrc)); e == nil {
-								if _, e := os.Stat(path); e == nil {
-									elm[link] = elmVal{elm[link].ind, minSrc}
+							if elseMode {
+								for err == nil {
+									if b[0] == '<' {
+										b, err = reader.Peek(6)
+										if err == nil && b[1] == '/' && b[2] == '_' && bytes.Equal(b[3:5], []byte("if")) && regex.Compile(`^[\s\r\n/>]$`).MatchRef(&[]byte{b[5]}) {
+											reader.Discard(5)
+											b, err = reader.Peek(1)
+											for err == nil && b[0] != '>' {
+												reader.Discard(1)
+												b, err = reader.Peek(1)
+											}
+											reader.Discard(1)
+											b, err = reader.Peek(1)
+											break
+										}
+									}
+		
+									skipObjStrComments(reader, &b, &err)
 								}
-							}else if bytes.HasSuffix(elm[link].val, []byte(".js")) {
-								//todo: auto minify js
-							}else if bytes.HasSuffix(elm[link].val, []byte(".css")) {
-								//todo: auto minify css
+							}
+
+							if ifMode[len(ifMode)-1] == 3 {
+								write(regex.JoinBytes([]byte("{{/if:"), len(fnLevel)-1, []byte("}}")))
+								fnLevel = fnLevel[:len(fnLevel)-1]
+							}
+
+							// fnLevel = fnLevel[:len(fnLevel)-1]
+							ifMode = ifMode[:len(ifMode)-1]
+							continue
+						}
+
+						// handle if statements
+						intArgs := []elmVal{}
+						argSize := 0
+						for key, arg := range elm {
+							if !regex.Compile(`^([A-Z]+)$`).Match([]byte(key)) {
+								intArgs = append(intArgs, elmVal{arg.ind, []byte(key)})
+								argSize++
+								if !regex.Compile(`^([0-9]+)$`).Match([]byte(key)) && arg.val != nil {
+									argSize += 2
+								}
+							}
+						}
+						sort.Slice(intArgs, func(i, j int) bool {
+							return intArgs[i].ind < intArgs[j].ind
+						})
+
+						args := make([][]byte, argSize)
+						i := 0
+						for _, arg := range intArgs {
+							if regex.Compile(`^([0-9]+)$`).Match([]byte(arg.val)) {
+								args[i] = elm[string(arg.val)].val
+								i++
+							}else{
+								args[i] = arg.val
+								i++
+								if elm[string(arg.val)].val != nil {
+									val := elm[string(arg.val)].val
+									if val[0] == '<' || val[0] == '>' {
+										args[i] = []byte{val[0]}
+										val = val[1:]
+										if val[0] == '=' {
+											args[i] = append(args[i], val[0])
+											val = val[1:]
+										}
+									}else if val[0] == '!' || val[0] == '=' || val[0] == '~' {
+										args[i] = []byte{val[0]}
+										val = val[1:]
+									}else{
+										args[i] = []byte{'='}
+									}
+									i++
+
+									args[i] = val
+									i++
+								}
+							}
+						}
+
+						res, e := callFuncArr("If", &args, nil, &opts, true)
+						if e != nil {
+							cacheError = e
+							return
+						}
+
+						if res == true {
+							if elseMode && ifMode[len(ifMode)-1] != 1 {
+								write(regex.JoinBytes([]byte("{{#else:"), len(fnLevel)-1, []byte("}}")))
+								ifMode[len(ifMode)-1] = 3
+							}else{
+								ifMode[len(ifMode)-1] = 2
+							}
+						}else if res == false {
+							for err == nil {
+								if b[0] == '<' {
+									b, err = reader.Peek(7)
+									if err == nil && b[1] == '_' && (bytes.Equal(b[2:6], []byte("else")) || bytes.Equal(b[2:6], []byte("elif"))) && regex.Compile(`^[\s\r\n/>]$`).MatchRef(&[]byte{b[6]}) {
+										b, err = reader.Peek(1)
+										fnLevel = append(fnLevel, "if")
+										// ifMode = append(ifMode, 1)
+										ifMode[len(ifMode)-1] = 1
+										break
+									}else if err == nil && b[1] == '/' && b[2] == '_' && bytes.Equal(b[3:5], []byte("if")) && regex.Compile(`^[\s\r\n/>]$`).MatchRef(&[]byte{b[5]}) {
+										b, err = reader.Peek(1)
+										break
+									}
+								}
+
+								skipObjStrComments(reader, &b, &err)
+							}
+
+						}else if reflect.TypeOf(res) == goutil.VarType["byteArray"] {
+							if elseMode {
+								if ifMode[len(ifMode)-1] == 1 {
+									ifMode[len(ifMode)-1] = 0
+									write(regex.JoinBytes([]byte("{{#if:"), len(fnLevel)-1, ' ', res, []byte("}}")))
+								}else{
+									write(regex.JoinBytes([]byte("{{#else:"), len(fnLevel)-1, ' ', res, []byte("}}")))
+								}
+							}else{
+								write(regex.JoinBytes([]byte("{{#if:"), len(fnLevel), ' ', res, []byte("}}")))
+								fnLevel = append(fnLevel, "if")
+								ifMode = append(ifMode, 0)
+							}
+						}else{
+							if elseMode {
+								if ifMode[len(ifMode)-1] == 1 {
+									ifMode[len(ifMode)-1] = 0
+									write(regex.JoinBytes([]byte("{{#if:"), len(fnLevel)-1, ' ', bytes.Join(args, []byte{' '}), []byte("}}")))
+								}else{
+									write(regex.JoinBytes([]byte("{{#else:"), len(fnLevel)-1, ' ', bytes.Join(args, []byte{' '}), []byte("}}")))
+								}
+							}else{
+								write(regex.JoinBytes([]byte("{{#if:"), len(fnLevel), ' ', bytes.Join(args, []byte{' '}), []byte("}}")))
+								fnLevel = append(fnLevel, "if")
+								ifMode = append(ifMode, 0)
+							}
+						}
+					}else if bytes.Equal(elm["TAG"].val, []byte("each")) {
+						if selfClose == 1 {
+							continue
+						}
+
+						args := map[string][]byte{}
+
+						ind := 0
+						for key, arg := range elm {
+							if arg.val == nil {
+								args[strconv.Itoa(ind)] = []byte(key)
+								ind++
+							}else{
+								args[key] = arg.val
+							}
+						}
+
+						res, e := callFunc("Each", &args, nil, &opts, true)
+						if e != nil {
+							cacheError = e
+							return
+						}
+
+						rt := reflect.TypeOf(res)
+						if rt == goutil.VarType["byteArray"] {
+							// return normal func for compiler
+							write(regex.JoinBytes([]byte("{{#each:"), len(fnLevel), ' ', res, []byte("}}")))
+							fnLevel = append(fnLevel, "each")
+						}else if rt == reflect.TypeOf(funcs.EachList{}) {
+							// get content to run in each loop
+							fnCont = append(fnCont, fnData{tag: []byte("each"), each: res.(funcs.EachList), cont: []byte{}})
+						}else{
+							// skip and remove blank const value each loop
+							eachLevel := 0
+
+							for err == nil {
+								if b[0] == '<' {
+									b, err = reader.Peek(8)
+									if err == nil && b[1] == '/' && b[2] == '_' && bytes.Equal(b[3:7], []byte("each")) && regex.Compile(`^[\s\r\n/>]$`).MatchRef(&[]byte{b[7]}) {
+										reader.Discard(7)
+										b, err = reader.Peek(1)
+
+										for err == nil && b[0] != '>' {
+											if b[0] == '\\' {
+												reader.Discard(1)
+											}
+
+											reader.Discard(1)
+											b, err = reader.Peek(1)
+											if b[0] == '"' {
+												for err == nil && b[0] != '"' {
+													if b[0] == '\\' {
+														reader.Discard(1)
+													}
+													reader.Discard(1)
+													b, err = reader.Peek(1)
+												}
+											}else if b[0] == '\'' {
+												for err == nil && b[0] != '\'' {
+													if b[0] == '\\' {
+														reader.Discard(1)
+													}
+													reader.Discard(1)
+													b, err = reader.Peek(1)
+												}
+											}else if b[0] == '`' {
+												for err == nil && b[0] != '`' {
+													if b[0] == '\\' {
+														reader.Discard(1)
+													}
+													reader.Discard(1)
+													b, err = reader.Peek(1)
+												}
+											}
+										}
+
+										reader.Discard(1)
+										b, err = reader.Peek(1)
+
+										eachLevel--
+										if eachLevel < 0 {
+											break
+										}
+									}else if err == nil && b[1] == '_' && bytes.Equal(b[2:6], []byte("each")) && regex.Compile(`^[\s\r\n/>]$`).MatchRef(&[]byte{b[6]}) {
+										reader.Discard(6)
+										b, err = reader.Peek(1)
+										
+										for err == nil && b[0] != '>' {
+											if b[0] == '\\' {
+												reader.Discard(1)
+											}
+
+											reader.Discard(1)
+											b, err = reader.Peek(1)
+											if b[0] == '"' {
+												for err == nil && b[0] != '"' {
+													if b[0] == '\\' {
+														reader.Discard(1)
+													}
+													reader.Discard(1)
+													b, err = reader.Peek(1)
+												}
+											}else if b[0] == '\'' {
+												for err == nil && b[0] != '\'' {
+													if b[0] == '\\' {
+														reader.Discard(1)
+													}
+													reader.Discard(1)
+													b, err = reader.Peek(1)
+												}
+											}else if b[0] == '`' {
+												for err == nil && b[0] != '`' {
+													if b[0] == '\\' {
+														reader.Discard(1)
+													}
+													reader.Discard(1)
+													b, err = reader.Peek(1)
+												}
+											}
+										}
+										
+										eachLevel++
+									}
+								}
+
+								reader.Discard(1)
+								b, err = reader.Peek(1)
+							}
+
+							continue
+						}
+					}else{
+						fnName := append(bytes.ToUpper([]byte{elm["TAG"].val[0]}), elm["TAG"].val[1:]...)
+
+						args := map[string][]byte{}
+
+						ind := 0
+						for key, arg := range elm {
+							if arg.val == nil {
+								args[strconv.Itoa(ind)] = []byte(key)
+								ind++
+							}else{
+								args[key] = arg.val
+							}
+						}
+
+						if selfClose == 1 {
+							res, e := callFunc(string(fnName), &args, nil, &opts, true)
+							if e != nil {
+								cacheError = e
+								return
+							}
+
+							if res != nil {
+								write(goutil.ToByteArray(res))
+							}
+						}else{
+							fnCont = append(fnCont, fnData{tag: elm["TAG"].val, args: args, fnName: fnName, cont: []byte{}})
+						}
+					}
+				}else if mode == 2 {
+					if selfClose == 2 && len(fnCont) != 0 && fnCont[len(fnCont)-1].isComponent && bytes.Equal(elm["TAG"].val, fnCont[len(fnCont)-1].tag) {
+						fn := fnCont[len(fnCont)-1]
+						fnCont = fnCont[:len(fnCont)-1]
+
+						compOpts, e := goutil.DeepCopyJson(opts)
+						if e != nil {
+							cacheError = e
+							return
+						}
+
+						for key, val := range fn.args {
+							compOpts[key] = val
+						}
+
+						var comp []byte
+						compData := PreCompile(string(fn.fnName), compOpts, append(componentOf, fullPath)...)
+						for !*compData.Ready && *compData.Err == nil {
+							time.Sleep(10 * time.Nanosecond)
+						}
+
+						if *compData.Err == nil {
+							if c, e := os.ReadFile(compData.tmp); e == nil {
+								comp = c
+							}
+
+							pathCache.Del(compData.cachePath)
+							os.Remove(compData.tmp)
+						}
+
+						if comp == nil || *compData.Err != nil {
+							if debugMode {
+								if *compData.Err != nil {
+									fmt.Println(*compData.Err)
+									write([]byte("{{#Error: Turbx Component Failed: '"+string(fn.fnName)+"'\n"+(*compData.Err).Error()+"}}"))
+								}else{
+									write([]byte("{{#Error: Turbx Component Failed: '"+string(fn.fnName)+"}}"))
+								}
+							}
+
+							reader.Discard(1)
+							b, err = reader.Peek(1)
+							continue
+						}
+
+						write(regex.Compile(`(?i){{({|)body}}(}|)`).RepFunc(comp, func(data func(int) []byte) []byte {
+							if len(data(1)) == 0 && len(data(2)) == 0 {
+								return goutil.EscapeHTML(fn.cont)
+							}
+
+							return fn.cont
+						}))
+
+						reader.Discard(1)
+						b, err = reader.Peek(1)
+						continue
+					}
+
+					args := map[string][]byte{}
+
+					ind := 0
+					for key, arg := range elm {
+						if arg.val == nil {
+							args[strconv.Itoa(ind)] = []byte(key)
+							ind++
+						}else{
+							if bytes.HasPrefix(arg.val, []byte("{{")) && bytes.HasSuffix(arg.val, []byte("}}")) {
+								//todo: handle {{$vars}} within components
+								// will also need to handle in a similar way for html elements
+								// html elements may be easier to start with
+								args[key] = arg.val
+							}else{
+								args["$"+key] = arg.val
 							}
 						}
 					}
-				}
 
-				res := regex.JoinBytes('<', elm["TAG"].val)
-				for _, arg := range argSort {
-					res = regex.JoinBytes(res, ' ', arg)
-					if elm[arg].val != nil {
-						val := regex.Compile(`([\\"])`).RepStrComplex(elm[arg].val, []byte(`\$1`))
-						res = regex.JoinBytes(res, '=', '"', val, '"')
+					fnName := regex.Compile(`[^\w_\-\.]`).RepStr(elm["TAG"].val, []byte{})
+					fnNameList := bytes.Split(fnName, []byte("."))
+					ind = 0
+					for _, v := range fnNameList {
+						if len(v) == 1 {
+							fnNameList[ind] = bytes.ToUpper(v)
+							ind++
+						}else if len(v) != 0 {
+							fnNameList[ind] = append(bytes.ToUpper([]byte{v[0]}), v[1:]...)
+							ind++
+						}
 					}
-				}
+					fnName = bytes.Join(fnNameList[:ind], []byte("/"))
 
-				if selfClose == 1 {
-					hasEmptyContentTag := false
-					for _, cTag := range emptyContentTags {
-						if bytes.Equal(cTag.tag, elm["TAG"].val) {
-							if cTag.attr != nil {
-								if _, ok := elm[string(cTag.attr)]; ok {
+					if selfClose == 1 {
+						compOpts, e := goutil.DeepCopyJson(opts)
+						if e != nil {
+							cacheError = e
+							return
+						}
+
+						for key, val := range args {
+							compOpts[key] = val
+						}
+
+						var comp []byte
+						compData := PreCompile(string(fnName), compOpts, append(componentOf, fullPath)...)
+						for !*compData.Ready && *compData.Err == nil {
+							time.Sleep(10 * time.Nanosecond)
+						}
+
+						if *compData.Err == nil {
+							if c, e := os.ReadFile(compData.tmp); e == nil {
+								comp = c
+							}
+
+							pathCache.Del(compData.cachePath)
+							os.Remove(compData.tmp)
+						}
+
+						if comp == nil || *compData.Err != nil {
+							if debugMode {
+								if *compData.Err != nil {
+									fmt.Println(*compData.Err)
+									write([]byte("{{#Error: Turbx Component Failed: '"+string(fnName)+"'\n"+(*compData.Err).Error()+"}}"))
+								}else{
+									write([]byte("{{#Error: Turbx Component Failed: '"+string(fnName)+"}}"))
+								}
+							}
+
+							reader.Discard(1)
+							b, err = reader.Peek(1)
+							continue
+						}
+
+						write(regex.Compile(`(?i){{({|)body}}(}|)`).RepStr(comp, []byte{}))
+					}else{
+						fnCont = append(fnCont, fnData{tag: elm["TAG"].val, fnName: fnName, args: args, isComponent: true, cont: []byte{}})
+					}
+				}else{
+					// handle html tags
+					if selfClose == 2 {
+						write(regex.JoinBytes('<', '/', elm["TAG"].val, '>'))
+						reader.Discard(1)
+						b, err = reader.Peek(1)
+						continue
+					}
+
+					//todo: handle {{$vars}} within html elements
+					// will also need to handle in a similar way for components
+
+					// sort html args
+					argSort := []string{}
+					for key := range elm {
+						if !regex.Compile(`^([A-Z]+|[0-9]+)$`).Match([]byte(key)) {
+							argSort = append(argSort, key)
+						}
+					}
+					sort.Strings(argSort)
+
+
+					if publicPath != "" {
+						link := ""
+						if _, ok := elm["src"]; ok {
+							link = "src"
+						}else if _, ok := elm["href"]; ok && bytes.Equal(elm["TAG"].val, []byte("link")) {
+							link = "href"
+						}
+
+						if link != "" && bytes.HasPrefix(elm[link].val, []byte{'/'}) {
+							if regex.Compile(`(?<!\.min)\.(\w+)$`).Match(elm[link].val) {
+								minSrc := regex.Compile(`\.(\w+)$`).RepStrComplex(elm[link].val, []byte(".min.$1"))
+								if path, e := goutil.JoinPath(publicPath, string(minSrc)); e == nil {
+									if _, e := os.Stat(path); e == nil {
+										elm[link] = elmVal{elm[link].ind, minSrc}
+									}
+								}
+							}
+						}
+					}
+
+					res := regex.JoinBytes('<', elm["TAG"].val)
+					for _, arg := range argSort {
+						res = regex.JoinBytes(res, ' ', arg)
+						if elm[arg].val != nil {
+							val := regex.Compile(`([\\"])`).RepStrComplex(elm[arg].val, []byte(`\$1`))
+							res = regex.JoinBytes(res, '=', '"', val, '"')
+						}
+					}
+
+					if selfClose == 1 {
+						hasEmptyContentTag := false
+						for _, cTag := range emptyContentTags {
+							if bytes.Equal(cTag.tag, elm["TAG"].val) {
+								if cTag.attr != nil {
+									if _, ok := elm[string(cTag.attr)]; ok {
+										hasEmptyContentTag = true
+									}
+								}else{
 									hasEmptyContentTag = true
 								}
-							}else{
-								hasEmptyContentTag = true
+								break
 							}
-							break
+						}
+
+						if hasEmptyContentTag {
+							res = append(res, []byte("></script>")...)
+						}else{
+							res = append(res, '/', '>')
+						}
+					}else{
+						if goutil.Contains(singleHtmlTags, elm["TAG"].val) {
+							res = append(res, '/', '>')
+						}else{
+							res = append(res, '>')
 						}
 					}
 
-					if hasEmptyContentTag {
-						res = append(res, []byte("></script>")...)
-					}else{
-						res = append(res, '/', '>')
-					}
-				}else{
-					if goutil.Contains(singleHtmlTags, elm["TAG"].val) {
-						res = append(res, '/', '>')
-					}else{
-						res = append(res, '>')
-					}
+					write(res)
 				}
 
-				write(res)
+				continue
 			}
 
-			continue
+
+			//todo: handle {{$vars}}
+
+
+			write(b)
+			reader.Discard(1)
+			b, err = reader.Peek(1)
 		}
 
+		if layoutEnd != nil {
+			write(layoutEnd)
+		}
 
-		//todo: handle {{$vars}}
-
-
-		//temp
-		// break
-
-		write(b)
-		reader.Discard(1)
-		b, err = reader.Peek(1)
-	}
-
-	writer.Flush()
+		writer.Flush()
+		cacheReady = true
+	}()
 
 	//todo: store tmpPath in a cache for compiler to reference
 	// remember to clear the cache and files occasionally and on detected dir changes with watchDir from goutil
-	return tmpPath, nil
+	return cacheRes
 }
 
 
