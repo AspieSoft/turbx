@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"time"
 	"turbx/compiler"
 
@@ -45,6 +46,22 @@ func main(){
 		},
 	})
 
+
+	res, err := compiler.Compile("index", map[string]interface{}{
+		"$test": 3,
+		"key": "value",
+		"$list": map[string]interface{}{
+			"item1": "value a",
+			"item2": "value b",
+			"item3": "value c",
+		},
+	})
+
+	if err != nil {
+		panic(err)
+	}
+
+
 	for !*compData.Ready && *compData.Err == nil {
 		time.Sleep(10 * time.Nanosecond)
 	}
@@ -59,4 +76,8 @@ func main(){
 	// may update ttlCache to accept an optional OnExpire callback
 	// _ = path
 	// fmt.Println(path)
+
+
+	_ = res
+	fmt.Println("\n----------\n\n", string(res))
 }

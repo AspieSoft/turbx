@@ -248,7 +248,7 @@ func GetOpt(arg []byte, opts *map[string]interface{}, pre ...bool) (interface{},
 		}
 	}
 
-	//todo: handle object indexes and nested objects
+	//todo: handle object indexes and nested objects (note: may already be done, unsure)
 	// also handle strings and optionally '|' seperators (ensure precompiled methods recognize all values and get disabled for reaching string values and non constant values)
 	/* if val, ok := (*opts)[arg]; ok {
 		return val, true

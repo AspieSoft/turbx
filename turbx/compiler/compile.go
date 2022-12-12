@@ -29,6 +29,7 @@ var defaultLayoutPath string = "layout"
 var publicPath string
 
 const writeFlushSize = 1000
+const compileReadSize = 10
 var debugMode = false
 
 var constOpts map[string]interface{}
@@ -317,6 +318,7 @@ func PreCompile(path string, opts map[string]interface{}, componentOf ...string)
 
 	// ensure the file actually exists
 	if stat, err := os.Stat(fullPath); err != nil || stat.IsDir() {
+		err = errors.New("file does not exist or is invalid")
 		return pathCacheData{Ready: &cacheReady, Err: &err}
 	}
 
@@ -1288,15 +1290,24 @@ func PreCompile(path string, opts map[string]interface{}, componentOf ...string)
 						if args[arg] != nil {
 							if _, err := strconv.Atoi(arg); err == nil {
 								val := regex.Compile(`[^\w_-]`).RepStr(args[arg], []byte{})
-								res = regex.JoinBytes(res, '=', val)
+								res = regex.JoinBytes(res, ' ', val)
 							}else{
 								val := regex.Compile(`([\\"])`).RepStrComplex(args[arg], []byte(`\$1`))
-								res = regex.JoinBytes(res, ' ', arg, '=', '"', val, '"')
+
+								if bytes.HasPrefix(val, []byte("{{{")) && bytes.HasSuffix(val, []byte("}}}")) {
+									val = bytes.TrimLeft(val, "{")
+									val = bytes.TrimRight(val, "}")
+									res = regex.JoinBytes(res, ' ', []byte("{{{"), arg, '=', '"', val, '"', []byte("}}}"))
+								}else if bytes.HasPrefix(val, []byte("{{")) && bytes.HasSuffix(val, []byte("}}")) {
+									val = bytes.TrimLeft(val, "{")
+									val = bytes.TrimRight(val, "}")
+									res = regex.JoinBytes(res, ' ', []byte("{{"), arg, '=', '"', val, '"', []byte("}}"))
+								}else{
+									res = regex.JoinBytes(res, ' ', arg, '=', '"', val, '"')
+								}
 							}
-						}else{
-							if _, err := strconv.Atoi(arg); err != nil {
-								res = regex.JoinBytes(res, ' ', arg)
-							}
+						}else if _, err := strconv.Atoi(arg); err != nil {
+							res = regex.JoinBytes(res, ' ', arg)
 						}
 					}
 
@@ -1444,6 +1455,188 @@ func PreCompile(path string, opts map[string]interface{}, componentOf ...string)
 	// remember to clear the cache and files occasionally and on detected dir changes with watchDir from goutil
 	// allow compiler to read cache file while precompiler is writing to it
 	return cacheRes
+}
+
+
+func Compile(path string, opts map[string]interface{}) ([]byte, error) {
+	if rootPath == "" || cacheTmpPath == "" {
+		return []byte{}, errors.New("a root path was never chosen")
+	}
+
+	origPath := path
+
+	// handle modified cache and layout paths
+	cachePath := ""
+	path = string(regex.Compile(`@([\w_-]+)(:[\w_-]+|)$`).RepStr([]byte(path), []byte{}))
+
+	if regex.Compile(`(:[\w_-]+)$`).Match([]byte(path)) {
+		path = string(regex.Compile(`(:[\w_-]+)$`).RepFunc([]byte(path), func(data func(int) []byte) []byte {
+			cachePath = string(data(1))
+
+			return []byte{}
+		}))
+	}
+
+	// resolve full file path within root
+	fullPath, err := goutil.JoinPath(rootPath, path + "." + fileExt)
+	if err != nil {
+		return []byte{}, err
+	}
+
+	// prevent path from leaking into tmp cache
+	if strings.HasPrefix(fullPath, cacheTmpPath) {
+		return []byte{}, errors.New("path leaked into tmp cache")
+	}
+
+	// ensure the file actually exists
+	if stat, err := os.Stat(fullPath); err != nil || stat.IsDir() {
+		return []byte{}, errors.New("file does not exist or is invalid")
+	}
+
+
+	// check cache for pre compiled file
+	compData, ok := pathCache.Get(fullPath + cachePath)
+	if !ok {
+		compData = PreCompile(origPath, opts)
+	}
+
+	// open file reader
+	// file, err := os.OpenFile(compData.tmp, os.O_RDONLY, 0)
+	// temp use main file
+	file, err := os.OpenFile(compData.path, os.O_RDONLY, 0)
+	if err != nil {
+		return []byte{}, err
+	}
+	defer file.Close()
+
+	reader := bufio.NewReader(file)
+
+	res := []byte{}
+	write := func(b []byte){
+		res = append(res, b...)
+	}
+
+
+	firstLoop := true
+	for !*compData.Ready && *compData.Err == nil {
+		if firstLoop {
+			firstLoop = false
+		}else{
+			time.Sleep(time.Nanosecond * 10)
+		}
+
+		offset := compileReadSize
+
+		b, err := reader.Peek(compileReadSize)
+		if err != nil && err.Error() == "EOF" {
+			for err != nil && err.Error() == "EOF" && !*compData.Ready && *compData.Err == nil {
+				time.Sleep(time.Nanosecond * 10)
+				b, err = reader.Peek(compileReadSize)
+			}
+
+			for err != nil && err.Error() == "EOF" && offset > 0 {
+				offset--
+				b, err = reader.Peek(offset)
+			}
+		}
+
+		for err == nil {
+			if ind := bytes.IndexRune(b, '{'); ind != -1 {
+				write(b[:ind])
+				reader.Discard(ind)
+
+				escSize := 0
+
+				recoverPos := int64(-1)
+
+				b, err = reader.Peek(1)
+				for err == nil && b[0] == '{' {
+					escSize++
+					reader.Discard(1)
+					recoverPos--
+					b, err = reader.Peek(1)
+				}
+
+				varData := []byte{}
+
+				b, err = reader.Peek(2)
+				for err == nil && !(b[0] == '}' && b[1] == '}') {
+					if b[0] == '\\' {
+						if regex.Compile(`[A-Za-z]`).MatchRef(&b) {
+							varData = append(varData, b[0], b[1])
+						}else{
+							varData = append(varData, b[1])
+						}
+
+						reader.Discard(2)
+						recoverPos -= 2
+						b, err = reader.Peek(2)
+						continue
+					}
+
+					varData = append(varData, b[0])
+
+					reader.Discard(1)
+					recoverPos--
+					b, err = reader.Peek(2)
+				}
+
+				if err != nil {
+					file.Seek(recoverPos, os.SEEK_CUR)
+					break
+				}
+
+				reader.Discard(2)
+
+				escHTML := true
+
+				b, err = reader.Peek(1)
+				if err == nil && b[0] == '}' {
+					reader.Discard(1)
+					if escSize >= 3 {
+						escHTML = false
+					}
+				}
+
+				varData = bytes.TrimSpace(varData)
+
+				// handle varData
+				if varData[0] == '#' {
+					//todo: handle opening func
+					// create special case for handling if statements and each loops
+				}else if varData[0] == '/' {
+					//todo: handle closing func
+				}else{
+					if val, ok := funcs.GetOpt(regex.JoinBytes([]byte("{{"), varData, []byte("}}")), &opts); ok {
+						if reflect.TypeOf(val) == reflect.TypeOf(funcs.KeyVal{}) {
+							v := regex.Compile(`([\\"])`).RepStrComplex(goutil.ToByteArray(val.(funcs.KeyVal).Val), []byte(`\$1`))
+							if escHTML {
+								v = goutil.EscapeHTMLArgs(v)
+							}
+
+							write(regex.JoinBytes(val.(funcs.KeyVal).Key, '=', '"', v, '"'))
+						}else if val != nil {
+							if escHTML {
+								write(goutil.EscapeHTML(goutil.ToByteArray(val)))
+							}else{
+								write(goutil.ToByteArray(val))
+							}
+						}
+					}
+				}
+
+				b, err = reader.Peek(compileReadSize)
+				continue
+			}
+
+			write(b)
+			reader.Discard(compileReadSize)
+			b, err = reader.Peek(compileReadSize)
+		}
+	}
+
+
+	return res, nil
 }
 
 
