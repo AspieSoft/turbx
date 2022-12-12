@@ -418,6 +418,7 @@ func PreCompile(path string, opts map[string]interface{}, componentOf ...string)
 
 		b, err := reader.Peek(1)
 		for err == nil {
+			// handle html elements, components, and pre funcs
 			if b[0] == '<' {
 				reader.Discard(1)
 				b, err = reader.Peek(1)
@@ -630,16 +631,24 @@ func PreCompile(path string, opts map[string]interface{}, componentOf ...string)
 						}
 
 						// convert opts for {{key="val"}} attrs
-						if len(key) > 2 && key[0] == '{' && key[1] == '{' {
+						if len(key) >= 2 && key[0] == '{' && key[1] == '{' {
 							if len(key) > 3 && key[2] == '{' {
 								b, err = reader.Peek(3)
 								if err == nil && b[0] == '}' && b[1] == '}' && b[2] == '}' {
 									reader.Discard(3)
 									key = key[3:]
+									if len(key) == 0 {
+										key = val
+									}
+
 									val = regex.JoinBytes('{', '{', '{', val, '}', '}', '}')
 								}else if err == nil && b[0] == '}' && b[1] == '}' {
 									reader.Discard(2)
 									key = key[3:]
+									if len(key) == 0 {
+										key = val
+									}
+
 									val = regex.JoinBytes('{', '{', val, '}', '}')
 								}
 							}else{
@@ -647,6 +656,10 @@ func PreCompile(path string, opts map[string]interface{}, componentOf ...string)
 								if err == nil && b[0] == '}' && b[1] == '}' {
 									reader.Discard(2)
 									key = key[2:]
+									if len(key) == 0 {
+										key = val
+									}
+
 									val = regex.JoinBytes('{', '{', val, '}', '}')
 								}
 							}
