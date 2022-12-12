@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"time"
 	"turbx/compiler"
 
@@ -26,8 +25,21 @@ func main(){
 		compiler.SetComponentPath(args["component"])
 	}
 
+	if args["layout"] != "" && args["layout"] != "true" {
+		if args["layout"] == "false" || args["layout"] == "0" || args["layout"] == "null" {
+			compiler.SetLayoutPath("")
+		}else{
+			compiler.SetLayoutPath(args["layout"])
+		}
+	}
+
 	if args["public"] != "" && args["public"] != "true" {
 		compiler.SetPublicPath(args["public"])
+	}
+
+	if args["opts"] != "" && args["opts"] != "true" {
+		//todo: decompress and convert to json object
+		// compiler.SetConstOpts(args["opts"])
 	}
 
 	//temp: will remove
@@ -79,5 +91,5 @@ func main(){
 
 
 	_ = res
-	fmt.Println("\n----------\n\n", string(res))
+	// fmt.Println("\n----------\n\n", string(res))
 }

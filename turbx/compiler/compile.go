@@ -569,7 +569,7 @@ func PreCompile(path string, opts map[string]interface{}, componentOf ...string)
 						if len(key) == 0 {
 							break
 						}
-		
+
 						val := []byte{}
 						if b[0] == '!' {
 							// handle not operator
@@ -586,10 +586,21 @@ func PreCompile(path string, opts map[string]interface{}, componentOf ...string)
 							if _, ok := elm[k]; !ok {
 								elm[k] = elmVal{ind, nil}
 								ind++
+							}else{
+								i := 1
+								for {
+									iStr := strconv.Itoa(i)
+									if _, ok := elm[k+":"+iStr]; !ok {
+										elm[k+":"+iStr] = elmVal{ind, nil}
+										ind++
+										break
+									}
+									i++
+								}
 							}
 							continue
 						}
-		
+
 						// get quote type
 						q := byte(' ')
 						if b[0] == '"' {
@@ -669,8 +680,22 @@ func PreCompile(path string, opts map[string]interface{}, componentOf ...string)
 							b, err = reader.Peek(1)
 						}
 
-						elm[string(bytes.ToLower(key))] = elmVal{ind, val}
-						ind++
+						k := string(bytes.ToLower(key))
+						if _, ok := elm[k]; !ok {
+							elm[k] = elmVal{ind, val}
+							ind++
+						}else{
+							i := 1
+							for {
+								iStr := strconv.Itoa(i)
+								if _, ok := elm[k+":"+iStr]; !ok {
+									elm[k+":"+iStr] = elmVal{ind, val}
+									ind++
+									break
+								}
+								i++
+							}
+						}
 					}
 				}
 
@@ -821,13 +846,13 @@ func PreCompile(path string, opts map[string]interface{}, componentOf ...string)
 						i := 0
 						for _, arg := range intArgs {
 							if regex.Compile(`^([0-9]+)$`).Match([]byte(arg.val)) {
-								args[i] = elm[string(arg.val)].val
+								args[i] = regex.Compile(`:[0-9]+$`).RepStr(elm[string(arg.val)].val, []byte{})
 								i++
 							}else{
 								args[i] = arg.val
 								i++
 								if elm[string(arg.val)].val != nil {
-									val := elm[string(arg.val)].val
+									val := regex.Compile(`:[0-9]+$`).RepStr(elm[string(arg.val)].val, []byte{})
 									if val[0] == '<' || val[0] == '>' {
 										args[i] = []byte{val[0]}
 										val = val[1:]
@@ -1239,17 +1264,38 @@ func PreCompile(path string, opts map[string]interface{}, componentOf ...string)
 						}
 
 						if arg.val == nil {
-							args[strconv.Itoa(ind)] = []byte(key)
-							ind++
+							if k := []byte(key); !regex.Compile(":[0-9]+$").MatchRef(&k) {
+								args[strconv.Itoa(ind)] = k
+								ind++
+							}
 						}else{
+							if regex.Compile(":[0-9]+$").Match([]byte(key)) {
+								key = string(regex.Compile(":[0-9]+$").RepStr([]byte(key), []byte{}))
+								if key != "class" {
+									continue
+								}
+							}
+
 							if bytes.HasPrefix(arg.val, []byte("{{")) && bytes.HasSuffix(arg.val, []byte("}}")) {
 								if val, ok := funcs.GetOpt(arg.val, &opts, true); ok {
-									args[key] = goutil.ToByteArray(val)
+									if _, ok := args[key]; !ok {
+										args[key] = goutil.ToByteArray(val)
+									}else{
+										args[key] = append(append(args[key], ' '), goutil.ToByteArray(val)...)
+									}
 								}else{
-									args[key] = arg.val
+									if _, ok := args[key]; !ok {
+										args[key] = arg.val
+									}else{
+										args[key] = append(append(args[key], ' '), arg.val...)
+									}
 								}
 							}else{
-								args[key] = arg.val
+								if _, ok := args[key]; !ok {
+									args[key] = arg.val
+								}else{
+									args[key] = append(append(args[key], ' '), arg.val...)
+								}
 							}
 						}
 					}
@@ -1292,7 +1338,7 @@ func PreCompile(path string, opts map[string]interface{}, componentOf ...string)
 								val := regex.Compile(`[^\w_-]`).RepStr(args[arg], []byte{})
 								res = regex.JoinBytes(res, ' ', val)
 							}else{
-								val := regex.Compile(`([\\"])`).RepStrComplex(args[arg], []byte(`\$1`))
+								val := goutil.EscapeHTMLArgs(args[arg])
 
 								if bytes.HasPrefix(val, []byte("{{{")) && bytes.HasSuffix(val, []byte("}}}")) {
 									val = bytes.TrimLeft(val, "{")
@@ -1602,12 +1648,15 @@ func Compile(path string, opts map[string]interface{}) ([]byte, error) {
 				if varData[0] == '#' {
 					//todo: handle opening func
 					// create special case for handling if statements and each loops
+
+					
+
 				}else if varData[0] == '/' {
 					//todo: handle closing func
 				}else{
 					if val, ok := funcs.GetOpt(regex.JoinBytes([]byte("{{"), varData, []byte("}}")), &opts); ok {
 						if reflect.TypeOf(val) == reflect.TypeOf(funcs.KeyVal{}) {
-							v := regex.Compile(`([\\"])`).RepStrComplex(goutil.ToByteArray(val.(funcs.KeyVal).Val), []byte(`\$1`))
+							v := goutil.EscapeHTMLArgs(goutil.ToByteArray(val.(funcs.KeyVal).Val))
 							if escHTML {
 								v = goutil.EscapeHTMLArgs(v)
 							}
@@ -1638,11 +1687,15 @@ func Compile(path string, opts map[string]interface{}) ([]byte, error) {
 }
 
 
-func skipWhitespace(reader *bufio.Reader, b *[]byte, err *error){
+func skipWhitespace(reader *bufio.Reader, b *[]byte, err *error) int {
+	i := 0
 	for err != nil && regex.Compile(`[\s\r\n]`).MatchRef(b) {
 		reader.Discard(1)
 		*b, *err = reader.Peek(1)
+		i++
 	}
+
+	return i
 }
 
 func skipObjStrComments(reader *bufio.Reader, b *[]byte, err *error){
@@ -1739,12 +1792,15 @@ func skipObjStrComments(reader *bufio.Reader, b *[]byte, err *error){
 func callFunc(name string, args *map[string][]byte, cont *[]byte, opts *map[string]interface{}, pre bool) (interface{}, error) {
 	name = string(regex.Compile(`[^\w_]`).RepStr([]byte(name), []byte{}))
 
+	isPre := false
+
 	var m reflect.Value
 	if pre {
 		m = reflect.ValueOf(&preCompFuncs).MethodByName(name)
 		if goutil.IsZeroOfUnderlyingType(m) {
 			return nil, errors.New("method does not exist in Pre Compiled Functions")
 		}
+		isPre = true
 	}else{
 		m = reflect.ValueOf(&compFuncs).MethodByName(name)
 		if goutil.IsZeroOfUnderlyingType(m) {
@@ -1753,14 +1809,25 @@ func callFunc(name string, args *map[string][]byte, cont *[]byte, opts *map[stri
 			if goutil.IsZeroOfUnderlyingType(m) {
 				return nil, errors.New("method does not exist in Compiled Functions")
 			}
+			isPre = true
 		}
 	}
 
-	val := m.Call([]reflect.Value{
-		reflect.ValueOf(args),
-		reflect.ValueOf(cont),
-		reflect.ValueOf(opts),
-	})
+	var val []reflect.Value
+	if isPre {
+		val = m.Call([]reflect.Value{
+			reflect.ValueOf(args),
+			reflect.ValueOf(cont),
+			reflect.ValueOf(opts),
+			reflect.ValueOf(pre),
+		})
+	}else{
+		val = m.Call([]reflect.Value{
+			reflect.ValueOf(args),
+			reflect.ValueOf(cont),
+			reflect.ValueOf(opts),
+		})
+	}
 
 	var data interface{}
 	var err error
@@ -1779,12 +1846,15 @@ func callFunc(name string, args *map[string][]byte, cont *[]byte, opts *map[stri
 func callFuncArr(name string, args *[][]byte, cont *[]byte, opts *map[string]interface{}, pre bool) (interface{}, error) {
 	name = string(regex.Compile(`[^\w_]`).RepStr([]byte(name), []byte{}))
 
+	isPre := false
+
 	var m reflect.Value
 	if pre {
 		m = reflect.ValueOf(&preCompFuncs).MethodByName(name)
 		if goutil.IsZeroOfUnderlyingType(m) {
 			return nil, errors.New("method does not exist in Pre Compiled Functions")
 		}
+		isPre = true
 	}else{
 		m = reflect.ValueOf(&compFuncs).MethodByName(name)
 		if goutil.IsZeroOfUnderlyingType(m) {
@@ -1793,14 +1863,25 @@ func callFuncArr(name string, args *[][]byte, cont *[]byte, opts *map[string]int
 			if goutil.IsZeroOfUnderlyingType(m) {
 				return nil, errors.New("method does not exist in Compiled Functions")
 			}
+			isPre = true
 		}
 	}
 
-	val := m.Call([]reflect.Value{
-		reflect.ValueOf(args),
-		reflect.ValueOf(cont),
-		reflect.ValueOf(opts),
-	})
+	var val []reflect.Value
+	if isPre {
+		val = m.Call([]reflect.Value{
+			reflect.ValueOf(args),
+			reflect.ValueOf(cont),
+			reflect.ValueOf(opts),
+			reflect.ValueOf(pre),
+		})
+	}else{
+		val = m.Call([]reflect.Value{
+			reflect.ValueOf(args),
+			reflect.ValueOf(cont),
+			reflect.ValueOf(opts),
+		})
+	}
 
 	var data interface{}
 	var err error
@@ -1815,6 +1896,7 @@ func callFuncArr(name string, args *[][]byte, cont *[]byte, opts *map[string]int
 
 	return data, err
 }
+
 
 var addingTmpPath int = 0
 func tmpPath(viewPath string, tries ...int) (*os.File, string, error) {

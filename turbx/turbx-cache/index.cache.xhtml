@@ -1,5 +1,5 @@
 <div {{class="key"}}></div>
 
-{{#if:0 key}}
+{{#if:0 key | key:1 = "a" | ( key:2 & key2 )}}
   this is a test: {{key}}
 {{/if:0}}

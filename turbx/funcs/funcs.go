@@ -258,7 +258,7 @@ func GetOpt(arg []byte, opts *map[string]interface{}, pre ...bool) (interface{},
 
 
 
-func (t *Pre) If(args *[][]byte, cont *[]byte, opts *map[string]interface{}) (interface{}, error) {
+func (t *Pre) If(args *[][]byte, cont *[]byte, opts *map[string]interface{}, pre bool) (interface{}, error) {
 	pass := []bool{true}
 	inv := []bool{false}
 	mode := []uint8{0}
@@ -424,7 +424,7 @@ func (t *Pre) If(args *[][]byte, cont *[]byte, opts *map[string]interface{}) (in
 		// make '$' unique to const vars for pre compile to handle
 		// ignore in regular compiler
 		if !hasArg2 {
-			arg1Val, arg1ok := GetOpt(arg1, opts, true)
+			arg1Val, arg1ok := GetOpt(arg1, opts, pre)
 
 			if !arg1ok {
 				// add to unsolved list
@@ -455,7 +455,7 @@ func (t *Pre) If(args *[][]byte, cont *[]byte, opts *map[string]interface{}) (in
 			}
 			inv[grp] = false
 		}else{
-			arg1Val, arg1ok := GetOpt(arg1, opts, true)
+			arg1Val, arg1ok := GetOpt(arg1, opts, pre)
 
 			var arg2Val interface{} = nil
 			arg2ok := false
@@ -464,7 +464,7 @@ func (t *Pre) If(args *[][]byte, cont *[]byte, opts *map[string]interface{}) (in
 				arg2Val = goutil.ToString(arg2)
 				arg2ok = true
 			}else{
-				arg2Val, arg2ok = GetOpt(arg2, opts, true)
+				arg2Val, arg2ok = GetOpt(arg2, opts, pre)
 			}
 
 			if !arg1ok || !arg2ok {
@@ -497,10 +497,10 @@ func (t *Pre) If(args *[][]byte, cont *[]byte, opts *map[string]interface{}) (in
 
 				// unsolved[grp] = append(unsolved[grp], arg1, signB, arg2)
 				if inv[grp] {
-					unsolved[grp] = append(unsolved[grp], modeB, []byte{'^'}, arg1, signB, arg2)
+					unsolved[grp] = append(unsolved[grp], modeB, []byte{'^'}, arg1, signB, regex.JoinBytes('"', goutil.EscapeHTMLArgs(arg2), '"'))
 					inv[grp] = false
 				}else{
-					unsolved[grp] = append(unsolved[grp], modeB, arg1, signB, arg2)
+					unsolved[grp] = append(unsolved[grp], modeB, arg1, signB, regex.JoinBytes('"', goutil.EscapeHTMLArgs(arg2), '"'))
 				}
 
 				continue
@@ -625,7 +625,7 @@ func (t *Pre) If(args *[][]byte, cont *[]byte, opts *map[string]interface{}) (in
 	return pass[0], nil
 }
 
-func (t *Pre) Each(args *map[string][]byte, cont *[]byte, opts *map[string]interface{}) (interface{}, error) {
+func (t *Pre) Each(args *map[string][]byte, cont *[]byte, opts *map[string]interface{}, pre bool) (interface{}, error) {
 	var from int
 	var to int
 	if (*args)["range"] != nil && len((*args)["range"]) != 0 {
@@ -677,7 +677,7 @@ func (t *Pre) Each(args *map[string][]byte, cont *[]byte, opts *map[string]inter
 		return resData, nil
 	}
 
-	list, ok := GetOpt((*args)["0"], opts, true)
+	list, ok := GetOpt((*args)["0"], opts, pre)
 	if !ok {
 		if bytes.HasPrefix((*args)["0"], []byte{'$'}) {
 			return nil, nil
