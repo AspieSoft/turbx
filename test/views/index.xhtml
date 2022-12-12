@@ -1,5 +1,5 @@
 <div {{class="key"}}></div>
 
-<_if key | key="a" | (key & key2)>
-  this is a test: {{key}}
-</_if>
+<_each list as="i">
+  test: {{i}}
+</_each>

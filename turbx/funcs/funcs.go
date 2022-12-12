@@ -2,6 +2,7 @@ package funcs
 
 import (
 	"bytes"
+	"fmt"
 	"reflect"
 	"sort"
 	"strconv"
@@ -773,13 +774,14 @@ func (t *Pre) Each(args *map[string][]byte, cont *[]byte, opts *map[string]inter
 }
 
 
-func (t *Comp) If(args *[][]byte, cont *[]byte, opts *map[string]interface{}) (interface{}, error) {
+/* func (t *Comp) If(args *[][]byte, cont *[]byte, opts *map[string]interface{}) (interface{}, error) {
 	//todo: setup normal if handler without an unsolved list
 	return nil, nil
-}
+} */
 
 func (t *Comp) Each(args *[][]byte, cont *[]byte, opts *map[string]interface{}) (interface{}, error) {
 	//todo: setup normal each handler
+	fmt.Println("called each func from normal compile")
 	return nil, nil
 }
 

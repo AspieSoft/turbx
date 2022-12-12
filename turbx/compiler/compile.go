@@ -1584,6 +1584,8 @@ func Compile(path string, opts map[string]interface{}) ([]byte, error) {
 			}
 		}
 
+		ifLevel := [][]byte{}
+
 		for err == nil {
 			if ind := bytes.IndexRune(b, '{'); ind != -1 {
 				write(b[:ind])
@@ -1648,11 +1650,115 @@ func Compile(path string, opts map[string]interface{}) ([]byte, error) {
 				if varData[0] == '#' {
 					//todo: handle opening func
 					// create special case for handling if statements and each loops
+					varData = varData[1:]
 
-					
+					if bytes.HasPrefix(varData, []byte("if:")) || bytes.HasPrefix(varData, []byte("else:")) {
+						var ind []byte
+						varData = regex.Compile(`^(if|else):([0-9]+)\s*`).RepFuncRef(&varData, func(data func(int) []byte) []byte {
+							ind = data(2)
+							return []byte{}
+						})
 
+						if len(ifLevel) != 0 && bytes.Equal(ind, ifLevel[len(ifLevel)-1]) {
+							// handle closing if statement
+							b, err = reader.Peek(2)
+							for err == nil {
+								if b[0] == '{' && b[1] == '{' {
+									b, err = reader.Peek(7 + len(ind))
+									if err == nil {
+										offset := 2
+										if b[2] == '{' {
+											offset++
+										}
+
+										if bytes.Equal(b[offset:offset+4+len(ind)], append([]byte("/if:"), ind...)) {
+											ifLevel = ifLevel[:len(ifLevel)-1]
+											skipObjStrComments(reader, &b, &err)
+											break
+										}
+									}
+								}
+
+								skipStrComments(reader, &b, &err)
+								b, err = reader.Peek(2)
+							}
+						}else{
+							argList := regex.Compile(`([<>]=|[&\|\(\)!=^<>]|"(?:\\[\\"]|.)*?")`).SplitRef(&varData)
+	
+							args := [][]byte{}
+							for _, v := range argList {
+								v = bytes.TrimSpace(v)
+								if len(v) == 0 {
+									continue
+								}
+								if regex.Compile(`:[0-9]+$`).MatchRef(&v) {
+									v = regex.Compile(`:[0-9]+$`).RepStrRef(&v, []byte{})
+								}
+	
+								args = append(args, v)
+							}
+	
+							var res interface{}
+							if len(args) == 0 {
+								res = true
+							}else{
+								var e error
+								res, e = callFuncArr("If", &args, nil, &opts, false)
+								if e != nil {
+									return []byte{}, e
+								}
+							}
+
+							if res == true {
+								ifLevel = append(ifLevel, ind)
+							}else{
+								b, err = reader.Peek(2)
+								for err == nil {
+									if b[0] == '{' && b[1] == '{' {
+										b, err = reader.Peek(9 + len(ind))
+										if err == nil {
+											offset := 2
+											if b[2] == '{' {
+												offset++
+											}
+		
+											if bytes.Equal(b[offset:offset+4+len(ind)], append([]byte("/if:"), ind...)) {
+												skipObjStrComments(reader, &b, &err)
+												break
+											}else if bytes.Equal(b[offset:offset+6+len(ind)], append([]byte("#else:"), ind...)) {
+												break
+											}
+										}
+									}
+	
+									skipStrComments(reader, &b, &err)
+									b, err = reader.Peek(2)
+								}
+							}
+						}
+					}
 				}else if varData[0] == '/' {
 					//todo: handle closing func
+
+					varData = varData[1:]
+					
+					if bytes.HasPrefix(varData, []byte("if:")) {
+						var ind []byte
+						varData = regex.Compile(`^(if|else):([0-9]+)\s*`).RepFuncRef(&varData, func(data func(int) []byte) []byte {
+							ind = data(2)
+							return []byte{}
+						})
+
+						if len(ifLevel) != 0 && bytes.Equal(ind, ifLevel[len(ifLevel)-1]) {
+							ifLevel = ifLevel[:len(ifLevel)-1]
+						}
+
+						/* if len(ifLevel) != 0 {
+							ifLevel = ifLevel[:len(ifLevel)-1]
+						}
+						skipObjStrComments(reader, &b, &err)
+						fmt.Println(string(b)) */
+					}
 				}else{
 					if val, ok := funcs.GetOpt(regex.JoinBytes([]byte("{{"), varData, []byte("}}")), &opts); ok {
 						if reflect.TypeOf(val) == reflect.TypeOf(funcs.KeyVal{}) {
@@ -1703,7 +1809,7 @@ func skipObjStrComments(reader *bufio.Reader, b *[]byte, err *error){
 	quote := false
 
 	*b, *err = reader.Peek(4)
-	if err != nil {
+	if *err != nil {
 		reader.Discard(1)
 		*b, *err = reader.Peek(1)
 		return
@@ -1750,13 +1856,13 @@ func skipObjStrComments(reader *bufio.Reader, b *[]byte, err *error){
 		quote = true
 	}
 
-	if search == nil || err != nil {
+	if search == nil || *err != nil {
 		reader.Discard(1)
 		*b, *err = reader.Peek(1)
 		return
 	}
 
-	for err == nil {
+	for *err == nil {
 		if search[0] == '\n' {
 			if regex.Compile(`^[\r\n]+$`).MatchRef(b) {
 				*b, *err = reader.Peek(2)
@@ -1785,6 +1891,88 @@ func skipObjStrComments(reader *bufio.Reader, b *[]byte, err *error){
 		}
 
 		skipObjStrComments(reader, b, err)
+	}
+}
+
+func skipStrComments(reader *bufio.Reader, b *[]byte, err *error){
+	var search []byte
+	quote := false
+
+	*b, *err = reader.Peek(4)
+	if *err != nil {
+		reader.Discard(1)
+		*b, *err = reader.Peek(1)
+		return
+	}
+
+	if (*b)[0] == '<' && (*b)[1] == '!' && (*b)[2] == '-' && (*b)[3] == '-' {
+		search = []byte("-->")
+		reader.Discard(4)
+		*b, *err = reader.Peek(1)
+	}else if (*b)[0] == '/' {
+		if (*b)[1] == '*' {
+			search = []byte("*/")
+			reader.Discard(2)
+			*b, *err = reader.Peek(1)
+		}else if (*b)[1] == '/' {
+			search = []byte{'\n'}
+			reader.Discard(2)
+			*b, *err = reader.Peek(1)
+		}
+	}else if (*b)[0] == '"' {
+		search = []byte{'"'}
+		reader.Discard(1)
+		*b, *err = reader.Peek(1)
+		quote = true
+	}else if (*b)[0] == '\'' {
+		search = []byte{'\''}
+		reader.Discard(1)
+		*b, *err = reader.Peek(1)
+		quote = true
+	}else if (*b)[0] == '`' {
+		search = []byte{'`'}
+		reader.Discard(1)
+		*b, *err = reader.Peek(1)
+		quote = true
+	}
+
+	if search == nil || *err != nil {
+		reader.Discard(1)
+		*b, *err = reader.Peek(1)
+		return
+	}
+
+	for *err == nil {
+		if search[0] == '\n' {
+			if regex.Compile(`^[\r\n]+$`).MatchRef(b) {
+				*b, *err = reader.Peek(2)
+				if regex.Compile(`^[\r\n]+$`).MatchRef(b) {
+					reader.Discard(2)
+					*b, *err = reader.Peek(1)
+				}else{
+					reader.Discard(1)
+					*b, *err = reader.Peek(1)
+				}
+				break
+			}
+		}else if (*b)[0] == search[0] {
+			*b, *err = reader.Peek(len(search))
+			if bytes.Equal(*b, search) {
+				reader.Discard(len(search))
+				*b, *err = reader.Peek(1)
+				break
+			}
+		}
+
+		if quote && (*b)[0] == '\\' {
+			reader.Discard(2)
+			*b, *err = reader.Peek(1)
+			continue
+		}
+
+		// skipStrComments(reader, b, err)
+		reader.Discard(1)
+		*b, *err = reader.Peek(1)
 	}
 }
 
