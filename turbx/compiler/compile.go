@@ -1501,9 +1501,7 @@ func Compile(path string, opts map[string]interface{}) ([]byte, error) {
 	}
 
 	// open file reader
-	// file, err := os.OpenFile(compData.tmp, os.O_RDONLY, 0)
-	// temp use main file
-	file, err := os.OpenFile(compData.path, os.O_RDONLY, 0)
+	file, err := os.OpenFile(compData.tmp, os.O_RDONLY, 0)
 	if err != nil {
 		return []byte{}, err
 	}
