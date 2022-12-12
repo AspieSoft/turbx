@@ -1555,8 +1555,15 @@ func Compile(path string, opts map[string]interface{}) ([]byte, error) {
 
 	reader := bufio.NewReader(file)
 
+	ifLevel := [][]byte{}
+	fnCont := []fnData{}
+
 	res := []byte{}
 	write := func(b []byte){
+		if len(fnCont) != 0 {
+			fnCont[len(fnCont)-1].cont = append(fnCont[len(fnCont)-1].cont, b...)
+			return
+		}
 		res = append(res, b...)
 	}
 
@@ -1584,8 +1591,7 @@ func Compile(path string, opts map[string]interface{}) ([]byte, error) {
 			}
 		}
 
-		ifLevel := [][]byte{}
-
+		// handle reading bytes
 		for err == nil {
 			if ind := bytes.IndexRune(b, '{'); ind != -1 {
 				write(b[:ind])
@@ -1606,6 +1612,8 @@ func Compile(path string, opts map[string]interface{}) ([]byte, error) {
 				varData := []byte{}
 
 				b, err = reader.Peek(2)
+				recoverPos -= int64(skipWhitespace(reader, &b, &err))
+
 				for err == nil && !(b[0] == '}' && b[1] == '}') {
 					if b[0] == '\\' {
 						if regex.Compile(`[A-Za-z]`).MatchRef(&b) {
@@ -1634,6 +1642,8 @@ func Compile(path string, opts map[string]interface{}) ([]byte, error) {
 
 				reader.Discard(2)
 
+				skipWhitespace(reader, &b, &err)
+
 				escHTML := true
 
 				b, err = reader.Peek(1)
@@ -1654,8 +1664,8 @@ func Compile(path string, opts map[string]interface{}) ([]byte, error) {
 
 					if bytes.HasPrefix(varData, []byte("if:")) || bytes.HasPrefix(varData, []byte("else:")) {
 						var ind []byte
-						varData = regex.Compile(`^(if|else):([0-9]+)\s*`).RepFuncRef(&varData, func(data func(int) []byte) []byte {
-							ind = data(2)
+						varData = regex.Compile(`^(?:if|else):([0-9]+)\s*`).RepFuncRef(&varData, func(data func(int) []byte) []byte {
+							ind = data(1)
 							return []byte{}
 						})
 
@@ -1684,7 +1694,7 @@ func Compile(path string, opts map[string]interface{}) ([]byte, error) {
 							}
 						}else{
 							argList := regex.Compile(`([<>]=|[&\|\(\)!=^<>]|"(?:\\[\\"]|.)*?")`).SplitRef(&varData)
-	
+
 							args := [][]byte{}
 							for _, v := range argList {
 								v = bytes.TrimSpace(v)
@@ -1736,6 +1746,35 @@ func Compile(path string, opts map[string]interface{}) ([]byte, error) {
 								}
 							}
 						}
+					}else if bytes.HasPrefix(varData, []byte("each:")) {
+						var ind []byte
+						varData = regex.Compile(`^each:([0-9]+)\s*`).RepFuncRef(&varData, func(data func(int) []byte) []byte {
+							ind = data(1)
+							return []byte{}
+						})
+						_ = ind
+
+						argList := bytes.Split(varData, []byte{' '})
+
+						args := map[string][]byte{}
+
+						k := ""
+						for i, v := range argList {
+							if i == 0 {
+								args["0"] = v
+								continue
+							}
+
+							if k == "" {
+								k = string(v)
+							}else{
+								args[k] = v
+							}
+						}
+
+						// fmt.Println(args)
+
+						//todo: run pre each loop as normal compiler (pass args and handle output)
 					}
 				}else if varData[0] == '/' {
 					//todo: handle closing func

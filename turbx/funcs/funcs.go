@@ -694,6 +694,7 @@ func (t *Pre) Each(args *map[string][]byte, cont *[]byte, opts *map[string]inter
 		if (*args)["in"] != nil && len((*args)["in"]) != 0 {
 			res = regex.JoinBytes(res, []byte(" in "), (*args)["in"])
 		}
+
 		return res, nil
 	}
 
