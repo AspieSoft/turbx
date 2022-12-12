@@ -629,7 +629,7 @@ func PreCompile(path string, opts map[string]interface{}, componentOf ...string)
 							b, err = reader.Peek(1)
 						}
 
-						// fix opts for {{key="val"}} attrs
+						// convert opts for {{key="val"}} attrs
 						if len(key) > 2 && key[0] == '{' && key[1] == '{' {
 							if len(key) > 3 && key[2] == '{' {
 								b, err = reader.Peek(3)
@@ -1115,17 +1115,33 @@ func PreCompile(path string, opts map[string]interface{}, componentOf ...string)
 
 					ind := 0
 					for key, arg := range elm {
+						if key == "TAG" {
+							args[key] = arg.val
+							continue
+						}
+
 						if arg.val == nil {
 							args[strconv.Itoa(ind)] = []byte(key)
 							ind++
 						}else{
 							if bytes.HasPrefix(arg.val, []byte("{{")) && bytes.HasSuffix(arg.val, []byte("}}")) {
-								//todo: handle {{$vars}} within components
-								// will also need to handle in a similar way for html elements
-								// html elements may be easier to start with
-								args[key] = arg.val
-							}else{
+								if val, ok := funcs.GetOpt(arg.val, &opts, true); ok {
+									if key[0] != '$' {
+										args["$"+key] = goutil.ToByteArray(val)
+									}else{
+										args[key] = goutil.ToByteArray(val)
+									}
+								}else{
+									if key[0] != '$' {
+										args["$"+key] = arg.val
+									}else{
+										args[key] = arg.val
+									}
+								}
+							}else if key[0] != '$' {
 								args["$"+key] = arg.val
+							}else{
+								args[key] = arg.val
 							}
 						}
 					}
@@ -1198,12 +1214,35 @@ func PreCompile(path string, opts map[string]interface{}, componentOf ...string)
 						continue
 					}
 
-					//todo: handle {{$vars}} within html elements
-					// will also need to handle in a similar way for components
+
+					// get arg list
+					args := map[string][]byte{}
+					ind := 0
+					for key, arg := range elm {
+						if key == "TAG" {
+							continue
+						}
+
+						if arg.val == nil {
+							args[strconv.Itoa(ind)] = []byte(key)
+							ind++
+						}else{
+							if bytes.HasPrefix(arg.val, []byte("{{")) && bytes.HasSuffix(arg.val, []byte("}}")) {
+								if val, ok := funcs.GetOpt(arg.val, &opts, true); ok {
+									args[key] = goutil.ToByteArray(val)
+								}else{
+									args[key] = arg.val
+								}
+							}else{
+								args[key] = arg.val
+							}
+						}
+					}
+
 
 					// sort html args
 					argSort := []string{}
-					for key := range elm {
+					for key := range args {
 						if !regex.Compile(`^([A-Z]+|[0-9]+)$`).Match([]byte(key)) {
 							argSort = append(argSort, key)
 						}
@@ -1213,18 +1252,18 @@ func PreCompile(path string, opts map[string]interface{}, componentOf ...string)
 
 					if publicPath != "" {
 						link := ""
-						if _, ok := elm["src"]; ok {
+						if _, ok := args["src"]; ok {
 							link = "src"
-						}else if _, ok := elm["href"]; ok && bytes.Equal(elm["TAG"].val, []byte("link")) {
+						}else if _, ok := args["href"]; ok && bytes.Equal(elm["TAG"].val, []byte("link")) {
 							link = "href"
 						}
 
-						if link != "" && bytes.HasPrefix(elm[link].val, []byte{'/'}) {
-							if regex.Compile(`(?<!\.min)\.(\w+)$`).Match(elm[link].val) {
-								minSrc := regex.Compile(`\.(\w+)$`).RepStrComplex(elm[link].val, []byte(".min.$1"))
+						if link != "" && bytes.HasPrefix(args[link], []byte{'/'}) {
+							if regex.Compile(`(?<!\.min)\.(\w+)$`).Match(args[link]) {
+								minSrc := regex.Compile(`\.(\w+)$`).RepStrComplex(args[link], []byte(".min.$1"))
 								if path, e := goutil.JoinPath(publicPath, string(minSrc)); e == nil {
 									if _, e := os.Stat(path); e == nil {
-										elm[link] = elmVal{elm[link].ind, minSrc}
+										args[link] = minSrc
 									}
 								}
 							}
@@ -1233,10 +1272,18 @@ func PreCompile(path string, opts map[string]interface{}, componentOf ...string)
 
 					res := regex.JoinBytes('<', elm["TAG"].val)
 					for _, arg := range argSort {
-						res = regex.JoinBytes(res, ' ', arg)
-						if elm[arg].val != nil {
-							val := regex.Compile(`([\\"])`).RepStrComplex(elm[arg].val, []byte(`\$1`))
-							res = regex.JoinBytes(res, '=', '"', val, '"')
+						if args[arg] != nil {
+							if _, err := strconv.Atoi(arg); err == nil {
+								val := regex.Compile(`[^\w_-]`).RepStr(args[arg], []byte{})
+								res = regex.JoinBytes(res, '=', val)
+							}else{
+								val := regex.Compile(`([\\"])`).RepStrComplex(args[arg], []byte(`\$1`))
+								res = regex.JoinBytes(res, ' ', arg, '=', '"', val, '"')
+							}
+						}else{
+							if _, err := strconv.Atoi(arg); err != nil {
+								res = regex.JoinBytes(res, ' ', arg)
+							}
 						}
 					}
 
@@ -1274,9 +1321,98 @@ func PreCompile(path string, opts map[string]interface{}, componentOf ...string)
 				continue
 			}
 
+			// handle {{$vars}}
+			if b[0] == '{' {
+				b, err = reader.Peek(3)
+				if err == nil && b[1] == '{' {
+					escHTML := true
+					if b[2] == '{' {
+						escHTML = false
+						reader.Discard(3)
+					}else{
+						reader.Discard(2)
+					}
 
-			//todo: handle {{$vars}}
+					varName := []byte{}
 
+					b, err = reader.Peek(2)
+					for err == nil && !(b[0] == '}' && b[1] == '}') {
+						if b[0] == '"' || b[0] == '\'' || b[0] == '`' {
+							q := b[0]
+							varName = append(varName, q)
+
+							reader.Discard(1)
+							b, err = reader.Peek(2)
+
+							for err == nil && b[0] != q {
+								if b[0] == '\\' {
+									if regex.Compile(`[A-Za-z]`).MatchRef(&b) {
+										varName = append(varName, b[0], b[1])
+									}else{
+										varName = append(varName, b[1])
+									}
+
+									reader.Discard(2)
+									b, err = reader.Peek(2)
+									continue
+								}
+
+								varName = append(varName, b[0])
+
+								reader.Discard(1)
+								b, err = reader.Peek(2)
+							}
+
+							varName = append(varName, q)
+
+							reader.Discard(1)
+							b, err = reader.Peek(2)
+							continue
+						}
+
+						varName = append(varName, b[0])
+
+						reader.Discard(1)
+						b, err = reader.Peek(2)
+					}
+
+					if b[0] == '}' && b[1] == '}' {
+						reader.Discard(2)
+						b, err = reader.Peek(1)
+
+						if err == nil && b[0] == '}' {
+							reader.Discard(1)
+							b, err = reader.Peek(1)
+						}else{
+							escHTML = true
+						}
+
+						if bytes.Equal(bytes.ToLower(varName), []byte("body")) {
+							if escHTML {
+								write(regex.JoinBytes([]byte("{{"), varName, []byte("}}")))
+							}else{
+								write(regex.JoinBytes([]byte("{{{"), varName, []byte("}}}")))
+							}
+						}else{
+							if val, ok := funcs.GetOpt(varName, &opts, true); ok {
+								if escHTML {
+									write(goutil.EscapeHTML(goutil.ToByteArray(val)))
+								}else{
+									write(goutil.ToByteArray(val))
+								}
+							}else{
+								if escHTML {
+									write(regex.JoinBytes([]byte("{{"), varName, []byte("}}")))
+								}else{
+									write(regex.JoinBytes([]byte("{{{"), varName, []byte("}}}")))
+								}
+							}
+						}
+					}
+				}
+
+				continue
+			}
 
 			write(b)
 			reader.Discard(1)
@@ -1293,6 +1429,7 @@ func PreCompile(path string, opts map[string]interface{}, componentOf ...string)
 
 	//todo: store tmpPath in a cache for compiler to reference
 	// remember to clear the cache and files occasionally and on detected dir changes with watchDir from goutil
+	// allow compiler to read cache file while precompiler is writing to it
 	return cacheRes
 }
 
