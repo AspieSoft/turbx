@@ -789,7 +789,7 @@ func PreCompile(path string, opts map[string]interface{}, componentOf ...string)
 							}
 						}else{
 							//todo: allow client to run this func
-							
+							// (with content <_json></_json>)
 						}
 
 
