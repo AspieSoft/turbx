@@ -2,7 +2,6 @@ package funcs
 
 import (
 	"bytes"
-	"fmt"
 	"reflect"
 	"sort"
 	"strconv"
@@ -28,7 +27,7 @@ type EachList struct {
 }
 
 
-func convertOpt(arg []byte, opts *map[string]interface{}, pre *bool) (interface{}, bool) {
+func convertOpt(arg []byte, opts *map[string]interface{}, pre *bool, ignoreVars *[][]byte) (interface{}, bool) {
 	if regex.Compile(`^(["'\'])(.*)\1$`).MatchRef(&arg) {
 		arg = regex.Compile(`^(["'\'])(.*)\1$`).RepStrComplexRef(&arg, []byte("$2"))
 		
@@ -45,6 +44,13 @@ func convertOpt(arg []byte, opts *map[string]interface{}, pre *bool) (interface{
 		}
 
 		return []byte(arg), true
+	}
+
+	//todo: ignore specific vars from list
+	for _, v := range *ignoreVars {
+		if bytes.Equal(arg, v) || (*pre && arg[0] == '$' && bytes.Equal(arg[1:], v)) {
+			return regex.JoinBytes([]byte("{{"), arg, []byte("}}")), true
+		}
 	}
 
 	if *pre {
@@ -77,11 +83,11 @@ func convertOpt(arg []byte, opts *map[string]interface{}, pre *bool) (interface{
 	return nil, false
 }
 
-func getOptObj(arg []byte, opts *map[string]interface{}, pre *bool) (interface{}, bool) {
+func getOptObj(arg []byte, opts *map[string]interface{}, pre *bool, ignoreVars *[][]byte) (interface{}, bool) {
 	args := regex.Compile(`\.|(\[(?:"(?:\\[\\"]|.)*?"|'(?:\\[\\']|.)*?'|\'(?:\\[\\\']|.)*?\'|.)*?\])`).SplitRef(&arg)
 	// args := regex.Compile(`(\[[\w_]+\])|\.`).SplitRef(&arg)
 
-	res, ok := convertOpt(args[0], opts, pre)
+	res, ok := convertOpt(args[0], opts, pre, ignoreVars)
 	if !ok {
 		return res, false
 	}
@@ -106,7 +112,7 @@ func getOptObj(arg []byte, opts *map[string]interface{}, pre *bool) (interface{}
 		rType := reflect.TypeOf(res)
 		if rType == goutil.VarType["map"] {
 			r := (res.(map[string]interface{}))
-			val, ok := convertOpt(arg, &r, pre)
+			val, ok := convertOpt(arg, &r, pre, ignoreVars)
 			if !ok {
 				return val, false
 			}
@@ -116,7 +122,7 @@ func getOptObj(arg []byte, opts *map[string]interface{}, pre *bool) (interface{}
 			for i, v := range res.([]interface{}) {
 				r[strconv.Itoa(i)] = v
 			}
-			val, ok := convertOpt(arg, &r, pre)
+			val, ok := convertOpt(arg, &r, pre, ignoreVars)
 			if !ok {
 				return val, false
 			}
@@ -129,7 +135,7 @@ func getOptObj(arg []byte, opts *map[string]interface{}, pre *bool) (interface{}
 			for i, v := range res.([]byte) {
 				r[strconv.Itoa(i)] = v
 			}
-			val, ok := convertOpt(arg, &r, pre)
+			val, ok := convertOpt(arg, &r, pre, ignoreVars)
 			if !ok {
 				return val, false
 			}
@@ -142,10 +148,12 @@ func getOptObj(arg []byte, opts *map[string]interface{}, pre *bool) (interface{}
 	return res, true
 }
 
-func GetOpt(arg []byte, opts *map[string]interface{}, pre ...bool) (interface{}, bool) {
-	usePre := false
-	if len(pre) != 0 {
-		usePre = pre[0]
+func GetOpt(arg []byte, opts *map[string]interface{}, pre bool, ignoreVars ...*[][]byte) (interface{}, bool) {
+	var ignoreVarList *[][]byte
+	if len(ignoreVars) != 0 {
+		ignoreVarList = ignoreVars[0]
+	}else{
+		ignoreVarList = &[][]byte{}
 	}
 
 	var key []byte
@@ -165,7 +173,7 @@ func GetOpt(arg []byte, opts *map[string]interface{}, pre ...bool) (interface{},
 				continue
 			}
 
-			val, ok := getOptObj(b, opts, &usePre)
+			val, ok := getOptObj(b, opts, &pre, ignoreVarList)
 			if ok {
 				if key != nil {
 					return KeyVal{key, val}, true
@@ -174,7 +182,7 @@ func GetOpt(arg []byte, opts *map[string]interface{}, pre ...bool) (interface{},
 			}
 			b = []byte{}
 
-			if usePre && val == true {
+			if pre && val == true {
 				break
 			}
 			continue
@@ -241,7 +249,7 @@ func GetOpt(arg []byte, opts *map[string]interface{}, pre ...bool) (interface{},
 	}
 
 	if len(b) != 0 {
-		if val, ok := getOptObj(b, opts, &usePre); ok {
+		if val, ok := getOptObj(b, opts, &pre, ignoreVarList); ok {
 			if key != nil {
 				return KeyVal{key, val}, true
 			}
@@ -774,17 +782,21 @@ func (t *Pre) Each(args *map[string][]byte, cont *[]byte, opts *map[string]inter
 	return resData, nil
 }
 
+/* func (t *Pre) Json() {
+
+} */
+
 
 /* func (t *Comp) If(args *[][]byte, cont *[]byte, opts *map[string]interface{}) (interface{}, error) {
 	//todo: setup normal if handler without an unsolved list
 	return nil, nil
 } */
 
-func (t *Comp) Each(args *[][]byte, cont *[]byte, opts *map[string]interface{}) (interface{}, error) {
+/* func (t *Comp) Each(args *map[string][]byte, cont *[]byte, opts *map[string]interface{}) (interface{}, error) {
 	//todo: setup normal each handler
 	fmt.Println("called each func from normal compile")
 	return nil, nil
-}
+} */
 
 
 // examples

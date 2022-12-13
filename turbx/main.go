@@ -51,7 +51,7 @@ func main(){
 	compData := compiler.PreCompile("index", map[string]interface{}{
 		"$test": 3,
 		"key": "value",
-		"list": map[string]interface{}{
+		"$list": map[string]interface{}{
 			"item1": "value a",
 			"item2": "value b",
 			"item3": "value c",

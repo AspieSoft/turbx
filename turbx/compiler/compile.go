@@ -380,6 +380,7 @@ func PreCompile(path string, opts map[string]interface{}, componentOf ...string)
 
 		fnLevel := []string{}
 		ifMode := []uint8{0}
+		eachArgs := [][]byte{}
 		tagInd := [][]byte{}
 		fnCont := []fnData{}
 
@@ -723,7 +724,6 @@ func PreCompile(path string, opts map[string]interface{}, componentOf ...string)
 							for _, list := range fn.each.List {
 								b := regex.Compile(`(?s){{({|)\s*((?:"(?:\\[\\"]|[^"])*"|'(?:\\[\\']|[^'])*'|\'(?:\\[\\\']|[^\'])*\'|.)*?)\s*}}(}|)`, string(fn.each.As), string(fn.each.Of), string(fn.each.In)).RepFuncRef(&fn.cont, func(data func(int) []byte) []byte {
 									allowHTML := false
-									_ = allowHTML
 									if len(data(1)) != 0 && len(data(3)) != 0 {
 										allowHTML = true
 									}
@@ -739,7 +739,7 @@ func PreCompile(path string, opts map[string]interface{}, componentOf ...string)
 										eachOpts[string(fn.each.Of)] = nil
 									}
 
-									if opt, ok := funcs.GetOpt(data(0), &eachOpts); ok {
+									if opt, ok := funcs.GetOpt(data(0), &eachOpts, false); ok {
 										b := goutil.ToByteArray(opt)
 										if !allowHTML {
 											b = goutil.EscapeHTML(b)
@@ -753,20 +753,45 @@ func PreCompile(path string, opts map[string]interface{}, componentOf ...string)
 								write(b)
 							}
 
+							// remove eachArgs from end of list
+							rmArgs := map[string][]byte{}
+							if fn.each.As != nil {
+								rmArgs["as"] = fn.each.As
+							}
+							if fn.each.Of != nil {
+								rmArgs["of"] = fn.each.Of
+							}
+							if fn.each.In != nil {
+								rmArgs["in"] = fn.each.In
+							}
+
+							for i := len(eachArgs)-1; i >= 0; i-- {
+								if bytes.Equal(eachArgs[i], rmArgs["as"]) {
+									eachArgs = append(eachArgs[:i], eachArgs[i+1:]...)
+									rmArgs["as"] = nil
+								}else if bytes.Equal(eachArgs[i], rmArgs["of"]) {
+									eachArgs = append(eachArgs[:i], eachArgs[i+1:]...)
+									rmArgs["of"] = nil
+								}else if bytes.Equal(eachArgs[i], rmArgs["in"]) {
+									eachArgs = append(eachArgs[:i], eachArgs[i+1:]...)
+									rmArgs["in"] = nil
+								}
+							}
+
 							reader.Discard(1)
 							b, err = reader.Peek(1)
 							continue
 						}
 
-						res, e := callFunc(string(fn.fnName), &fn.args, &fn.cont, &opts, true)
-						if e != nil {
-							cacheError = e
-							return
+						if res, e := callFunc(string(fn.fnName), &fn.args, &fn.cont, &opts, true); e == nil {
+							if res != nil {
+								write(goutil.ToByteArray(res))
+							}
+						}else{
+							//todo: allow client to run this func
+							
 						}
 
-						if res != nil {
-							write(goutil.ToByteArray(res))
-						}
 
 						reader.Discard(1)
 						b, err = reader.Peek(1)
@@ -963,6 +988,16 @@ func PreCompile(path string, opts map[string]interface{}, componentOf ...string)
 							fnLevel = append(fnLevel, "each")
 						}else if rt == reflect.TypeOf(funcs.EachList{}) {
 							// get content to run in each loop
+							if res.(funcs.EachList).As != nil {
+								eachArgs = append(eachArgs, res.(funcs.EachList).As)
+							}
+							if res.(funcs.EachList).Of != nil {
+								eachArgs = append(eachArgs, res.(funcs.EachList).Of)
+							}
+							if res.(funcs.EachList).In != nil {
+								eachArgs = append(eachArgs, res.(funcs.EachList).In)
+							}
+
 							fnCont = append(fnCont, fnData{tag: []byte("each"), each: res.(funcs.EachList), cont: []byte{}})
 						}else{
 							// skip and remove blank const value each loop
@@ -1080,14 +1115,13 @@ func PreCompile(path string, opts map[string]interface{}, componentOf ...string)
 						}
 
 						if selfClose == 1 {
-							res, e := callFunc(string(fnName), &args, nil, &opts, true)
-							if e != nil {
-								cacheError = e
-								return
-							}
-
-							if res != nil {
-								write(goutil.ToByteArray(res))
+							if res, e := callFunc(string(fnName), &args, nil, &opts, true); e == nil {
+								if res != nil {
+									write(goutil.ToByteArray(res))
+								}
+							}else{
+								//todo: allow client to run this func
+								// (self closing <_json/>)
 							}
 						}else{
 							fnCont = append(fnCont, fnData{tag: elm["TAG"].val, args: args, fnName: fnName, cont: []byte{}})
@@ -1165,7 +1199,7 @@ func PreCompile(path string, opts map[string]interface{}, componentOf ...string)
 							ind++
 						}else{
 							if bytes.HasPrefix(arg.val, []byte("{{")) && bytes.HasSuffix(arg.val, []byte("}}")) {
-								if val, ok := funcs.GetOpt(arg.val, &opts, true); ok {
+								if val, ok := funcs.GetOpt(arg.val, &opts, true, &eachArgs); ok {
 									if key[0] != '$' {
 										args["$"+key] = goutil.ToByteArray(val)
 									}else{
@@ -1277,7 +1311,7 @@ func PreCompile(path string, opts map[string]interface{}, componentOf ...string)
 							}
 
 							if bytes.HasPrefix(arg.val, []byte("{{")) && bytes.HasSuffix(arg.val, []byte("}}")) {
-								if val, ok := funcs.GetOpt(arg.val, &opts, true); ok {
+								if val, ok := funcs.GetOpt(arg.val, &opts, true, &eachArgs); ok {
 									if _, ok := args[key]; !ok {
 										args[key] = goutil.ToByteArray(val)
 									}else{
@@ -1464,7 +1498,7 @@ func PreCompile(path string, opts map[string]interface{}, componentOf ...string)
 								write(regex.JoinBytes([]byte("{{{"), varName, []byte("}}}")))
 							}
 						}else{
-							if val, ok := funcs.GetOpt(varName, &opts, true); ok {
+							if val, ok := funcs.GetOpt(varName, &opts, true, &eachArgs); ok {
 								if escHTML {
 									write(goutil.EscapeHTML(goutil.ToByteArray(val)))
 								}else{
@@ -1556,6 +1590,7 @@ func Compile(path string, opts map[string]interface{}) ([]byte, error) {
 	reader := bufio.NewReader(file)
 
 	ifLevel := [][]byte{}
+	eachArgs := [][]byte{}
 	fnCont := []fnData{}
 
 	res := []byte{}
@@ -1752,7 +1787,6 @@ func Compile(path string, opts map[string]interface{}) ([]byte, error) {
 							ind = data(1)
 							return []byte{}
 						})
-						_ = ind
 
 						argList := bytes.Split(varData, []byte{' '})
 
@@ -1772,9 +1806,56 @@ func Compile(path string, opts map[string]interface{}) ([]byte, error) {
 							}
 						}
 
-						// fmt.Println(args)
+						res, e := callFunc("Each", &args, nil, &opts, false)
+						if e != nil {
+							return []byte{}, e
+						}
 
-						//todo: run pre each loop as normal compiler (pass args and handle output)
+						if reflect.TypeOf(res) == reflect.TypeOf(funcs.EachList{}) {
+							// add each statement to be handled on close
+							if res.(funcs.EachList).As != nil {
+								eachArgs = append(eachArgs, res.(funcs.EachList).As)
+							}
+							if res.(funcs.EachList).Of != nil {
+								eachArgs = append(eachArgs, res.(funcs.EachList).Of)
+							}
+							if res.(funcs.EachList).In != nil {
+								eachArgs = append(eachArgs, res.(funcs.EachList).In)
+							}
+
+							fnCont = append(fnCont, fnData{tag: []byte("each"), each: res.(funcs.EachList), cont: []byte{}})
+						}else{
+							// skip each loop to closing tag
+							b, err = reader.Peek(2)
+							for err == nil {
+								if b[0] == '{' && b[1] == '{' {
+									b, err = reader.Peek(9 + len(ind))
+									if err == nil {
+										offset := 2
+										if b[2] == '{' {
+											offset++
+										}
+
+										if bytes.Equal(b[offset:offset+6+len(ind)], append([]byte("/each:"), ind...)) {
+											skipObjStrComments(reader, &b, &err)
+											break
+										}
+									}
+								}
+
+								skipStrComments(reader, &b, &err)
+								b, err = reader.Peek(2)
+							}
+						}
+					}else if !bytes.HasPrefix(varData, []byte("Error:")) {
+						var tag []byte
+						var ind []byte
+						varData = regex.Compile(`^([\w_-]+):([0-9]+)\s*`).RepFuncRef(&varData, func(data func(int) []byte) []byte {
+							ind = data(1)
+							return []byte{}
+						})
+						_, _ = tag, ind
+						//todo: handle normal funcs (get args and content similar to each statements)
 					}
 				}else if varData[0] == '/' {
 					//todo: handle closing func
@@ -1783,23 +1864,99 @@ func Compile(path string, opts map[string]interface{}) ([]byte, error) {
 					
 					if bytes.HasPrefix(varData, []byte("if:")) {
 						var ind []byte
-						varData = regex.Compile(`^(if|else):([0-9]+)\s*`).RepFuncRef(&varData, func(data func(int) []byte) []byte {
-							ind = data(2)
+						varData = regex.Compile(`^(?:if|else):([0-9]+)\s*`).RepFuncRef(&varData, func(data func(int) []byte) []byte {
+							ind = data(1)
 							return []byte{}
 						})
 
 						if len(ifLevel) != 0 && bytes.Equal(ind, ifLevel[len(ifLevel)-1]) {
 							ifLevel = ifLevel[:len(ifLevel)-1]
 						}
+					}else if len(fnCont) != 0 {
+						var tag []byte
+						varData = regex.Compile(`^([\w_-]+):(?:[0-9]+)\s*`).RepFuncRef(&varData, func(data func(int) []byte) []byte {
+							tag = data(1)
+							return []byte{}
+						})
 
-						/* if len(ifLevel) != 0 {
-							ifLevel = ifLevel[:len(ifLevel)-1]
+						if bytes.Equal(tag, fnCont[len(fnCont)-1].tag) {
+							fn := fnCont[len(fnCont)-1]
+							fnCont = fnCont[:len(fnCont)-1]
+
+							if bytes.Equal(tag, []byte("each")) {
+								// run each loop
+								eachOpts, e := goutil.DeepCopyJson(opts)
+								if e != nil {
+									return []byte{}, e
+								}
+
+								if fn.each.In != nil {
+									eachOpts[string(fn.each.In)] = fn.each.List
+								}
+
+								for _, list := range fn.each.List {
+									b := regex.Compile(`(?s){{({|)\s*((?:"(?:\\[\\"]|[^"])*"|'(?:\\[\\']|[^'])*'|\'(?:\\[\\\']|[^\'])*\'|.)*?)\s*}}(}|)`, string(fn.each.As), string(fn.each.Of), string(fn.each.In)).RepFuncRef(&fn.cont, func(data func(int) []byte) []byte {
+										allowHTML := false
+										if len(data(1)) != 0 && len(data(3)) != 0 {
+											allowHTML = true
+										}
+
+										if fn.each.As != nil {
+											eachOpts[string(fn.each.As)] = list.Val
+										}else{
+											eachOpts[string(fn.each.As)] = nil
+										}
+										if fn.each.Of != nil {
+											eachOpts[string(fn.each.Of)] = list.Key
+										}else{
+											eachOpts[string(fn.each.Of)] = nil
+										}
+
+										if opt, ok := funcs.GetOpt(data(0), &eachOpts, false); ok {
+											b := goutil.ToByteArray(opt)
+											if !allowHTML {
+												b = goutil.EscapeHTML(b)
+											}
+											return b
+										}
+
+										return data(0)
+									})
+
+									write(b)
+								}
+
+								// remove eachArgs from end of list
+								rmArgs := map[string][]byte{}
+								if fn.each.As != nil {
+									rmArgs["as"] = fn.each.As
+								}
+								if fn.each.Of != nil {
+									rmArgs["of"] = fn.each.Of
+								}
+								if fn.each.In != nil {
+									rmArgs["in"] = fn.each.In
+								}
+
+								for i := len(eachArgs)-1; i >= 0; i-- {
+									if bytes.Equal(eachArgs[i], rmArgs["as"]) {
+										eachArgs = append(eachArgs[:i], eachArgs[i+1:]...)
+										rmArgs["as"] = nil
+									}else if bytes.Equal(eachArgs[i], rmArgs["of"]) {
+										eachArgs = append(eachArgs[:i], eachArgs[i+1:]...)
+										rmArgs["of"] = nil
+									}else if bytes.Equal(eachArgs[i], rmArgs["in"]) {
+										eachArgs = append(eachArgs[:i], eachArgs[i+1:]...)
+										rmArgs["in"] = nil
+									}
+								}
+							}else{
+								//todo: run other funcs
+							}
 						}
-						skipObjStrComments(reader, &b, &err)
-						fmt.Println(string(b)) */
 					}
 				}else{
-					if val, ok := funcs.GetOpt(regex.JoinBytes([]byte("{{"), varData, []byte("}}")), &opts); ok {
+					if val, ok := funcs.GetOpt(regex.JoinBytes([]byte("{{"), varData, []byte("}}")), &opts, false, &eachArgs); ok {
 						if reflect.TypeOf(val) == reflect.TypeOf(funcs.KeyVal{}) {
 							v := goutil.EscapeHTMLArgs(goutil.ToByteArray(val.(funcs.KeyVal).Val))
 							if escHTML {
