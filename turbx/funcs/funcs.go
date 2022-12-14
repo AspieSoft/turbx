@@ -2,6 +2,7 @@ package funcs
 
 import (
 	"bytes"
+	"errors"
 	"reflect"
 	"sort"
 	"strconv"
@@ -46,7 +47,7 @@ func convertOpt(arg []byte, opts *map[string]interface{}, pre *bool, ignoreVars 
 		return []byte(arg), true
 	}
 
-	//todo: ignore specific vars from list
+	// ignore specific vars from list
 	for _, v := range *ignoreVars {
 		if bytes.Equal(arg, v) || (*pre && arg[0] == '$' && bytes.Equal(arg[1:], v)) {
 			return regex.JoinBytes([]byte("{{"), arg, []byte("}}")), true
@@ -96,7 +97,7 @@ func getOptObj(arg []byte, opts *map[string]interface{}, pre *bool, ignoreVars *
 	for _, arg := range args {
 		if bytes.HasPrefix(arg, []byte{'['}) && bytes.HasSuffix(arg, []byte{']'}) {
 			arg = arg[1:len(arg)-1]
-			v, ok := GetOpt(arg, opts, *pre)
+			v, ok := GetOpt(arg, opts, *pre, ignoreVars)
 			if !ok {
 				return v, false
 			}
@@ -257,11 +258,6 @@ func GetOpt(arg []byte, opts *map[string]interface{}, pre bool, ignoreVars ...*[
 		}
 	}
 
-	//todo: handle object indexes and nested objects (note: may already be done, unsure)
-	// also handle strings and optionally '|' seperators (ensure precompiled methods recognize all values and get disabled for reaching string values and non constant values)
-	/* if val, ok := (*opts)[arg]; ok {
-		return val, true
-	} */
 	return nil, false
 }
 
@@ -782,34 +778,31 @@ func (t *Pre) Each(args *map[string][]byte, cont *[]byte, opts *map[string]inter
 	return resData, nil
 }
 
-/* func (t *Pre) Json() {
+func (t *Pre) Json(args *map[string][]byte, cont *[]byte, opts *map[string]interface{}, pre bool) (interface{}, error) {
+	if val, ok := GetOpt((*args)["0"], opts, pre); ok {
+		json, err := goutil.StringifyJSON(val, 0, 2)
+		if err != nil {
+			return nil, err
+		}
 
-} */
+		return json, nil
+	}
 
+	return nil, errors.New("var not found")
+}
 
-/* func (t *Comp) If(args *[][]byte, cont *[]byte, opts *map[string]interface{}) (interface{}, error) {
-	//todo: setup normal if handler without an unsolved list
+func (t *Pre) Lorem(args *map[string][]byte, cont *[]byte, opts *map[string]interface{}, pre bool) (interface{}, error) {
+	//todo: handle lorem ipsum text
+
 	return nil, nil
-} */
-
-/* func (t *Comp) Each(args *map[string][]byte, cont *[]byte, opts *map[string]interface{}) (interface{}, error) {
-	//todo: setup normal each handler
-	fmt.Println("called each func from normal compile")
-	return nil, nil
-} */
+}
 
 
 // examples
-func (t *Pre) PreFn(args *map[string][]byte, cont *[]byte, opts *map[string]interface{}) (interface{}, error) {
-	if cont == nil {
-		return append([]byte("Hello "), bytes.Replace((*args)["name"], []byte("This is "), []byte{}, 1)...), nil
-	}
-
-	*cont = bytes.TrimSpace(*cont)
-	return append([]byte("Hello "), bytes.Replace(*cont, []byte("This is "), []byte{}, 1)...), nil
-	// return nil, nil
+/* func (t *Pre) PreFn(args *map[string][]byte, cont *[]byte, opts *map[string]interface{}, pre bool) (interface{}, error) {
+	return nil, nil
 }
 
 func (t *Comp) CompFn(args *map[string][]byte, cont *[]byte, opts *map[string]interface{}) (interface{}, error) {
 	return nil, nil
-}
+} */

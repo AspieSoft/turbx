@@ -788,10 +788,24 @@ func PreCompile(path string, opts map[string]interface{}, componentOf ...string)
 								write(goutil.ToByteArray(res))
 							}
 						}else{
-							//todo: allow client to run this func
-							// (with content <_json></_json>)
-						}
+							argStr := []byte{}
+							for i := 0; i < len(fn.args); i++ {
+								if val, ok := fn.args[strconv.Itoa(i)]; ok {
+									argStr = append(argStr, regex.JoinBytes(' ', '"', goutil.EscapeHTMLArgs(val), '"')...)
+								}
+							}
+							for key, val := range fn.args {
+								if key == "TAG" {
+									continue
+								}
 
+								if _, err := strconv.Atoi(key); err != nil {
+									argStr = append(argStr, regex.JoinBytes(' ', key, '=', '"', goutil.EscapeHTMLArgs(val), '"')...)
+								}
+							}
+
+							write(regex.JoinBytes([]byte("{{#"), fn.fnName, ':', len(fnCont), argStr, []byte("}}"), fn.cont, []byte("{{/"), fn.fnName, ':', len(fnCont), []byte("}}")))
+						}
 
 						reader.Discard(1)
 						b, err = reader.Peek(1)
@@ -1120,8 +1134,23 @@ func PreCompile(path string, opts map[string]interface{}, componentOf ...string)
 									write(goutil.ToByteArray(res))
 								}
 							}else{
-								//todo: allow client to run this func
-								// (self closing <_json/>)
+								argStr := []byte{}
+								for i := 0; i < len(args); i++ {
+									if val, ok := args[strconv.Itoa(i)]; ok {
+										argStr = append(argStr, regex.JoinBytes(' ', '"', goutil.EscapeHTMLArgs(val), '"')...)
+									}
+								}
+								for key, val := range args {
+									if key == "TAG" {
+										continue
+									}
+
+									if _, err := strconv.Atoi(key); err != nil {
+										argStr = append(argStr, regex.JoinBytes(' ', key, '=', '"', goutil.EscapeHTMLArgs(val), '"')...)
+									}
+								}
+
+								write(regex.JoinBytes([]byte("{{#"), fnName, ':', len(fnCont), argStr, []byte("/}}")))
 							}
 						}else{
 							fnCont = append(fnCont, fnData{tag: elm["TAG"].val, args: args, fnName: fnName, cont: []byte{}})
@@ -1531,9 +1560,6 @@ func PreCompile(path string, opts map[string]interface{}, componentOf ...string)
 		cacheReady = true
 	}()
 
-	//todo: store tmpPath in a cache for compiler to reference
-	// remember to clear the cache and files occasionally and on detected dir changes with watchDir from goutil
-	// allow compiler to read cache file while precompiler is writing to it
 	return cacheRes
 }
 
@@ -1663,6 +1689,39 @@ func Compile(path string, opts map[string]interface{}) ([]byte, error) {
 						continue
 					}
 
+					if b[0] == '"' {
+						varData = append(varData, b[0])
+						reader.Discard(1)
+						recoverPos--
+						b, err = reader.Peek(2)
+
+						for err == nil && b[0] != '"' {
+							if b[0] == '\\' {
+								if regex.Compile(`[A-Za-z\\"]`).MatchRef(&b) {
+									varData = append(varData, b[0], b[1])
+								}else{
+									varData = append(varData, b[1])
+								}
+		
+								reader.Discard(2)
+								recoverPos -= 2
+								b, err = reader.Peek(2)
+								continue
+							}
+
+							varData = append(varData, b[0])
+							reader.Discard(1)
+							recoverPos--
+							b, err = reader.Peek(2)
+						}
+
+						varData = append(varData, b[0])
+						reader.Discard(1)
+						recoverPos--
+						b, err = reader.Peek(2)
+						continue
+					}
+
 					varData = append(varData, b[0])
 
 					reader.Discard(1)
@@ -1691,9 +1750,14 @@ func Compile(path string, opts map[string]interface{}) ([]byte, error) {
 
 				varData = bytes.TrimSpace(varData)
 
+				selfClosing := false
+				if varData[len(varData)-1] == '/' {
+					selfClosing = true
+					varData = varData[:len(varData)-1]
+				}
+
 				// handle varData
 				if varData[0] == '#' {
-					//todo: handle opening func
 					// create special case for handling if statements and each loops
 					varData = varData[1:]
 
@@ -1823,7 +1887,7 @@ func Compile(path string, opts map[string]interface{}) ([]byte, error) {
 								eachArgs = append(eachArgs, res.(funcs.EachList).In)
 							}
 
-							fnCont = append(fnCont, fnData{tag: []byte("each"), each: res.(funcs.EachList), cont: []byte{}})
+							fnCont = append(fnCont, fnData{tag: append([]byte("each:"), ind...), each: res.(funcs.EachList), cont: []byte{}})
 						}else{
 							// skip each loop to closing tag
 							b, err = reader.Peek(2)
@@ -1851,15 +1915,37 @@ func Compile(path string, opts map[string]interface{}) ([]byte, error) {
 						var tag []byte
 						var ind []byte
 						varData = regex.Compile(`^([\w_-]+):([0-9]+)\s*`).RepFuncRef(&varData, func(data func(int) []byte) []byte {
-							ind = data(1)
+							tag = data(1)
+							ind = data(2)
 							return []byte{}
 						})
-						_, _ = tag, ind
-						//todo: handle normal funcs (get args and content similar to each statements)
+
+						args := map[string][]byte{}
+						i := 0
+						regex.Compile(`([\w_-]+|)=?"((?:\\[\\"]|.)*?)"`).RepFuncRef(&varData, func(data func(int) []byte) []byte {
+							if len(data(1)) != 0 {
+								args[string(data(1))] = regex.Compile(`\\([\\"])`).RepStrComplex(data(2), []byte("$1"))
+							}else{
+								args[strconv.Itoa(i)] = regex.Compile(`\\([\\"])`).RepStrComplex(data(2), []byte("$1"))
+								i++
+							}
+
+							return []byte{}
+						}, true)
+
+						if selfClosing {
+							// run func
+							if res, e := callFunc(string(tag), &args, nil, &opts, false); e == nil {
+								if res != nil {
+									write(goutil.ToByteArray(res))
+								}
+							}
+						}else{
+							// let closing tag run func
+							fnCont = append(fnCont, fnData{tag: regex.JoinBytes(tag, ':', ind), fnName: tag, args: args, cont: []byte{}})
+						}
 					}
 				}else if varData[0] == '/' {
-					//todo: handle closing func
-
 					varData = varData[1:]
 					
 					if bytes.HasPrefix(varData, []byte("if:")) {
@@ -1874,12 +1960,14 @@ func Compile(path string, opts map[string]interface{}) ([]byte, error) {
 						}
 					}else if len(fnCont) != 0 {
 						var tag []byte
-						varData = regex.Compile(`^([\w_-]+):(?:[0-9]+)\s*`).RepFuncRef(&varData, func(data func(int) []byte) []byte {
+						var ind []byte
+						varData = regex.Compile(`^([\w_-]+):([0-9]+)\s*`).RepFuncRef(&varData, func(data func(int) []byte) []byte {
 							tag = data(1)
+							ind = data(2)
 							return []byte{}
 						})
 
-						if bytes.Equal(tag, fnCont[len(fnCont)-1].tag) {
+						if bytes.Equal(regex.JoinBytes(tag, ':', ind), fnCont[len(fnCont)-1].tag) {
 							fn := fnCont[len(fnCont)-1]
 							fnCont = fnCont[:len(fnCont)-1]
 
@@ -1951,7 +2039,12 @@ func Compile(path string, opts map[string]interface{}) ([]byte, error) {
 									}
 								}
 							}else{
-								//todo: run other funcs
+								// run other funcs
+								if res, e := callFunc(string(fn.fnName), &fn.args, &fn.cont, &opts, false); e == nil {
+									if res != nil {
+										write(goutil.ToByteArray(res))
+									}
+								}
 							}
 						}
 					}
