@@ -95,10 +95,6 @@ var pathCache *haxmap.Map[string, pathCacheData] = haxmap.New[string, pathCacheD
 
 
 func init(){
-	/* if regex.Match([]byte(os.Args[0]), regex.Compile(`^/tmp/go-build[0-9]+/`)) {
-		debugMode = true
-	} */
-
 	args := goutil.MapArgs()
 	if args["debug"] == "true" {
 		debugMode = true
@@ -417,8 +413,6 @@ func PreCompile(path string, opts map[string]interface{}, componentOf ...string)
 		}
 
 
-		//todo: compile markdown while reading file
-
 		b, err := reader.Peek(1)
 		for err == nil {
 			// handle html elements, components, and pre funcs
@@ -652,7 +646,9 @@ func PreCompile(path string, opts map[string]interface{}, componentOf ...string)
 									reader.Discard(3)
 									key = key[3:]
 									if len(key) == 0 {
-										key = val
+										if regex.Compile(`^["'\']?([\w_-]+).*$`).MatchRef(&val) {
+											key = regex.Compile(`^["'\']?([\w_-]+).*$`).RepStrComplexRef(&val, []byte("$1"))
+										}
 									}
 
 									val = regex.JoinBytes('{', '{', '{', val, '}', '}', '}')
@@ -660,7 +656,9 @@ func PreCompile(path string, opts map[string]interface{}, componentOf ...string)
 									reader.Discard(2)
 									key = key[3:]
 									if len(key) == 0 {
-										key = val
+										if regex.Compile(`^["'\']?([\w_-]+).*$`).MatchRef(&val) {
+											key = regex.Compile(`^["'\']?([\w_-]+).*$`).RepStrComplexRef(&val, []byte("$1"))
+										}
 									}
 
 									val = regex.JoinBytes('{', '{', val, '}', '}')
@@ -671,7 +669,9 @@ func PreCompile(path string, opts map[string]interface{}, componentOf ...string)
 									reader.Discard(2)
 									key = key[2:]
 									if len(key) == 0 {
-										key = val
+										if regex.Compile(`^["'\']?([\w_-]+).*$`).MatchRef(&val) {
+											key = regex.Compile(`^["'\']?([\w_-]+).*$`).RepStrComplexRef(&val, []byte("$1"))
+										}
 									}
 
 									val = regex.JoinBytes('{', '{', val, '}', '}')
@@ -855,7 +855,7 @@ func PreCompile(path string, opts map[string]interface{}, componentOf ...string)
 								}
 							}
 
-							if ifMode[len(ifMode)-1] == 3 {
+							if ifMode[len(ifMode)-1] == 3 && len(fnLevel) != 0 {
 								write(regex.JoinBytes([]byte("{{/if:"), len(fnLevel)-1, []byte("}}")))
 								fnLevel = fnLevel[:len(fnLevel)-1]
 							}
@@ -979,11 +979,9 @@ func PreCompile(path string, opts map[string]interface{}, componentOf ...string)
 
 						args := map[string][]byte{}
 
-						ind := 0
 						for key, arg := range elm {
 							if arg.val == nil {
-								args[strconv.Itoa(ind)] = []byte(key)
-								ind++
+								args[strconv.Itoa(int(arg.ind))] = []byte(key)
 							}else{
 								args[key] = arg.val
 							}
@@ -1118,11 +1116,9 @@ func PreCompile(path string, opts map[string]interface{}, componentOf ...string)
 
 						args := map[string][]byte{}
 
-						ind := 0
 						for key, arg := range elm {
 							if arg.val == nil {
-								args[strconv.Itoa(ind)] = []byte(key)
-								ind++
+								args[strconv.Itoa(int(arg.ind))] = []byte(key)
 							}else{
 								args[key] = arg.val
 							}
@@ -1366,9 +1362,11 @@ func PreCompile(path string, opts map[string]interface{}, componentOf ...string)
 
 					// sort html args
 					argSort := []string{}
-					for key := range args {
+					for key, val := range args {
 						if !regex.Compile(`^([A-Z]+|[0-9]+)$`).Match([]byte(key)) {
 							argSort = append(argSort, key)
+						}else if regex.Compile(`^[0-9]+$`).Match([]byte(key)) && regex.Compile(`^[\w_-]+$`).MatchRef(&val) {
+							argSort = append(argSort, string(val))
 						}
 					}
 					sort.Strings(argSort)
@@ -1542,10 +1540,18 @@ func PreCompile(path string, opts map[string]interface{}, componentOf ...string)
 							}
 						}
 					}
+
+					continue
 				}
 
+				b, err = reader.Peek(1)
+			}
+
+			if compileMarkdown(reader, &b, &err) {
 				continue
 			}
+
+			//todo: handle normal comments (//line and /*block*/)
 
 			write(b)
 			reader.Discard(1)
@@ -1935,10 +1941,13 @@ func Compile(path string, opts map[string]interface{}) ([]byte, error) {
 
 						if selfClosing {
 							// run func
-							if res, e := callFunc(string(tag), &args, nil, &opts, false); e == nil {
+							res, e := callFunc(string(tag), &args, nil, &opts, false)
+							if e == nil {
 								if res != nil {
 									write(goutil.ToByteArray(res))
 								}
+							}else if debugMode {
+								fmt.Println(e)
 							}
 						}else{
 							// let closing tag run func
@@ -2040,10 +2049,13 @@ func Compile(path string, opts map[string]interface{}) ([]byte, error) {
 								}
 							}else{
 								// run other funcs
-								if res, e := callFunc(string(fn.fnName), &fn.args, &fn.cont, &opts, false); e == nil {
+								res, e := callFunc(string(fn.fnName), &fn.args, &fn.cont, &opts, false)
+								if e == nil {
 									if res != nil {
 										write(goutil.ToByteArray(res))
 									}
+								}else if debugMode {
+									fmt.Println(e)
 								}
 							}
 						}
@@ -2408,7 +2420,7 @@ func tmpPath(viewPath string, tries ...int) (*os.File, string, error) {
 	var path string
 	var err error
 	if debugMode {
-		tmp = []byte(viewPath)
+		tmp = regex.Compile(`[^\w_\-\.]+`).RepStr(regex.Compile(`/`).RepStr([]byte(viewPath), []byte{'.'}), []byte{})
 		path, err = goutil.JoinPath(cacheTmpPath, string(tmp) + ".cache." + fileExt)
 	}else{
 		tmp = randBytes(32, nil)

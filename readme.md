@@ -180,23 +180,23 @@ app.use('/fix-cache', async function(req, res, next){
 
 ```xhtml
 
-  <!-- random paragraph of lorem ipsum text -->
-  <_lorem/>
-  <!-- paragraph of lorem ipsum text with 2 sentences -->
-  <_lorem 2/>
-  <!-- sentence of lorem ipsum text with 3-5 words -->
-  <_lorem s 3 5/>
-  <!-- word of lorem ipsum text with 5-10 letters -->
-  <_lorem w 5 10/>
+<!-- random paragraph of lorem ipsum text -->
+<_lorem/>
+<!-- paragraph of lorem ipsum text with 2 sentences -->
+<_lorem 2/>
+<!-- sentence of lorem ipsum text with 3-5 words -->
+<_lorem s 3 5/>
+<!-- word of lorem ipsum text with 5-10 letters -->
+<_lorem w 5 10/>
 
-  <!-- embed a youtube video -->
-  <_youtube url="https://www.youtube.com/watch?v=SJeBRW1QQMA" />
-  <!-- embed a youtube playlist -->
-  <_youtube url="https://www.youtube.com/playlist?list=PL0vfts4VzfNjnYhJMfTulea5McZbQLM7G" />
-  <!-- alias for yourube embed function -->
-  <_yt url="https://www.youtube.com/watch?v=SJeBRW1QQMA" />
-  <!-- this function accepts multiple url formats -->
-  <_yt url="youtu.be/SJeBRW1QQMA" />
+<!-- embed a youtube video -->
+<_youtube url="https://www.youtube.com/watch?v=SJeBRW1QQMA" />
+<!-- embed a youtube playlist -->
+<_youtube url="https://www.youtube.com/playlist?list=PL0vfts4VzfNjnYhJMfTulea5McZbQLM7G" />
+<!-- alias for yourube embed function -->
+<_yt url="https://www.youtube.com/watch?v=SJeBRW1QQMA" />
+<!-- this function accepts multiple url formats -->
+<_yt url="youtu.be/SJeBRW1QQMA" />
 
 ```
 

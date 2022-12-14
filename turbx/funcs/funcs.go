@@ -9,6 +9,7 @@ import (
 
 	"github.com/AspieSoft/go-regex/v4"
 	"github.com/AspieSoft/goutil/v3"
+	lorem "github.com/drhodes/golorem"
 )
 
 type Pre struct {}
@@ -792,10 +793,134 @@ func (t *Pre) Json(args *map[string][]byte, cont *[]byte, opts *map[string]inter
 }
 
 func (t *Pre) Lorem(args *map[string][]byte, cont *[]byte, opts *map[string]interface{}, pre bool) (interface{}, error) {
-	//todo: handle lorem ipsum text
+	wType := byte('p')
+	if (*args)["type"] != nil && len((*args)["type"]) != 0 {
+		wType = (*args)["type"][0]
+	}else if (*args)["0"] != nil && len((*args)["0"]) != 0 && !regex.Compile(`^[0-9]+$`).Match((*args)["0"]) {
+		wType = (*args)["0"][0]
+	}else if (*args)["1"] != nil && len((*args)["1"]) != 0 && !regex.Compile(`^[0-9]+$`).Match((*args)["1"]) {
+		wType = (*args)["1"][0]
+	}else if (*args)["2"] != nil && len((*args)["2"]) != 0 && !regex.Compile(`^[0-9]+$`).Match((*args)["2"]) {
+		wType = (*args)["2"][0]
+	}
 
-	return nil, nil
+	rep := 1
+	minLen := 2
+	maxLen := 10
+	repUsed := -1
+	used := -1
+
+	if (*args)["rep"] != nil {
+		repUsed = -2
+		i, err := strconv.Atoi(string((*args)["rep"]))
+		if err == nil {
+			rep = i
+		}
+	}else if len((*args)["0"]) != 0 && regex.Compile(`^[0-9]+$`).Match((*args)["0"]) {
+		repUsed = 0
+		i, err := strconv.Atoi(string((*args)["0"]))
+		if err == nil {
+			rep = i
+		}
+	}else if (*args)["1"] != nil && regex.Compile(`^[0-9]+$`).Match((*args)["1"]) {
+		repUsed = 1
+		i, err := strconv.Atoi(string((*args)["1"]))
+		if err == nil {
+			rep = i
+		}
+	}else if (*args)["2"] != nil && regex.Compile(`^[0-9]+$`).Match((*args)["2"]) {
+		repUsed = 2
+		i, err := strconv.Atoi(string((*args)["2"]))
+		if err == nil {
+			rep = i
+		}
+	}
+
+	if (*args)["min"] != nil {
+		used = -2
+		i, err := strconv.Atoi(string((*args)["min"]))
+		if err == nil {
+			minLen = i
+		}
+	}else if repUsed != 0 && len((*args)["0"]) != 0 && regex.Compile(`^[0-9]+$`).Match((*args)["0"]) {
+		used = 0
+		i, err := strconv.Atoi(string((*args)["0"]))
+		if err == nil {
+			minLen = i
+		}
+	}else if repUsed != 1 && (*args)["1"] != nil && regex.Compile(`^[0-9]+$`).Match((*args)["1"]) {
+		used = 1
+		i, err := strconv.Atoi(string((*args)["1"]))
+		if err == nil {
+			minLen = i
+		}
+	}else if repUsed != 2 && (*args)["2"] != nil && regex.Compile(`^[0-9]+$`).Match((*args)["2"]) {
+		used = 2
+		i, err := strconv.Atoi(string((*args)["2"]))
+		if err == nil {
+			minLen = i
+		}
+	}
+
+	if (*args)["max"] != nil {
+		i, err := strconv.Atoi(string((*args)["max"]))
+		if err == nil {
+			maxLen = i
+		}
+	}else if repUsed != 0 && used != 0 && (*args)["0"] != nil && regex.Compile(`^[0-9]+$`).Match((*args)["0"]) {
+		i, err := strconv.Atoi(string((*args)["0"]))
+		if err == nil {
+			maxLen = i
+		}
+	}else if repUsed != 1 &&  used != 1 && (*args)["1"] != nil && regex.Compile(`^[0-9]+$`).Match((*args)["1"]) {
+		i, err := strconv.Atoi(string((*args)["1"]))
+		if err == nil {
+			maxLen = i
+		}
+	}else if repUsed != 2 && used != 2 && (*args)["2"] != nil && regex.Compile(`^[0-9]+$`).Match((*args)["2"]) {
+		i, err := strconv.Atoi(string((*args)["2"]))
+		if err == nil {
+			maxLen = i
+		}
+	}else if used != -1 {
+		maxLen = minLen
+	}
+
+	if wType == 'p' {
+		res := [][]byte{}
+		for i := 0; i < rep; i++ {
+			res = append(res, []byte("<p>"+lorem.Paragraph(minLen, maxLen)+"</p>"))
+		}
+		return bytes.Join(res, []byte("\n\n")), nil
+	} else if wType == 'w' {
+		res := [][]byte{}
+		for i := 0; i < rep; i++ {
+			res = append(res, []byte(lorem.Word(minLen, maxLen)))
+		}
+		return bytes.Join(res, []byte(" ")), nil
+	} else if wType == 's' {
+		res := [][]byte{}
+		for i := 0; i < rep; i++ {
+			res = append(res, []byte(lorem.Sentence(minLen, maxLen)))
+		}
+		return bytes.Join(res, []byte(" ")), nil
+	} else if wType == 'h' {
+		return []byte(lorem.Host()), nil
+	} else if wType == 'e' {
+		return []byte(lorem.Email()), nil
+	} else if wType == 'u' {
+		return []byte(lorem.Url()), nil
+	}
+
+	res := [][]byte{}
+	for i := 0; i < rep; i++ {
+		res = append(res, []byte("<p>"+lorem.Paragraph(minLen, maxLen)+"</p>"))
+	}
+	return bytes.Join(res, []byte("\n\n")), nil
 }
+
+
+//todo: add debug func
 
 
 // examples

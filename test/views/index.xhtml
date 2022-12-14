@@ -1,1 +1,121 @@
-<_lorem 2/>
+<h1>Hello World</h1>
+
+<br><br>
+
+{{emptyVar}}
+{{{emptyVar}}}
+
+<div {{emptyVar="emptyVar"}}></div>
+<div {{="emptyVar"}}></div>
+<div emptyVar="{{emptyVar}}"></div>
+
+<_if emptyVar>
+  this should not run before the cache
+</_if>
+
+<br><br>
+
+'test'
+
+<!--comment-->
+
+/* comment 1 */
+
+// comment 2
+
+test
+
+https://www.aspiesoft.com
+
+<Input type="text" name="test"/>
+
+<a {{href="url"}}>Link</a>
+
+<_yt url="https://www.youtube.com/watch?v=SJeBRW1QQMA" />
+<_youtube url="https://www.youtube.com/playlist?list=PL0vfts4VzfNjnYhJMfTulea5McZbQLM7G" />
+<_youtube url="https://www.youtube.com/watch?v=pEfrdAtAmqk&list=UUsBjURrPoezykLs9EqgamOA" />
+
+<script>
+  // console.log('this is a js script test')
+  console.log('this is a js script test: ' + OPTS.test)
+</script>
+
+<style>
+  body {
+    background: lightblue;
+  }
+
+  h1 {
+    color: red;
+  }
+</style>
+
+
+<Component test="5">
+  This Is A Test
+  <h1>This HTML Should Be Escaped</h1>
+</Component>
+
+<Component test=8 {{a="b"}}/>
+
+<!-- import test.xhtml -->
+<Test/>
+
+<Tests.Test1/>
+
+<_if test="1">
+  <h2>Test 1</h2>
+<_else test="2"/>
+  <h2>Test 2</h2>
+<_else/>
+  <h2>Test 0</h2>
+</_if>
+
+
+<_if !test0>
+  <h3>false</h3>
+</_if>
+
+<_if test1>
+  <h3>true</h3>
+</_if>
+
+<br><br>
+<_lorem 5 s/>
+<br><br>
+<br><br>
+
+<_each obj as="item" of="key" in="i">
+  {{key}} - {{item}} - {{i}}
+  <br>
+  <_each obj as="item" of="key" in="i">
+    <span style="color: red;">{{key}} - {{item}} - {{i}}</span>
+    <br>
+  </_each>
+</_each>
+
+<br><br>
+
+{{arr.0}}, {{arr.1}}, {{arr.2}}
+
+<br><br>
+
+{{obj.test1}}, {{obj.test2}}, {{invalidObj.test1}}
+
+<br><br>
+
+{{testKey}} - {{obj[testKey]}}
+
+<br><br>
+
+{{"string"}}
+
+{{{"test"}}
+
+<div class="{{var|'default'}}"></div>
+
+<div {{class="var|'default'"}}></div>
+
+<div {{="var|'default'"}}></div>
+
+<div class="a" b c="2"></div>
