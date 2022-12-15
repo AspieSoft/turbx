@@ -92,5 +92,5 @@ func main(){
 
 
 	_ = res
-	fmt.Println("\n----------\n\n", string(res))
+	fmt.Println("\n----------\n\n"+string(res))
 }

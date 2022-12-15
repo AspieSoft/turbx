@@ -1666,6 +1666,27 @@ func PreCompile(path string, opts map[string]interface{}, componentOf ...string)
 
 			if b[0] == '\n' {
 				linePos = 0
+
+				b, err = reader.Peek(2)
+				if err == nil {
+					write([]byte{'\n'})
+
+					if !debugMode {
+						skipWhitespace(reader, &b, &err)
+					}else{
+						reader.Discard(1)
+						b, err = reader.Peek(1)
+					}
+				}else{
+					reader.Discard(1)
+					b, err = reader.Peek(1)
+
+					if debugMode && len(componentOf) == 0 {
+						write([]byte{'\n'})
+					}
+				}
+
+				continue
 			}else if !regex.Compile(`[\s\r\n]`).MatchRef(&[]byte{b[0]}) {
 				linePos++
 			}
@@ -1751,9 +1772,10 @@ func Compile(path string, opts map[string]interface{}) ([]byte, error) {
 		res = append(res, b...)
 	}
 
+	b, err := reader.Peek(1)
 
 	firstLoop := true
-	for !*compData.Ready && *compData.Err == nil {
+	for !(*compData.Ready || *compData.Err != nil) || err == nil {
 		if firstLoop {
 			firstLoop = false
 		}else{
@@ -1762,9 +1784,9 @@ func Compile(path string, opts map[string]interface{}) ([]byte, error) {
 
 		offset := compileReadSize
 
-		b, err := reader.Peek(compileReadSize)
+		b, err = reader.Peek(compileReadSize)
 		if err != nil && err.Error() == "EOF" {
-			for err != nil && err.Error() == "EOF" && !*compData.Ready && *compData.Err == nil {
+			for err != nil && err.Error() == "EOF" && !(*compData.Ready || *compData.Err != nil) {
 				time.Sleep(time.Nanosecond * 10)
 				b, err = reader.Peek(compileReadSize)
 			}
@@ -1786,11 +1808,15 @@ func Compile(path string, opts map[string]interface{}) ([]byte, error) {
 				recoverPos := int64(-1)
 
 				b, err = reader.Peek(1)
-				for err == nil && b[0] == '{' {
+				for err == nil && b[0] == '{' && escSize < 3 {
 					escSize++
 					reader.Discard(1)
 					recoverPos--
 					b, err = reader.Peek(1)
+				}
+				if escSize < 2 {
+					write(bytes.Repeat([]byte{'{'}, escSize))
+					break
 				}
 
 				varData := []byte{}
@@ -1853,7 +1879,8 @@ func Compile(path string, opts map[string]interface{}) ([]byte, error) {
 				}
 
 				if err != nil {
-					file.Seek(recoverPos, os.SEEK_CUR)
+					/* file.Seek(recoverPos, os.SEEK_CUR)
+					reader.Reset(file) */
 					break
 				}
 
@@ -2204,7 +2231,11 @@ func Compile(path string, opts map[string]interface{}) ([]byte, error) {
 			reader.Discard(compileReadSize)
 			b, err = reader.Peek(compileReadSize)
 		}
+
+		b, err = reader.Peek(1)
 	}
+
+	// fmt.Println("-----\n"+string(res[len(res)-8:]))
 
 	return res, nil
 }
