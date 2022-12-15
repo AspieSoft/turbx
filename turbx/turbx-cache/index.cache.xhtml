@@ -1,147 +1,19 @@
-<h1>Hello World</h1>
+<a href="/link/to/page">My Link</a>{target="blank"}
 
-<br/><br/>
+<img src="/link/to/image.png" alt="My Embed"/>{loading="lazy"}
 
-{{emptyVar}}
-{{{emptyVar}}}
+<video controls>
+<source src="/link/to/video.mp4" type="video/mp4"/>
+My Embed
+</video>{no-controls}
 
-<div {{emptyvar="emptyVar"}}></div>
-<div {{emptyvar="emptyVar"}}></div>
-<div {{emptyvar="emptyVar"}}></div>
+<audio controls>
+<source src="/link/to/audio.mp3" type="audio/mp3"/>
+My Embed
+</audio>{no-controls}
 
-{{#if:0 emptyvar}}
-  this should not run before the cache
-{{/if:0}}
+<iframe src="/link/to/doc.pdf" alt="My Embed"></iframe>{loading="lazy"}
 
-<br/><br/>
+<iframe src="/link/to/iframe/embed" alt="My Embed"></iframe>{loading="lazy"}
 
-'test'
-
-
-
-/* comment 1 */
-
-// comment 2
-
-test
-
-https://www.aspiesoft.com
-
-{{#Error: Turbx Component Failed: 'Input'
-file does not exist or is invalid}}
-<a {{href="url"}}>Link</a>
-
-{{#Yt:0 url="https://www.youtube.com/watch?v=SJeBRW1QQMA"/}}
-{{#Youtube:0 url="https://www.youtube.com/playlist?list=PL0vfts4VzfNjnYhJMfTulea5McZbQLM7G"/}}
-{{#Youtube:0 url="https://www.youtube.com/watch?v=pEfrdAtAmqk&list=UUsBjURrPoezykLs9EqgamOA"/}}
-
-<script>
-  // console.log('this is a js script test')
-  console.log('this is a js script test: ' + OPTS.test)
-</script>
-
-<style>
-  body {
-    background: lightblue;
-  }
-
-  h1 {
-    color: red;
-  }
-</style>
-
-
-<h3>This is a component</h3>
-
-
-test: 5
-
-<br/><br/>
-
-
-
-  This Is A Test
-  &lt;h1&gt;This HTML Should Be Escaped&lt;/h1&gt;
-
-
-<br/>
-
-
-<h3>This is a component</h3>
-
-
-test: 8
-
-<br/><br/>
-
-
-
-
-<br/>
-
-
-
-<md>
-  ## This is a test
-</md>
-
-
-## This is test 1
-
-
-{{#if:0 test = "1"}}
-  <h2>Test 1</h2>
-{{#else:0 test = "2"}}
-  <h2>Test 2</h2>
-{{#else:0}}
-  <h2>Test 0</h2>
-{{/if:0}}
-
-
-{{#if:0 ^ test0}}
-  <h3>false</h3>
-{{/if:0}}
-
-{{#if:0 test1}}
-  <h3>true</h3>
-{{/if:0}}
-
-<br/><br/>
-Concurrunt nota re dicam. Aer deo vos satietate retenta instat. Amare illic mea regem falli contexo pro peregrinorum heremo. Undique re timent, at imaginesque teneant modis me. Dulcedo aditum.
-<br/><br/>
-<br/><br/>
-
-
-  0 - 0 - 
-  <br/>
-  
-    <span style="color: red;">0 - 0 - </span>
-    <br/>
-  
-
-
-<br/><br/>
-
-{{arr.0}}, {{arr.1}}, {{arr.2}}
-
-<br/><br/>
-
-{{obj.test1}}, {{obj.test2}}, {{invalidObj.test1}}
-
-<br/><br/>
-
-{{testKey}} - {{obj[testKey]}}
-
-<br/><br/>
-
-string
-
-test
-
-<div {{class="var|\'default\'"}}></div>
-
-<div {{class="var|\'default\'"}}></div>
-
-<div {{var="var|\'default\'"}}></div>
-
-<div b c="2" class="a"></div>
+<iframe src="https://www.youtube.com/watch?v=PkADl0HubMY" alt="YT Embed"></iframe>{lazy}

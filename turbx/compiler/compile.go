@@ -412,9 +412,19 @@ func PreCompile(path string, opts map[string]interface{}, componentOf ...string)
 			}
 		}
 
+		linePos := 0
 
 		b, err := reader.Peek(1)
 		for err == nil {
+			if b[0] == '\\' {
+				b, err = reader.Peek(2)
+				write(escapeChar(b[1]))
+				reader.Discard(2)
+				b, err = reader.Peek(1)
+				linePos++
+				continue
+			}
+
 			// handle html elements, components, and pre funcs
 			if b[0] == '<' {
 				reader.Discard(1)
@@ -920,10 +930,10 @@ func PreCompile(path string, opts map[string]interface{}, componentOf ...string)
 						}
 
 						if res == true {
-							if elseMode && ifMode[len(ifMode)-1] != 1 {
+							if elseMode && len(ifMode) != 0 && ifMode[len(ifMode)-1] != 1 {
 								write(regex.JoinBytes([]byte("{{#else:"), len(fnLevel)-1, []byte("}}")))
 								ifMode[len(ifMode)-1] = 3
-							}else{
+							}else if len(ifMode) != 0 {
 								ifMode[len(ifMode)-1] = 2
 							}
 						}else if res == false {
@@ -934,7 +944,9 @@ func PreCompile(path string, opts map[string]interface{}, componentOf ...string)
 										b, err = reader.Peek(1)
 										fnLevel = append(fnLevel, "if")
 										// ifMode = append(ifMode, 1)
-										ifMode[len(ifMode)-1] = 1
+										if len(ifMode) != 0 {
+											ifMode[len(ifMode)-1] = 1
+										}
 										break
 									}else if err == nil && b[1] == '/' && b[2] == '_' && bytes.Equal(b[3:5], []byte("if")) && regex.Compile(`^[\s\r\n/>]$`).MatchRef(&[]byte{b[5]}) {
 										b, err = reader.Peek(1)
@@ -944,10 +956,9 @@ func PreCompile(path string, opts map[string]interface{}, componentOf ...string)
 
 								skipObjStrComments(reader, &b, &err)
 							}
-
 						}else if reflect.TypeOf(res) == goutil.VarType["byteArray"] {
 							if elseMode {
-								if ifMode[len(ifMode)-1] == 1 {
+								if len(ifMode) != 0 && ifMode[len(ifMode)-1] == 1 {
 									ifMode[len(ifMode)-1] = 0
 									write(regex.JoinBytes([]byte("{{#if:"), len(fnLevel)-1, ' ', res, []byte("}}")))
 								}else{
@@ -960,7 +971,7 @@ func PreCompile(path string, opts map[string]interface{}, componentOf ...string)
 							}
 						}else{
 							if elseMode {
-								if ifMode[len(ifMode)-1] == 1 {
+								if len(ifMode) != 0 && ifMode[len(ifMode)-1] == 1 {
 									ifMode[len(ifMode)-1] = 0
 									write(regex.JoinBytes([]byte("{{#if:"), len(fnLevel)-1, ' ', bytes.Join(args, []byte{' '}), []byte("}}")))
 								}else{
@@ -1524,7 +1535,13 @@ func PreCompile(path string, opts map[string]interface{}, componentOf ...string)
 							}else{
 								write(regex.JoinBytes([]byte("{{{"), varName, []byte("}}}")))
 							}
-						}else{
+						}else if isLayout && bytes.Equal(bytes.ToLower(varName), []byte("head")) {
+							if escHTML {
+								write(goutil.EscapeHTML(addLayoutHead()))
+							}else{
+								write(addLayoutHead())
+							}
+						} else{
 							if val, ok := funcs.GetOpt(varName, &opts, true, &eachArgs); ok {
 								if escHTML {
 									write(goutil.EscapeHTML(goutil.ToByteArray(val)))
@@ -1541,19 +1558,119 @@ func PreCompile(path string, opts map[string]interface{}, componentOf ...string)
 						}
 					}
 
+					linePos++
 					continue
 				}
 
 				b, err = reader.Peek(1)
 			}
 
-			if compileMarkdown(reader, &b, &err) {
+			// handle strings to prevent accidental markdown and comments
+			if b[0] == '"' || b[0] == '\'' || b[0] == '`' {
+				q := b[0]
+				str := []byte{q}
+				reader.Discard(1)
+				b, err = reader.Peek(2)
+				for err == nil && b[0] != q {
+					if b[0] == '\\' {
+						if regex.Compile(`[A-Za-z"'\']`).MatchRef(&b) {
+							str = append(str, b[0], b[1])
+						}else{
+							str = append(str, b[1])
+						}
+
+						reader.Discard(2)
+						b, err = reader.Peek(2)
+						continue
+					}
+
+					str = append(str, b[0])
+					reader.Discard(1)
+					b, err = reader.Peek(2)
+				}
+
+				str = append(str, q)
+				reader.Discard(1)
+				b, err = reader.Peek(1)
+
+				write(str)
+
+				linePos++
 				continue
 			}
 
-			//todo: handle normal comments (//line and /*block*/)
+			// handle normal comments (//line and /*block*/)
+			if b[0] == '/' {
+				b, err = reader.Peek(2)
+				if b[1] == '/' {
+					reader.Discard(2)
+					b, err = reader.Peek(1)
 
-			write(b)
+					var keepComment []byte
+					if b[0] == '!' {
+						keepComment = []byte{'/', '/', '!'}
+						reader.Discard(1)
+						b, err = reader.Peek(1)
+					}
+
+					for err == nil && b[0] != '\n' {
+						if keepComment != nil {
+							keepComment = append(keepComment, b[0])
+						}
+						reader.Discard(1)
+						b, err = reader.Peek(1)
+					}
+
+					if keepComment != nil {
+						keepComment = append(keepComment, '\n')
+						write(keepComment)
+					}
+
+					reader.Discard(1)
+					b, err = reader.Peek(1)
+					continue
+				}else if b[1] == '*' {
+					reader.Discard(2)
+					b, err = reader.Peek(2)
+
+					var keepComment []byte
+					if b[0] == '!' {
+						keepComment = []byte{'/', '*', '!'}
+						reader.Discard(1)
+						b, err = reader.Peek(2)
+					}
+
+					for err == nil && !(b[0] == '*' && b[1] == '/') {
+						if keepComment != nil {
+							keepComment = append(keepComment, b[0])
+						}
+						reader.Discard(1)
+						b, err = reader.Peek(2)
+					}
+
+					if keepComment != nil {
+						keepComment = append(keepComment, '*', '/')
+						write(keepComment)
+					}
+					
+					reader.Discard(2)
+					b, err = reader.Peek(1)
+					continue
+				}
+			}
+
+			if compileMarkdown(reader, &write, &b, &err, &linePos) {
+				linePos++
+				continue
+			}
+
+			if b[0] == '\n' {
+				linePos = 0
+			}else if !regex.Compile(`[\s\r\n]`).MatchRef(&[]byte{b[0]}) {
+				linePos++
+			}
+
+			write([]byte{b[0]})
 			reader.Discard(1)
 			b, err = reader.Peek(1)
 		}
@@ -2089,14 +2206,13 @@ func Compile(path string, opts map[string]interface{}) ([]byte, error) {
 		}
 	}
 
-
 	return res, nil
 }
 
 
 func skipWhitespace(reader *bufio.Reader, b *[]byte, err *error) int {
 	i := 0
-	for err != nil && regex.Compile(`[\s\r\n]`).MatchRef(b) {
+	for *err == nil && regex.Compile(`[\s\r\n]`).MatchRef(b) {
 		reader.Discard(1)
 		*b, *err = reader.Peek(1)
 		i++
@@ -2287,7 +2403,7 @@ func callFunc(name string, args *map[string][]byte, cont *[]byte, opts *map[stri
 	if pre {
 		m = reflect.ValueOf(&preCompFuncs).MethodByName(name)
 		if goutil.IsZeroOfUnderlyingType(m) {
-			return nil, errors.New("method does not exist in Pre Compiled Functions")
+			return nil, errors.New("method '"+name+"' does not exist in Pre Compiled Functions")
 		}
 		isPre = true
 	}else{
@@ -2296,7 +2412,8 @@ func callFunc(name string, args *map[string][]byte, cont *[]byte, opts *map[stri
 			// return nil, errors.New("method does not exist in Compiled Functions")
 			m = reflect.ValueOf(&preCompFuncs).MethodByName(name)
 			if goutil.IsZeroOfUnderlyingType(m) {
-				return nil, errors.New("method does not exist in Compiled Functions")
+				// fmt.Println(name)
+				return nil, errors.New("method '"+name+"' does not exist in Compiled Functions")
 			}
 			isPre = true
 		}
@@ -2341,7 +2458,7 @@ func callFuncArr(name string, args *[][]byte, cont *[]byte, opts *map[string]int
 	if pre {
 		m = reflect.ValueOf(&preCompFuncs).MethodByName(name)
 		if goutil.IsZeroOfUnderlyingType(m) {
-			return nil, errors.New("method does not exist in Pre Compiled Functions")
+			return nil, errors.New("method '"+name+"' does not exist in Pre Compiled Functions")
 		}
 		isPre = true
 	}else{
@@ -2350,7 +2467,7 @@ func callFuncArr(name string, args *[][]byte, cont *[]byte, opts *map[string]int
 			// return nil, errors.New("method does not exist in Compiled Functions")
 			m = reflect.ValueOf(&preCompFuncs).MethodByName(name)
 			if goutil.IsZeroOfUnderlyingType(m) {
-				return nil, errors.New("method does not exist in Compiled Functions")
+				return nil, errors.New("method '"+name+"' does not exist in Compiled Functions")
 			}
 			isPre = true
 		}
@@ -2428,7 +2545,7 @@ func tmpPath(viewPath string, tries ...int) (*os.File, string, error) {
 	}
 
 	loops := 0
-	for err != nil {
+	for err == nil {
 		if _, e := os.Stat(path); e != nil {
 			break
 		}
@@ -2446,7 +2563,8 @@ func tmpPath(viewPath string, tries ...int) (*os.File, string, error) {
 		return nil, "", errors.New("failed to generate a unique tmp cache path")
 	}
 
-	perm := fs.FileMode(1600)
+	// perm := fs.FileMode(1600)
+	perm := fs.FileMode(0600)
 	if debugMode {
 		perm = 0755
 	}
