@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"time"
 	"turbx/compiler"
 
@@ -92,5 +91,5 @@ func main(){
 
 
 	_ = res
-	fmt.Println("\n----------\n\n"+string(res))
+	// fmt.Println("\n----------\n\n"+string(res))
 }
