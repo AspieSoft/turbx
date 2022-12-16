@@ -22,14 +22,14 @@ type KeyVal struct {
 }
 
 type EachList struct {
-	List []KeyVal
+	List *[]KeyVal
 	As []byte
 	Of []byte
 	In []byte
 }
 
 
-func convertOpt(arg []byte, opts *map[string]interface{}, pre *bool, ignoreVars *[][]byte) (interface{}, bool) {
+func convertOpt(arg []byte, opts *map[string]interface{}, pre *bool, addVars *[]KeyVal) (interface{}, bool) {
 	if regex.Compile(`^(["'\'])(.*)\1$`).MatchRef(&arg) {
 		arg = regex.Compile(`^(["'\'])(.*)\1$`).RepStrComplexRef(&arg, []byte("$2"))
 		
@@ -49,9 +49,16 @@ func convertOpt(arg []byte, opts *map[string]interface{}, pre *bool, ignoreVars 
 	}
 
 	// ignore specific vars from list
-	for _, v := range *ignoreVars {
+	/* for _, v := range *addVars {
 		if bytes.Equal(arg, v) || (*pre && arg[0] == '$' && bytes.Equal(arg[1:], v)) {
 			return regex.JoinBytes([]byte("{{"), arg, []byte("}}")), true
+		}
+	} */
+
+	// handle additional vars
+	for i := len(*addVars)-1; i >= 0; i-- {
+		if bytes.Equal((*addVars)[i].Key, arg) {
+			return (*addVars)[i].Val, true
 		}
 	}
 
@@ -85,11 +92,11 @@ func convertOpt(arg []byte, opts *map[string]interface{}, pre *bool, ignoreVars 
 	return nil, false
 }
 
-func getOptObj(arg []byte, opts *map[string]interface{}, pre *bool, ignoreVars *[][]byte) (interface{}, bool) {
+func getOptObj(arg []byte, opts *map[string]interface{}, pre *bool, addVars *[]KeyVal) (interface{}, bool) {
 	args := regex.Compile(`\.|(\[(?:"(?:\\[\\"]|.)*?"|'(?:\\[\\']|.)*?'|\'(?:\\[\\\']|.)*?\'|.)*?\])`).SplitRef(&arg)
 	// args := regex.Compile(`(\[[\w_]+\])|\.`).SplitRef(&arg)
 
-	res, ok := convertOpt(args[0], opts, pre, ignoreVars)
+	res, ok := convertOpt(args[0], opts, pre, addVars)
 	if !ok {
 		return res, false
 	}
@@ -98,7 +105,7 @@ func getOptObj(arg []byte, opts *map[string]interface{}, pre *bool, ignoreVars *
 	for _, arg := range args {
 		if bytes.HasPrefix(arg, []byte{'['}) && bytes.HasSuffix(arg, []byte{']'}) {
 			arg = arg[1:len(arg)-1]
-			v, ok := GetOpt(arg, opts, *pre, ignoreVars)
+			v, ok := GetOpt(arg, opts, *pre, addVars)
 			if !ok {
 				return v, false
 			}
@@ -114,7 +121,7 @@ func getOptObj(arg []byte, opts *map[string]interface{}, pre *bool, ignoreVars *
 		rType := reflect.TypeOf(res)
 		if rType == goutil.VarType["map"] {
 			r := (res.(map[string]interface{}))
-			val, ok := convertOpt(arg, &r, pre, ignoreVars)
+			val, ok := convertOpt(arg, &r, pre, addVars)
 			if !ok {
 				return val, false
 			}
@@ -124,7 +131,7 @@ func getOptObj(arg []byte, opts *map[string]interface{}, pre *bool, ignoreVars *
 			for i, v := range res.([]interface{}) {
 				r[strconv.Itoa(i)] = v
 			}
-			val, ok := convertOpt(arg, &r, pre, ignoreVars)
+			val, ok := convertOpt(arg, &r, pre, addVars)
 			if !ok {
 				return val, false
 			}
@@ -137,7 +144,7 @@ func getOptObj(arg []byte, opts *map[string]interface{}, pre *bool, ignoreVars *
 			for i, v := range res.([]byte) {
 				r[strconv.Itoa(i)] = v
 			}
-			val, ok := convertOpt(arg, &r, pre, ignoreVars)
+			val, ok := convertOpt(arg, &r, pre, addVars)
 			if !ok {
 				return val, false
 			}
@@ -150,12 +157,12 @@ func getOptObj(arg []byte, opts *map[string]interface{}, pre *bool, ignoreVars *
 	return res, true
 }
 
-func GetOpt(arg []byte, opts *map[string]interface{}, pre bool, ignoreVars ...*[][]byte) (interface{}, bool) {
-	var ignoreVarList *[][]byte
-	if len(ignoreVars) != 0 {
-		ignoreVarList = ignoreVars[0]
+func GetOpt(arg []byte, opts *map[string]interface{}, pre bool, addVars ...*[]KeyVal) (interface{}, bool) {
+	var addVarList *[]KeyVal
+	if len(addVars) != 0 {
+		addVarList = addVars[0]
 	}else{
-		ignoreVarList = &[][]byte{}
+		addVarList = &[]KeyVal{}
 	}
 
 	var key []byte
@@ -175,7 +182,7 @@ func GetOpt(arg []byte, opts *map[string]interface{}, pre bool, ignoreVars ...*[
 				continue
 			}
 
-			val, ok := getOptObj(b, opts, &pre, ignoreVarList)
+			val, ok := getOptObj(b, opts, &pre, addVarList)
 			if ok {
 				if key != nil {
 					return KeyVal{key, val}, true
@@ -251,7 +258,7 @@ func GetOpt(arg []byte, opts *map[string]interface{}, pre bool, ignoreVars ...*[
 	}
 
 	if len(b) != 0 {
-		if val, ok := getOptObj(b, opts, &pre, ignoreVarList); ok {
+		if val, ok := getOptObj(b, opts, &pre, addVarList); ok {
 			if key != nil {
 				return KeyVal{key, val}, true
 			}
@@ -668,16 +675,13 @@ func (t *Pre) Each(args *map[string][]byte, cont *[]byte, opts *map[string]inter
 			}
 		}
 
-		resData := EachList{List: res}
+		resData := EachList{List: &res}
 
 		if (*args)["as"] != nil && len((*args)["as"]) != 0 {
 			resData.As = (*args)["as"]
 		}
 		if (*args)["of"] != nil && len((*args)["of"]) != 0 {
 			resData.Of = (*args)["of"]
-		}
-		if (*args)["in"] != nil && len((*args)["in"]) != 0 {
-			resData.In = (*args)["in"]
 		}
 
 		return resData, nil
@@ -696,67 +700,66 @@ func (t *Pre) Each(args *map[string][]byte, cont *[]byte, opts *map[string]inter
 		if (*args)["of"] != nil && len((*args)["of"]) != 0 {
 			res = regex.JoinBytes(res, []byte(" of "), (*args)["of"])
 		}
-		if (*args)["in"] != nil && len((*args)["in"]) != 0 {
-			res = regex.JoinBytes(res, []byte(" in "), (*args)["in"])
-		}
 
 		return res, nil
 	}
 
-	var res []KeyVal
+	var res *[]KeyVal
 
 	lt := reflect.TypeOf(list)
 	if lt == goutil.VarType["map"] {
-		res = make([]KeyVal, len(list.(map[string]interface{})))
+		resList := make([]KeyVal, len(list.(map[string]interface{})))
+		res = &resList
 		ind := 0
 
 		for k, v := range list.(map[string]interface{}) {
-			res[ind] = KeyVal{[]byte(k), v}
+			(*res)[ind] = KeyVal{[]byte(k), v}
 			ind++
 		}
 
-		sort.Slice(res, func(i, j int) bool {
-			k1 := []byte(res[i].Key)
-			k2 := []byte(res[j].Key)
+		sort.Slice(*res, func(i, j int) bool {
+			k1 := []byte((*res)[i].Key)
+			k2 := []byte((*res)[j].Key)
 			l := len(k1)
 			if len(k2) < l {
 				l = len(k2)
 			}
 
-			res := 0
+			r := 0
 			for i := 0; i < l; i++ {
 				if k1[i] < k2[i] {
-					res = 1
+					r = 1
 					break
 				}else if k1[i] > k2[i] {
-					res = -1
+					r = -1
 					break
 				}
 			}
 
 			if from > to {
-				if res == 0 {
+				if r == 0 {
 					return len(k1) > len(k2)
 				}
-				return res == -1
+				return r == -1
 			}
 
-			if res == 0 {
+			if r == 0 {
 				return len(k1) < len(k2)
 			}
-			return res == 1
+			return r == 1
 		})
 
 	}else if lt == goutil.VarType["array"] {
-		res = make([]KeyVal, len(list.([]interface{})))
+		resList := make([]KeyVal, len(list.([]interface{})))
+		res = &resList
 		ind := 0
 		for i, v := range list.([]interface{}) {
-			res[ind] = KeyVal{[]byte(strconv.Itoa(i)), v}
+			(*res)[ind] = KeyVal{[]byte(strconv.Itoa(i)), v}
 			ind++
 		}
 
 		if from > to {
-			sort.Slice(res, func(i, j int) bool {
+			sort.Slice(*res, func(i, j int) bool {
 				return i > j
 			})
 		}
@@ -771,9 +774,6 @@ func (t *Pre) Each(args *map[string][]byte, cont *[]byte, opts *map[string]inter
 	}
 	if (*args)["of"] != nil && len((*args)["of"]) != 0 {
 		resData.Of = (*args)["of"]
-	}
-	if (*args)["in"] != nil && len((*args)["in"]) != 0 {
-		resData.In = (*args)["in"]
 	}
 
 	return resData, nil

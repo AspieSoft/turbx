@@ -1,21 +1,3 @@
-
-
-
-  test item1 : value a
-
-  {{#if:0 key}}
-    test if in each
-  {{/if:0}}
-
-  test item2 : value b
-
-  {{#if:0 key}}
-    test if in each
-  {{/if:0}}
-
-  test item3 : value c
-
-  {{#if:0 key}}
-    test if in each
-  {{/if:0}}
-
+{{#each:0 list as val of key}}
+  test {{key}} : {{val}}
+{{/each:0}}

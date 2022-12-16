@@ -80,6 +80,8 @@ type fnData struct {
 	cont []byte
 	each funcs.EachList
 	isComponent bool
+
+	seek int64
 }
 
 
@@ -376,15 +378,29 @@ func PreCompile(path string, opts map[string]interface{}, componentOf ...string)
 
 		fnLevel := []string{}
 		ifMode := []uint8{0}
-		eachArgs := [][]byte{}
+		eachArgs := []funcs.KeyVal{}
 		tagInd := [][]byte{}
 		fnCont := []fnData{}
 
 		wSize := uint(0)
 		write := func(b []byte){
 			if len(fnCont) != 0 {
-				fnCont[len(fnCont)-1].cont = append(fnCont[len(fnCont)-1].cont, b...)
-				return
+				if fnCont[len(fnCont)-1].cont != nil {
+					fnCont[len(fnCont)-1].cont = append(fnCont[len(fnCont)-1].cont, b...)
+					return
+				}else{
+					found := false
+					for i := len(fnCont)-1; i >= 0; i-- {
+						if fnCont[len(fnCont)-1].cont != nil {
+							fnCont[len(fnCont)-1].cont = append(fnCont[len(fnCont)-1].cont, b...)
+							found = true
+							break
+						}
+					}
+					if found {
+						return
+					}
+				}
 			}
 
 			writer.Write(b)
@@ -713,10 +729,59 @@ func PreCompile(path string, opts map[string]interface{}, componentOf ...string)
 				if mode == 1 {
 					if selfClose == 2 && len(fnCont) != 0 && !fnCont[len(fnCont)-1].isComponent && bytes.Equal(elm["TAG"].val, fnCont[len(fnCont)-1].tag) {
 						fn := fnCont[len(fnCont)-1]
-						fnCont = fnCont[:len(fnCont)-1]
+						// fnCont = fnCont[:len(fnCont)-1]
 
 						if bytes.Equal(elm["TAG"].val, []byte("each")) {
-							eachOpts, e := goutil.DeepCopyJson(opts)
+							//todo: seek back to top
+							if len(*fn.each.List) != 0 {
+								// remove eachArgs from end of list
+								rmArgs := map[string][]byte{}
+								if fn.each.As != nil {
+									rmArgs["as"] = fn.each.As
+								}
+								if fn.each.Of != nil {
+									rmArgs["of"] = fn.each.Of
+								}
+
+								for i := len(eachArgs)-1; i >= 0; i-- {
+									if bytes.Equal(eachArgs[i].Key, rmArgs["as"]) {
+										eachArgs = append(eachArgs[:i], eachArgs[i+1:]...)
+										rmArgs["as"] = nil
+									}else if bytes.Equal(eachArgs[i].Key, rmArgs["of"]) {
+										eachArgs = append(eachArgs[:i], eachArgs[i+1:]...)
+										rmArgs["of"] = nil
+									}
+								}
+
+								// set new each args
+								if fn.each.As != nil {
+									k := fn.each.As
+									eachArgs = append(eachArgs, funcs.KeyVal{Key: k, Val: (*fn.each.List)[0].Val})
+								}
+								if fn.each.Of != nil {
+									k := fn.each.Of
+									eachArgs = append(eachArgs, funcs.KeyVal{Key: k, Val: (*fn.each.List)[0].Key})
+								}
+	
+								*fn.each.List = (*fn.each.List)[1:]
+
+								// return to top of each loop
+								file.Seek(fn.seek, os.SEEK_SET)
+								reader.Reset(file)
+
+								b, err = reader.Peek(1)
+								continue
+							}
+
+							fnCont = fnCont[:len(fnCont)-1]
+
+							reader.Discard(1)
+							b, err = reader.Peek(1)
+							continue
+
+
+							//old
+							/* eachOpts, e := goutil.DeepCopyJson(opts)
 							if e != nil {
 								cacheError = e
 								return
@@ -771,27 +836,23 @@ func PreCompile(path string, opts map[string]interface{}, componentOf ...string)
 							if fn.each.Of != nil {
 								rmArgs["of"] = fn.each.Of
 							}
-							if fn.each.In != nil {
-								rmArgs["in"] = fn.each.In
-							}
 
 							for i := len(eachArgs)-1; i >= 0; i-- {
-								if bytes.Equal(eachArgs[i], rmArgs["as"]) {
+								if bytes.Equal(eachArgs[i].Key, rmArgs["as"]) {
 									eachArgs = append(eachArgs[:i], eachArgs[i+1:]...)
 									rmArgs["as"] = nil
-								}else if bytes.Equal(eachArgs[i], rmArgs["of"]) {
+								}else if bytes.Equal(eachArgs[i].Key, rmArgs["of"]) {
 									eachArgs = append(eachArgs[:i], eachArgs[i+1:]...)
 									rmArgs["of"] = nil
-								}else if bytes.Equal(eachArgs[i], rmArgs["in"]) {
-									eachArgs = append(eachArgs[:i], eachArgs[i+1:]...)
-									rmArgs["in"] = nil
 								}
 							}
 
 							reader.Discard(1)
 							b, err = reader.Peek(1)
-							continue
+							continue */
 						}
+
+						fnCont = fnCont[:len(fnCont)-1]
 
 						if res, e := callFunc(string(fn.fnName), &fn.args, &fn.cont, &opts, true); e == nil {
 							if res != nil {
@@ -998,7 +1059,14 @@ func PreCompile(path string, opts map[string]interface{}, componentOf ...string)
 							}
 						}
 
+
 						//todo: ensure if statements can still run on each args
+						seekPos, e := getSeekPos(file, reader)
+						if err != nil {
+							cacheError = e
+							return
+						}
+
 
 						res, e := callFunc("Each", &args, nil, &opts, true)
 						if e != nil {
@@ -1014,16 +1082,17 @@ func PreCompile(path string, opts map[string]interface{}, componentOf ...string)
 						}else if rt == reflect.TypeOf(funcs.EachList{}) {
 							// get content to run in each loop
 							if res.(funcs.EachList).As != nil {
-								eachArgs = append(eachArgs, res.(funcs.EachList).As)
+								k := res.(funcs.EachList).As
+								eachArgs = append(eachArgs, funcs.KeyVal{Key: k, Val: (*res.(funcs.EachList).List)[0].Val})
 							}
 							if res.(funcs.EachList).Of != nil {
-								eachArgs = append(eachArgs, res.(funcs.EachList).Of)
-							}
-							if res.(funcs.EachList).In != nil {
-								eachArgs = append(eachArgs, res.(funcs.EachList).In)
+								k := res.(funcs.EachList).Of
+								eachArgs = append(eachArgs, funcs.KeyVal{Key: k, Val: (*res.(funcs.EachList).List)[0].Key})
 							}
 
-							fnCont = append(fnCont, fnData{tag: []byte("each"), each: res.(funcs.EachList), cont: []byte{}})
+							*res.(funcs.EachList).List = (*res.(funcs.EachList).List)[1:]
+
+							fnCont = append(fnCont, fnData{tag: []byte("each"), seek: seekPos, each: res.(funcs.EachList)})
 						}else{
 							// skip and remove blank const value each loop
 							eachLevel := 0
@@ -1762,7 +1831,7 @@ func Compile(path string, opts map[string]interface{}) ([]byte, error) {
 	reader := bufio.NewReader(file)
 
 	ifLevel := [][]byte{}
-	eachArgs := [][]byte{}
+	eachArgs := []funcs.KeyVal{}
 	fnCont := []fnData{}
 
 	res := []byte{}
@@ -2030,13 +2099,12 @@ func Compile(path string, opts map[string]interface{}) ([]byte, error) {
 						if reflect.TypeOf(res) == reflect.TypeOf(funcs.EachList{}) {
 							// add each statement to be handled on close
 							if res.(funcs.EachList).As != nil {
-								eachArgs = append(eachArgs, res.(funcs.EachList).As)
+								k := res.(funcs.EachList).As
+								eachArgs = append(eachArgs, funcs.KeyVal{Key: k})
 							}
 							if res.(funcs.EachList).Of != nil {
-								eachArgs = append(eachArgs, res.(funcs.EachList).Of)
-							}
-							if res.(funcs.EachList).In != nil {
-								eachArgs = append(eachArgs, res.(funcs.EachList).In)
+								k := res.(funcs.EachList).Of
+								eachArgs = append(eachArgs, funcs.KeyVal{Key: k})
 							}
 
 							fnCont = append(fnCont, fnData{tag: append([]byte("each:"), ind...), each: res.(funcs.EachList), cont: []byte{}})
@@ -2137,7 +2205,7 @@ func Compile(path string, opts map[string]interface{}) ([]byte, error) {
 									eachOpts[string(fn.each.In)] = fn.each.List
 								}
 
-								for _, list := range fn.each.List {
+								for _, list := range *fn.each.List {
 									b := regex.Compile(`(?s){{({|)\s*((?:"(?:\\[\\"]|[^"])*"|'(?:\\[\\']|[^'])*'|\'(?:\\[\\\']|[^\'])*\'|.)*?)\s*}}(}|)`, string(fn.each.As), string(fn.each.Of), string(fn.each.In)).RepFuncRef(&fn.cont, func(data func(int) []byte) []byte {
 										allowHTML := false
 										if len(data(1)) != 0 && len(data(3)) != 0 {
@@ -2177,20 +2245,14 @@ func Compile(path string, opts map[string]interface{}) ([]byte, error) {
 								if fn.each.Of != nil {
 									rmArgs["of"] = fn.each.Of
 								}
-								if fn.each.In != nil {
-									rmArgs["in"] = fn.each.In
-								}
 
 								for i := len(eachArgs)-1; i >= 0; i-- {
-									if bytes.Equal(eachArgs[i], rmArgs["as"]) {
+									if bytes.Equal(eachArgs[i].Key, rmArgs["as"]) {
 										eachArgs = append(eachArgs[:i], eachArgs[i+1:]...)
 										rmArgs["as"] = nil
-									}else if bytes.Equal(eachArgs[i], rmArgs["of"]) {
+									}else if bytes.Equal(eachArgs[i].Key, rmArgs["of"]) {
 										eachArgs = append(eachArgs[:i], eachArgs[i+1:]...)
 										rmArgs["of"] = nil
-									}else if bytes.Equal(eachArgs[i], rmArgs["in"]) {
-										eachArgs = append(eachArgs[:i], eachArgs[i+1:]...)
-										rmArgs["in"] = nil
 									}
 								}
 							}else{
@@ -2424,6 +2486,39 @@ func skipStrComments(reader *bufio.Reader, b *[]byte, err *error){
 		reader.Discard(1)
 		*b, *err = reader.Peek(1)
 	}
+}
+
+
+func getSeekPos(file *os.File, reader *bufio.Reader) (int64, error) {
+	seekPos, err := file.Seek(0, os.SEEK_CUR)
+	if err != nil {
+		return 0, err
+	}
+
+	seekPosEnd, err := file.Seek(0, os.SEEK_END)
+	if err != nil {
+		return 0, err
+	}
+
+	// if not having weird error with current referencing as end
+	if seekPos != seekPosEnd {
+		return seekPos, err
+	}
+
+	size, err := reader.Read(make([]byte, seekPosEnd))
+	if err != nil {
+		return 0, err
+	}
+	reader.UnreadByte()
+
+	seekPos, err = file.Seek(-int64(size), os.SEEK_END)
+	if err != nil {
+		return 0, err
+	}
+
+	reader.Reset(file)
+
+	return seekPos, nil
 }
 
 
