@@ -656,7 +656,7 @@ func (t *Pre) Each(args *map[string][]byte, cont *[]byte, opts *map[string]inter
 		}
 	}
 
-	if (*args)["0"] == nil || len((*args)["0"]) == 0 {
+	if (*args)["1"] == nil || len((*args)["1"]) == 0 {
 		res := []KeyVal{}
 		if from <= to {
 			for i := from; i <= to; i++ {
@@ -683,13 +683,13 @@ func (t *Pre) Each(args *map[string][]byte, cont *[]byte, opts *map[string]inter
 		return resData, nil
 	}
 
-	list, ok := GetOpt((*args)["0"], opts, pre)
+	list, ok := GetOpt((*args)["1"], opts, pre)
 	if !ok {
-		if bytes.HasPrefix((*args)["0"], []byte{'$'}) {
+		if bytes.HasPrefix((*args)["1"], []byte{'$'}) {
 			return nil, nil
 		}
 
-		res := (*args)["0"]
+		res := (*args)["1"]
 		if (*args)["as"] != nil && len((*args)["as"]) != 0 {
 			res = regex.JoinBytes(res, []byte(" as "), (*args)["as"])
 		}
@@ -780,7 +780,7 @@ func (t *Pre) Each(args *map[string][]byte, cont *[]byte, opts *map[string]inter
 }
 
 func (t *Pre) Json(args *map[string][]byte, cont *[]byte, opts *map[string]interface{}, pre bool) (interface{}, error) {
-	if val, ok := GetOpt((*args)["0"], opts, pre); ok {
+	if val, ok := GetOpt((*args)["1"], opts, pre); ok {
 		json, err := goutil.StringifyJSON(val, 0, 2)
 		if err != nil {
 			return nil, err
@@ -796,94 +796,79 @@ func (t *Pre) Lorem(args *map[string][]byte, cont *[]byte, opts *map[string]inte
 	wType := byte('p')
 	if (*args)["type"] != nil && len((*args)["type"]) != 0 {
 		wType = (*args)["type"][0]
-	}else if (*args)["0"] != nil && len((*args)["0"]) != 0 && !regex.Compile(`^[0-9]+$`).Match((*args)["0"]) {
-		wType = (*args)["0"][0]
-	}else if (*args)["1"] != nil && len((*args)["1"]) != 0 && !regex.Compile(`^[0-9]+$`).Match((*args)["1"]) {
-		wType = (*args)["1"][0]
-	}else if (*args)["2"] != nil && len((*args)["2"]) != 0 && !regex.Compile(`^[0-9]+$`).Match((*args)["2"]) {
-		wType = (*args)["2"][0]
+	}else{
+		for i := 1; i < len(*args); i++ {
+			iStr := strconv.Itoa(i)
+			if (*args)[iStr] != nil && len((*args)[iStr]) != 0 && !regex.Compile(`^[0-9]+$`).Match((*args)[iStr]) {
+				wType = (*args)[iStr][0]
+				break
+			}
+		}
 	}
 
 	rep := 1
 	minLen := 2
 	maxLen := 10
-	repUsed := -1
-	used := -1
+	used := 0
+	minSet := false
 
-	if (*args)["rep"] != nil {
-		repUsed = -2
-		i, err := strconv.Atoi(string((*args)["rep"]))
-		if err == nil {
-			rep = i
+	if (*args)["rep"] != nil && regex.Compile(`^[0-9]+$`).Match((*args)["rep"]) {
+		if n, err := strconv.Atoi(string((*args)["rep"])); err == nil {
+			rep = n
 		}
-	}else if len((*args)["0"]) != 0 && regex.Compile(`^[0-9]+$`).Match((*args)["0"]) {
-		repUsed = 0
-		i, err := strconv.Atoi(string((*args)["0"]))
-		if err == nil {
-			rep = i
-		}
-	}else if (*args)["1"] != nil && regex.Compile(`^[0-9]+$`).Match((*args)["1"]) {
-		repUsed = 1
-		i, err := strconv.Atoi(string((*args)["1"]))
-		if err == nil {
-			rep = i
-		}
-	}else if (*args)["2"] != nil && regex.Compile(`^[0-9]+$`).Match((*args)["2"]) {
-		repUsed = 2
-		i, err := strconv.Atoi(string((*args)["2"]))
-		if err == nil {
-			rep = i
+	}else{
+		for i := used + 1; i < len(*args); i++ {
+			iStr := strconv.Itoa(i)
+			if (*args)[iStr] != nil && len((*args)[iStr]) != 0 && regex.Compile(`^[0-9]+$`).Match((*args)[iStr]) {
+				if n, err := strconv.Atoi(string((*args)[iStr])); err == nil {
+					used = i
+					rep = n
+					break
+				}
+			}
 		}
 	}
 
-	if (*args)["min"] != nil {
-		used = -2
-		i, err := strconv.Atoi(string((*args)["min"]))
-		if err == nil {
-			minLen = i
+	if (*args)["min"] != nil && regex.Compile(`^[0-9]+$`).Match((*args)["min"]) {
+		if n, err := strconv.Atoi(string((*args)["min"])); err == nil {
+			minSet = true
+			minLen = n
 		}
-	}else if repUsed != 0 && len((*args)["0"]) != 0 && regex.Compile(`^[0-9]+$`).Match((*args)["0"]) {
-		used = 0
-		i, err := strconv.Atoi(string((*args)["0"]))
-		if err == nil {
-			minLen = i
-		}
-	}else if repUsed != 1 && (*args)["1"] != nil && regex.Compile(`^[0-9]+$`).Match((*args)["1"]) {
-		used = 1
-		i, err := strconv.Atoi(string((*args)["1"]))
-		if err == nil {
-			minLen = i
-		}
-	}else if repUsed != 2 && (*args)["2"] != nil && regex.Compile(`^[0-9]+$`).Match((*args)["2"]) {
-		used = 2
-		i, err := strconv.Atoi(string((*args)["2"]))
-		if err == nil {
-			minLen = i
+	}else{
+		for i := used + 1; i < len(*args); i++ {
+			iStr := strconv.Itoa(i)
+			if (*args)[iStr] != nil && len((*args)[iStr]) != 0 && regex.Compile(`^[0-9]+$`).Match((*args)[iStr]) {
+				if n, err := strconv.Atoi(string((*args)[iStr])); err == nil {
+					used = i
+					minSet = true
+					minLen = n
+					break
+				}
+			}
 		}
 	}
 
-	if (*args)["max"] != nil {
-		i, err := strconv.Atoi(string((*args)["max"]))
-		if err == nil {
-			maxLen = i
+	if (*args)["max"] != nil && regex.Compile(`^[0-9]+$`).Match((*args)["max"]) {
+		if n, err := strconv.Atoi(string((*args)["max"])); err == nil {
+			maxLen = n
 		}
-	}else if repUsed != 0 && used != 0 && (*args)["0"] != nil && regex.Compile(`^[0-9]+$`).Match((*args)["0"]) {
-		i, err := strconv.Atoi(string((*args)["0"]))
-		if err == nil {
-			maxLen = i
+	}else{
+		maxSet := false
+		for i := used + 1; i < len(*args); i++ {
+			iStr := strconv.Itoa(i)
+			if (*args)[iStr] != nil && len((*args)[iStr]) != 0 && regex.Compile(`^[0-9]+$`).Match((*args)[iStr]) {
+				if n, err := strconv.Atoi(string((*args)[iStr])); err == nil {
+					used = i
+					maxSet = true
+					maxLen = n
+					break
+				}
+			}
 		}
-	}else if repUsed != 1 &&  used != 1 && (*args)["1"] != nil && regex.Compile(`^[0-9]+$`).Match((*args)["1"]) {
-		i, err := strconv.Atoi(string((*args)["1"]))
-		if err == nil {
-			maxLen = i
+
+		if !maxSet && minSet {
+			maxLen = minLen
 		}
-	}else if repUsed != 2 && used != 2 && (*args)["2"] != nil && regex.Compile(`^[0-9]+$`).Match((*args)["2"]) {
-		i, err := strconv.Atoi(string((*args)["2"]))
-		if err == nil {
-			maxLen = i
-		}
-	}else if used != -1 {
-		maxLen = minLen
 	}
 
 	if wType == 'p' {

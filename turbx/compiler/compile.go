@@ -998,6 +998,8 @@ func PreCompile(path string, opts map[string]interface{}, componentOf ...string)
 							}
 						}
 
+						//todo: ensure if statements can still run on each args
+
 						res, e := callFunc("Each", &args, nil, &opts, true)
 						if e != nil {
 							cacheError = e
