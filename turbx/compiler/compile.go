@@ -781,7 +781,7 @@ func PreCompile(path string, opts map[string]interface{}, componentOf ...string)
 
 						fnCont = fnCont[:len(fnCont)-1]
 
-						if res, e := callFunc(string(fn.fnName), &fn.args, &fn.cont, &opts, true); e == nil {
+						if res, e := callFunc(string(fn.fnName), &fn.args, &fn.cont, &opts, true, &eachArgs); e == nil {
 							if res != nil {
 								write(goutil.ToByteArray(res))
 							}
@@ -911,7 +911,7 @@ func PreCompile(path string, opts map[string]interface{}, componentOf ...string)
 							}
 						}
 
-						res, e := callFuncArr("If", &args, nil, &opts, true)
+						res, e := callFuncArr("If", &args, nil, &opts, true, &eachArgs)
 						if e != nil {
 							cacheError = e
 							return
@@ -986,16 +986,13 @@ func PreCompile(path string, opts map[string]interface{}, componentOf ...string)
 							}
 						}
 
-
-						//todo: ensure if statements can still run on each args
 						seekPos, e := getSeekPos(file, reader)
 						if err != nil {
 							cacheError = e
 							return
 						}
 
-
-						res, e := callFunc("Each", &args, nil, &opts, true)
+						res, e := callFunc("Each", &args, nil, &opts, true, &eachArgs)
 						if e != nil {
 							cacheError = e
 							return
@@ -1134,7 +1131,7 @@ func PreCompile(path string, opts map[string]interface{}, componentOf ...string)
 						}
 
 						if selfClose == 1 {
-							if res, e := callFunc(string(fnName), &args, nil, &opts, true); e == nil {
+							if res, e := callFunc(string(fnName), &args, nil, &opts, true, &eachArgs); e == nil {
 								if res != nil {
 									write(goutil.ToByteArray(res))
 								}
@@ -1965,6 +1962,10 @@ func Compile(path string, opts map[string]interface{}) ([]byte, error) {
 								if regex.Compile(`:[0-9]+$`).MatchRef(&v) {
 									v = regex.Compile(`:[0-9]+$`).RepStrRef(&v, []byte{})
 								}
+
+								v = regex.Compile(`^(["'\'])(.*?)\1$`).RepFuncRef(&v, func(data func(int) []byte) []byte {
+									return regex.Compile(`\\([\\"'\'])`).RepStrComplex(data(2), []byte("$1"))
+								})
 	
 								args = append(args, v)
 							}
@@ -1974,7 +1975,7 @@ func Compile(path string, opts map[string]interface{}) ([]byte, error) {
 								res = true
 							}else{
 								var e error
-								res, e = callFuncArr("If", &args, nil, &opts, false)
+								res, e = callFuncArr("If", &args, nil, &opts, false, &eachArgs)
 								if e != nil {
 									return []byte{}, e
 								}
@@ -2038,7 +2039,7 @@ func Compile(path string, opts map[string]interface{}) ([]byte, error) {
 							return []byte{}, e
 						}
 
-						res, e := callFunc("Each", &args, nil, &opts, false)
+						res, e := callFunc("Each", &args, nil, &opts, false, &eachArgs)
 						if e != nil {
 							return []byte{}, e
 						}
@@ -2093,20 +2094,18 @@ func Compile(path string, opts map[string]interface{}) ([]byte, error) {
 						i := 1
 						regex.Compile(`([\w_-]+|)=?"((?:\\[\\"]|.)*?)"`).RepFuncRef(&varData, func(data func(int) []byte) []byte {
 							if len(data(1)) != 0 {
-								args[string(data(1))] = regex.Compile(`\\([\\"])`).RepStrComplex(data(2), []byte("$1"))
+								args[string(data(1))] = regex.Compile(`\\([\\"'\'])`).RepStrComplex(data(2), []byte("$1"))
 							}else{
-								args[strconv.Itoa(i)] = regex.Compile(`\\([\\"])`).RepStrComplex(data(2), []byte("$1"))
+								args[strconv.Itoa(i)] = regex.Compile(`\\([\\"'\'])`).RepStrComplex(data(2), []byte("$1"))
 								i++
 							}
 
 							return []byte{}
 						}, true)
 
-						fmt.Println(args)
-
 						if selfClosing {
 							// run func
-							res, e := callFunc(string(tag), &args, nil, &opts, false)
+							res, e := callFunc(string(tag), &args, nil, &opts, false, &eachArgs)
 							if e == nil {
 								if res != nil {
 									write(goutil.ToByteArray(res))
@@ -2180,80 +2179,14 @@ func Compile(path string, opts map[string]interface{}) ([]byte, error) {
 									// return to top of each loop
 									file.Seek(fn.seek, io.SeekStart)
 									reader.Reset(file)
-
-									//todo: check if this is needed
-									b, err = reader.Peek(1)
 								}else{
 									fnCont = fnCont[:len(fnCont)-1]
 								}
-
-
-								//old
-								// run each loop
-								/* eachOpts, e := goutil.DeepCopyJson(opts)
-								if e != nil {
-									return []byte{}, e
-								}
-
-								if fn.each.In != nil {
-									eachOpts[string(fn.each.In)] = fn.each.List
-								}
-
-								for _, list := range *fn.each.List {
-									b := regex.Compile(`(?s){{({|)\s*((?:"(?:\\[\\"]|[^"])*"|'(?:\\[\\']|[^'])*'|\'(?:\\[\\\']|[^\'])*\'|.)*?)\s*}}(}|)`, string(fn.each.As), string(fn.each.Of), string(fn.each.In)).RepFuncRef(&fn.cont, func(data func(int) []byte) []byte {
-										allowHTML := false
-										if len(data(1)) != 0 && len(data(3)) != 0 {
-											allowHTML = true
-										}
-
-										if fn.each.As != nil {
-											eachOpts[string(fn.each.As)] = list.Val
-										}else{
-											eachOpts[string(fn.each.As)] = nil
-										}
-										if fn.each.Of != nil {
-											eachOpts[string(fn.each.Of)] = list.Key
-										}else{
-											eachOpts[string(fn.each.Of)] = nil
-										}
-
-										if opt, ok := funcs.GetOpt(data(0), &eachOpts, false); ok {
-											b := goutil.ToByteArray(opt)
-											if !allowHTML {
-												b = goutil.EscapeHTML(b)
-											}
-											return b
-										}
-
-										return data(0)
-									})
-
-									write(b)
-								}
-
-								// remove eachArgs from end of list
-								rmArgs := map[string][]byte{}
-								if fn.each.As != nil {
-									rmArgs["as"] = fn.each.As
-								}
-								if fn.each.Of != nil {
-									rmArgs["of"] = fn.each.Of
-								}
-
-								for i := len(eachArgs)-1; i >= 0; i-- {
-									if bytes.Equal(eachArgs[i].Key, rmArgs["as"]) {
-										eachArgs = append(eachArgs[:i], eachArgs[i+1:]...)
-										rmArgs["as"] = nil
-									}else if bytes.Equal(eachArgs[i].Key, rmArgs["of"]) {
-										eachArgs = append(eachArgs[:i], eachArgs[i+1:]...)
-										rmArgs["of"] = nil
-									}
-								} */
 							}else{
 								// run other funcs
 								fnCont = fnCont[:len(fnCont)-1]
 
-								res, e := callFunc(string(fn.fnName), &fn.args, &fn.cont, &opts, false)
+								res, e := callFunc(string(fn.fnName), &fn.args, &fn.cont, &opts, false, &eachArgs)
 								if e == nil {
 									if res != nil {
 										write(goutil.ToByteArray(res))
@@ -2518,7 +2451,7 @@ func getSeekPos(file *os.File, reader *bufio.Reader) (int64, error) {
 }
 
 
-func callFunc(name string, args *map[string][]byte, cont *[]byte, opts *map[string]interface{}, pre bool) (interface{}, error) {
+func callFunc(name string, args *map[string][]byte, cont *[]byte, opts *map[string]interface{}, pre bool, addVars *[]funcs.KeyVal) (interface{}, error) {
 	name = string(regex.Compile(`[^\w_]`).RepStr([]byte(name), []byte{}))
 
 	isPre := false
@@ -2550,12 +2483,14 @@ func callFunc(name string, args *map[string][]byte, cont *[]byte, opts *map[stri
 			reflect.ValueOf(cont),
 			reflect.ValueOf(opts),
 			reflect.ValueOf(pre),
+			reflect.ValueOf(addVars),
 		})
 	}else{
 		val = m.Call([]reflect.Value{
 			reflect.ValueOf(args),
 			reflect.ValueOf(cont),
 			reflect.ValueOf(opts),
+			reflect.ValueOf(addVars),
 		})
 	}
 
@@ -2573,7 +2508,7 @@ func callFunc(name string, args *map[string][]byte, cont *[]byte, opts *map[stri
 	return data, err
 }
 
-func callFuncArr(name string, args *[][]byte, cont *[]byte, opts *map[string]interface{}, pre bool) (interface{}, error) {
+func callFuncArr(name string, args *[][]byte, cont *[]byte, opts *map[string]interface{}, pre bool, addVars *[]funcs.KeyVal) (interface{}, error) {
 	name = string(regex.Compile(`[^\w_]`).RepStr([]byte(name), []byte{}))
 
 	isPre := false
@@ -2604,12 +2539,14 @@ func callFuncArr(name string, args *[][]byte, cont *[]byte, opts *map[string]int
 			reflect.ValueOf(cont),
 			reflect.ValueOf(opts),
 			reflect.ValueOf(pre),
+			reflect.ValueOf(addVars),
 		})
 	}else{
 		val = m.Call([]reflect.Value{
 			reflect.ValueOf(args),
 			reflect.ValueOf(cont),
 			reflect.ValueOf(opts),
+			reflect.ValueOf(addVars),
 		})
 	}
 

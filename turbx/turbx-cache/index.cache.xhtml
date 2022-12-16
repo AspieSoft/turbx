@@ -1,16 +1,19 @@
+<a href="/link/to/page">My Link</a>{target="blank"}
 
-  {{#if:0 key = "item1"}}
-    this is item 1
-  {{/if:0}}
-  test item1 : value a
+<img src="/link/to/image.png" alt="My Embed"/>{loading="lazy"}
 
-  {{#if:0 key = "item1"}}
-    this is item 1
-  {{/if:0}}
-  test item2 : value b
+<video controls>
+<source src="/link/to/video.mp4" type="video/mp4"/>
+My Embed
+</video>{no-controls}
 
-  {{#if:0 key = "item1"}}
-    this is item 1
-  {{/if:0}}
-  test item3 : value c
+<audio controls>
+<source src="/link/to/audio.mp3" type="audio/mp3"/>
+My Embed
+</audio>{no-controls}
 
+<iframe src="/link/to/doc.pdf" alt="My Embed"></iframe>{loading="lazy"}
+
+<iframe src="/link/to/iframe/embed" alt="My Embed"></iframe>{loading="lazy"}
+
+<iframe src="https://www.youtube.com/watch?v=PkADl0HubMY" alt="YT Embed"></iframe>{lazy}
