@@ -3,8 +3,6 @@ package compiler
 import (
 	"bufio"
 	"bytes"
-	"crypto/rand"
-	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
@@ -16,7 +14,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"turbx/funcs"
 
 	"github.com/AspieSoft/go-regex/v4"
 	"github.com/AspieSoft/goutil/v3"
@@ -24,21 +21,60 @@ import (
 )
 
 var rootPath string
-var fileExt string = "html"
+var fileExt string = "md"
 var componentPath string = "components"
 var defaultLayoutPath string = "layout"
 var publicPath string
+var constOpts map[string]interface{}
 
 const writeFlushSize = 1000
 const compileReadSize = 10
 var debugMode = false
 
-var constOpts map[string]interface{}
+type Config struct {
+	// Root is the root directory for your html/markdown files to be compiled
+	//
+	// default: views
+	Root string
 
-var cacheTmpPath string
+	// Components is an optional directory that can be used to organize components
+	//
+	// if a component is not found within the components directory first, it will then be checked for in the root directory you chose for the compiler
+	//
+	// default: components
+	//
+	// note: this file is relative to your chosen Root for the compiler
+	Components string
 
-var preCompFuncs funcs.Pre
-var compFuncs funcs.Comp
+	// Layout is the main template that all other files will be placed inside of
+	//
+	// default: layout
+	//
+	// pass "!" to disable
+	//
+	// pass "*" to set to default
+	// 
+	// note: this file is relative to your chosen Root for the compiler
+	Layout string
+
+	// Ext is the file extention for your files to be compiled
+	//
+	// default: .md
+	Ext string
+
+	// Public is an optional path you can use if you have a public directory with client side scripts and stylesheets
+	//
+	// the compiller will use this directory to auto upgrade to .min files
+	//
+	// note: the compiler will Not make this directory public, it will simply read from it
+	Public string
+
+	// ConstOpts is an optional list of constant options you would like to make default
+	//
+	// note: for an option to be read by the pre-compiler, all keys must start with a "$" in there name
+	ConstOpts map[string]interface{}
+}
+
 
 type tagData struct {
 	tag []byte
@@ -79,7 +115,7 @@ type fnData struct {
 	args map[string][]byte
 	fnName []byte
 	cont []byte
-	each funcs.EachList
+	each eachList
 	isComponent bool
 
 	seek int64
@@ -97,6 +133,8 @@ type pathCacheData struct {
 var pathCache *haxmap.Map[string, pathCacheData] = haxmap.New[string, pathCacheData]()
 
 
+var cacheTmpPath string
+
 func init(){
 	args := goutil.MapArgs()
 	if args["debug"] == "true" {
@@ -113,18 +151,21 @@ func init(){
 		}
 		cacheTmpPath = dir
 	}else{
-		dir, err := os.MkdirTemp("", "turbx-cache." + string(randBytes(16, nil)) + ".")
+		dir, err := os.MkdirTemp("", "turbx-cache." + string(goutil.RandBytes(16, nil)) + ".")
 		if err != nil {
 			panic(err)
 		}
 		cacheTmpPath = dir
 	}
 
-	SetRoot("views")
+	if path, err := filepath.Abs("views"); err == nil {
+		rootPath = path
+	}
 
 	go clearTmpCache()
 }
 
+// Close handles stoping the compiler and clearing the cache
 func Close(){
 	if !debugMode {
 		os.RemoveAll(cacheTmpPath)
@@ -160,84 +201,94 @@ func clearTmpCache(){
 	}
 }
 
-func SetRoot(path string) error {
-	if path == "" {
-		return errors.New("path cannot be empty")
-	}
-	path, err := filepath.Abs(path)
-	if err != nil {
-		return err
+
+// SetConfig can be used to set change the config options provided in the Config struct
+//
+// this method will also clear the cache
+func SetConfig(config Config) error {
+	if config.Root != "" {
+		path, err := filepath.Abs(config.Root)
+		if err != nil {
+			return err
+		}
+
+		rootPath = path
 	}
 
-	rootPath = path
+	if config.Components != "" {
+		componentPath = config.Components
+	}
+
+	if config.Layout != "" {
+		if config.Layout == "!" {
+			defaultLayoutPath = ""
+		}else if config.Layout == "*" {
+			defaultLayoutPath = "layout"
+		}else{
+			defaultLayoutPath = config.Layout
+		}
+	}
+
+	if config.Ext != "" {
+		fileExt = string(regex.Compile(`[^\w_-]`).RepStr([]byte(config.Ext), []byte{}))
+	}
+
+	if config.Public != "" {
+		if path, err := filepath.Abs(config.Public); err == nil {
+			publicPath = path
+		}else{
+			publicPath = ""
+		}
+	}
+
+	if config.ConstOpts != nil {
+		if opts, err := goutil.DeepCopyJson(config.ConstOpts); err == nil {
+			constOpts = opts
+		}else{
+			constOpts = nil
+		}
+	}
 
 	go clearTmpCache()
-
-	return nil
-}
-
-func SetComponentPath(path string) error {
-	if path == componentPath {
-		return errors.New("path is already set")
-	}
-
-	componentPath = path
-
-	go clearTmpCache()
-
-	return nil
-}
-
-func SetLayoutPath(path string) error {
-	if path == defaultLayoutPath {
-		return errors.New("path is already set")
-	}
-
-	defaultLayoutPath = path
-
-	go clearTmpCache()
-
-	return nil
-}
-
-func SetPublicPath(path string) error {
-	if path == "" {
-		return errors.New("path cannot be empty")
-	}
-	path, err := filepath.Abs(path)
-	if err != nil {
-		return err
-	}
-
-	publicPath = path
-
-	//todo: may auto minify js and css files in public root (make optional)
-
-	return nil
-}
-
-func SetExt(ext string) {
-	if ext != "" {
-		fileExt = string(regex.Compile(`[^\w_-]`).RepStr([]byte(ext), []byte{}))
-
-		go clearTmpCache()
-	}
-}
-
-func SetConstOpts(opts map[string]interface{}) error {
-	o, err := goutil.DeepCopyJson(opts)
-	if err != nil {
-		return err
-	}
-	constOpts = o
-
-	go clearTmpCache()
-
 	return nil
 }
 
 
-func PreCompile(path string, opts map[string]interface{}, componentOf ...string) pathCacheData {
+// preCompile generates a new pre-compiled file for the cache
+//
+// this compiles markdown and handles other complex methods
+//
+// this function is useful if you need to update any constand vars, defined with a "$" as the first char in their key name
+func PreCompile(path string, opts map[string]interface{}) error {
+	if rootPath == "" || cacheTmpPath == "" {
+		return errors.New("a root path was never chosen")
+	}
+
+	// add constOpts where not already defined
+	if constOpts != nil {
+		if defOpts, err := goutil.DeepCopyJson(constOpts); err == nil {
+			for key, val := range defOpts {
+				if _, ok := opts[key]; !ok {
+					opts[key] = val
+				}
+			}
+		}
+	}
+	
+	compData := preCompile(path, &opts)
+
+	for !*compData.Ready && *compData.Err == nil {
+		time.Sleep(10 * time.Nanosecond)
+	}
+
+	if *compData.Err != nil {
+		return *compData.Err
+	}
+
+	return nil
+}
+
+func preCompile(path string, opts *map[string]interface{}, componentOf ...string) pathCacheData {
 	var cacheReady bool = false
 	var cacheError error
 
@@ -245,11 +296,6 @@ func PreCompile(path string, opts map[string]interface{}, componentOf ...string)
 	if len(componentOf) == 1 && componentOf[0] == "@layout" {
 		isLayout = true
 		componentOf = []string{}
-	}
-
-	if rootPath == "" || cacheTmpPath == "" {
-		err := errors.New("a root path was never chosen")
-		return pathCacheData{Ready: &cacheReady, Err: &err}
 	}
 
 	// handle modified cache and layout paths
@@ -328,6 +374,8 @@ func PreCompile(path string, opts map[string]interface{}, componentOf ...string)
 	}
 
 
+	//todo: make sure and old files are removed from the cache first
+
 	// prepare the cache vars and info
 	cacheRes := pathCacheData{path: fullPath, tmp: tmpPath, cachePath: fullPath + cachePath, Ready: &cacheReady, Err: &cacheError}
 	pathCache.Set(fullPath + cachePath, cacheRes)
@@ -344,28 +392,16 @@ func PreCompile(path string, opts map[string]interface{}, componentOf ...string)
 		defer file.Close()
 
 
-		// add constOpts where not already defined
-		if constOpts != nil {
-			if defOpts, err := goutil.DeepCopyJson(constOpts); err == nil {
-				for key, val := range defOpts {
-					if _, ok := opts[key]; !ok {
-						opts[key] = val
-					}
-				}
-			}
-		}
-
-
 		// get layout data
 		var layoutData pathCacheData
 		if len(componentOf) == 0 && !isLayout {
 			if layoutPath != "" {
 				go func(){
-					layoutData = PreCompile(layoutPath + layoutCachePath, opts, "@layout")
+					layoutData = preCompile(layoutPath + layoutCachePath, opts, "@layout")
 				}()
 			}else if defaultLayoutPath != "" {
 				go func(){
-					layoutData = PreCompile(defaultLayoutPath + layoutCachePath, opts, "@layout")
+					layoutData = preCompile(defaultLayoutPath + layoutCachePath, opts, "@layout")
 				}()
 			}else{
 				err := errors.New("layout not found")
@@ -379,7 +415,7 @@ func PreCompile(path string, opts map[string]interface{}, componentOf ...string)
 
 		fnLevel := []string{}
 		ifMode := []uint8{0}
-		eachArgs := []funcs.KeyVal{}
+		eachArgs := []KeyVal{}
 		tagInd := [][]byte{}
 		fnCont := []fnData{}
 
@@ -755,11 +791,11 @@ func PreCompile(path string, opts map[string]interface{}, componentOf ...string)
 								// set new each args
 								if fn.each.As != nil {
 									k := fn.each.As
-									eachArgs = append(eachArgs, funcs.KeyVal{Key: k, Val: (*fn.each.List)[0].Val})
+									eachArgs = append(eachArgs, KeyVal{Key: k, Val: (*fn.each.List)[0].Val})
 								}
 								if fn.each.Of != nil {
 									k := fn.each.Of
-									eachArgs = append(eachArgs, funcs.KeyVal{Key: k, Val: (*fn.each.List)[0].Key})
+									eachArgs = append(eachArgs, KeyVal{Key: k, Val: (*fn.each.List)[0].Key})
 								}
 	
 								*fn.each.List = (*fn.each.List)[1:]
@@ -781,7 +817,7 @@ func PreCompile(path string, opts map[string]interface{}, componentOf ...string)
 
 						fnCont = fnCont[:len(fnCont)-1]
 
-						if res, e := callFunc(string(fn.fnName), &fn.args, &fn.cont, &opts, true, &eachArgs); e == nil {
+						if res, e := callFunc(string(fn.fnName), &fn.args, &fn.cont, opts, true, &eachArgs); e == nil {
 							if res != nil {
 								write(goutil.ToByteArray(res))
 							}
@@ -911,7 +947,7 @@ func PreCompile(path string, opts map[string]interface{}, componentOf ...string)
 							}
 						}
 
-						res, e := callFuncArr("If", &args, nil, &opts, true, &eachArgs)
+						res, e := callFuncArr("If", &args, nil, opts, true, &eachArgs)
 						if e != nil {
 							cacheError = e
 							return
@@ -992,7 +1028,7 @@ func PreCompile(path string, opts map[string]interface{}, componentOf ...string)
 							return
 						}
 
-						res, e := callFunc("Each", &args, nil, &opts, true, &eachArgs)
+						res, e := callFunc("Each", &args, nil, opts, true, &eachArgs)
 						if e != nil {
 							cacheError = e
 							return
@@ -1003,20 +1039,20 @@ func PreCompile(path string, opts map[string]interface{}, componentOf ...string)
 							// return normal func for compiler
 							write(regex.JoinBytes([]byte("{{#each:"), len(fnLevel), ' ', res, []byte("}}")))
 							fnLevel = append(fnLevel, "each")
-						}else if rt == reflect.TypeOf(funcs.EachList{}) {
+						}else if rt == reflect.TypeOf(eachList{}) {
 							// get content to run in each loop
-							if res.(funcs.EachList).As != nil {
-								k := res.(funcs.EachList).As
-								eachArgs = append(eachArgs, funcs.KeyVal{Key: k, Val: (*res.(funcs.EachList).List)[0].Val})
+							if res.(eachList).As != nil {
+								k := res.(eachList).As
+								eachArgs = append(eachArgs, KeyVal{Key: k, Val: (*res.(eachList).List)[0].Val})
 							}
-							if res.(funcs.EachList).Of != nil {
-								k := res.(funcs.EachList).Of
-								eachArgs = append(eachArgs, funcs.KeyVal{Key: k, Val: (*res.(funcs.EachList).List)[0].Key})
+							if res.(eachList).Of != nil {
+								k := res.(eachList).Of
+								eachArgs = append(eachArgs, KeyVal{Key: k, Val: (*res.(eachList).List)[0].Key})
 							}
 
-							*res.(funcs.EachList).List = (*res.(funcs.EachList).List)[1:]
+							*res.(eachList).List = (*res.(eachList).List)[1:]
 
-							fnCont = append(fnCont, fnData{tag: []byte("each"), seek: seekPos, each: res.(funcs.EachList)})
+							fnCont = append(fnCont, fnData{tag: []byte("each"), seek: seekPos, each: res.(eachList)})
 						}else{
 							// skip and remove blank const value each loop
 							eachLevel := 0
@@ -1131,7 +1167,7 @@ func PreCompile(path string, opts map[string]interface{}, componentOf ...string)
 						}
 
 						if selfClose == 1 {
-							if res, e := callFunc(string(fnName), &args, nil, &opts, true, &eachArgs); e == nil {
+							if res, e := callFunc(string(fnName), &args, nil, opts, true, &eachArgs); e == nil {
 								if res != nil {
 									write(goutil.ToByteArray(res))
 								}
@@ -1163,7 +1199,7 @@ func PreCompile(path string, opts map[string]interface{}, componentOf ...string)
 						fn := fnCont[len(fnCont)-1]
 						fnCont = fnCont[:len(fnCont)-1]
 
-						compOpts, e := goutil.DeepCopyJson(opts)
+						compOpts, e := goutil.DeepCopyJson(*opts)
 						if e != nil {
 							cacheError = e
 							return
@@ -1174,7 +1210,7 @@ func PreCompile(path string, opts map[string]interface{}, componentOf ...string)
 						}
 
 						var comp []byte
-						compData := PreCompile(string(fn.fnName), compOpts, append(componentOf, fullPath)...)
+						compData := preCompile(string(fn.fnName), &compOpts, append(componentOf, fullPath)...)
 						for !*compData.Ready && *compData.Err == nil {
 							time.Sleep(10 * time.Nanosecond)
 						}
@@ -1230,7 +1266,7 @@ func PreCompile(path string, opts map[string]interface{}, componentOf ...string)
 							ind++
 						}else{
 							if bytes.HasPrefix(arg.val, []byte("{{")) && bytes.HasSuffix(arg.val, []byte("}}")) {
-								if val, ok := funcs.GetOpt(arg.val, &opts, true, &eachArgs); ok {
+								if val, ok := GetOpt(arg.val, opts, true, &eachArgs); ok {
 									if key[0] != '$' {
 										args["$"+key] = goutil.ToByteArray(val)
 									}else{
@@ -1266,7 +1302,7 @@ func PreCompile(path string, opts map[string]interface{}, componentOf ...string)
 					fnName = bytes.Join(fnNameList[:ind], []byte("/"))
 
 					if selfClose == 1 {
-						compOpts, e := goutil.DeepCopyJson(opts)
+						compOpts, e := goutil.DeepCopyJson(*opts)
 						if e != nil {
 							cacheError = e
 							return
@@ -1277,7 +1313,7 @@ func PreCompile(path string, opts map[string]interface{}, componentOf ...string)
 						}
 
 						var comp []byte
-						compData := PreCompile(string(fnName), compOpts, append(componentOf, fullPath)...)
+						compData := preCompile(string(fnName), &compOpts, append(componentOf, fullPath)...)
 						for !*compData.Ready && *compData.Err == nil {
 							time.Sleep(10 * time.Nanosecond)
 						}
@@ -1342,7 +1378,7 @@ func PreCompile(path string, opts map[string]interface{}, componentOf ...string)
 							}
 
 							if bytes.HasPrefix(arg.val, []byte("{{")) && bytes.HasSuffix(arg.val, []byte("}}")) {
-								if val, ok := funcs.GetOpt(arg.val, &opts, true, &eachArgs); ok {
+								if val, ok := GetOpt(arg.val, opts, true, &eachArgs); ok {
 									if _, ok := args[key]; !ok {
 										args[key] = goutil.ToByteArray(val)
 									}else{
@@ -1537,7 +1573,7 @@ func PreCompile(path string, opts map[string]interface{}, componentOf ...string)
 								write(addLayoutHead())
 							}
 						} else{
-							if val, ok := funcs.GetOpt(varName, &opts, true, &eachArgs); ok {
+							if val, ok := GetOpt(varName, opts, true, &eachArgs); ok {
 								if escHTML {
 									write(goutil.EscapeHTML(goutil.ToByteArray(val)))
 								}else{
@@ -1703,6 +1739,9 @@ func PreCompile(path string, opts map[string]interface{}, componentOf ...string)
 }
 
 
+// Compile handles the final output and returns valid html/xhtml that can be passed to the user
+//
+// this method will automatically call preCompile if needed, and can read the cache file while its being written for an extra performance boost
 func Compile(path string, opts map[string]interface{}) ([]byte, error) {
 	if rootPath == "" || cacheTmpPath == "" {
 		return []byte{}, errors.New("a root path was never chosen")
@@ -1739,10 +1778,22 @@ func Compile(path string, opts map[string]interface{}) ([]byte, error) {
 	}
 
 
+	// add constOpts where not already defined
+	if constOpts != nil {
+		if defOpts, err := goutil.DeepCopyJson(constOpts); err == nil {
+			for key, val := range defOpts {
+				if _, ok := opts[key]; !ok {
+					opts[key] = val
+				}
+			}
+		}
+	}
+
+
 	// check cache for pre compiled file
 	compData, ok := pathCache.Get(fullPath + cachePath)
 	if !ok {
-		compData = PreCompile(origPath, opts)
+		compData = preCompile(origPath, &opts)
 	}
 
 	// open file reader
@@ -1755,7 +1806,7 @@ func Compile(path string, opts map[string]interface{}) ([]byte, error) {
 	reader := bufio.NewReader(file)
 
 	ifLevel := [][]byte{}
-	eachArgs := []funcs.KeyVal{}
+	eachArgs := []KeyVal{}
 	fnCont := []fnData{}
 
 	res := []byte{}
@@ -2044,20 +2095,20 @@ func Compile(path string, opts map[string]interface{}) ([]byte, error) {
 							return []byte{}, e
 						}
 
-						if reflect.TypeOf(res) == reflect.TypeOf(funcs.EachList{}) {
+						if reflect.TypeOf(res) == reflect.TypeOf(eachList{}) {
 							// add each statement to be handled on close
-							if res.(funcs.EachList).As != nil {
-								k := res.(funcs.EachList).As
-								eachArgs = append(eachArgs, funcs.KeyVal{Key: k, Val: (*res.(funcs.EachList).List)[0].Val})
+							if res.(eachList).As != nil {
+								k := res.(eachList).As
+								eachArgs = append(eachArgs, KeyVal{Key: k, Val: (*res.(eachList).List)[0].Val})
 							}
-							if res.(funcs.EachList).Of != nil {
-								k := res.(funcs.EachList).Of
-								eachArgs = append(eachArgs, funcs.KeyVal{Key: k, Val: (*res.(funcs.EachList).List)[0].Key})
+							if res.(eachList).Of != nil {
+								k := res.(eachList).Of
+								eachArgs = append(eachArgs, KeyVal{Key: k, Val: (*res.(eachList).List)[0].Key})
 							}
 
-							*res.(funcs.EachList).List = (*res.(funcs.EachList).List)[1:]
+							*res.(eachList).List = (*res.(eachList).List)[1:]
 
-							fnCont = append(fnCont, fnData{tag: append([]byte("each:"), ind...), seek: seekPos, each: res.(funcs.EachList)})
+							fnCont = append(fnCont, fnData{tag: append([]byte("each:"), ind...), seek: seekPos, each: res.(eachList)})
 						}else{
 							// skip each loop to closing tag
 							b, err = reader.Peek(2)
@@ -2167,11 +2218,11 @@ func Compile(path string, opts map[string]interface{}) ([]byte, error) {
 									// set new each args
 									if fn.each.As != nil {
 										k := fn.each.As
-										eachArgs = append(eachArgs, funcs.KeyVal{Key: k, Val: (*fn.each.List)[0].Val})
+										eachArgs = append(eachArgs, KeyVal{Key: k, Val: (*fn.each.List)[0].Val})
 									}
 									if fn.each.Of != nil {
 										k := fn.each.Of
-										eachArgs = append(eachArgs, funcs.KeyVal{Key: k, Val: (*fn.each.List)[0].Key})
+										eachArgs = append(eachArgs, KeyVal{Key: k, Val: (*fn.each.List)[0].Key})
 									}
 
 									*fn.each.List = (*fn.each.List)[1:]
@@ -2198,14 +2249,14 @@ func Compile(path string, opts map[string]interface{}) ([]byte, error) {
 						}
 					}
 				}else{
-					if val, ok := funcs.GetOpt(regex.JoinBytes([]byte("{{"), varData, []byte("}}")), &opts, false, &eachArgs); ok {
-						if reflect.TypeOf(val) == reflect.TypeOf(funcs.KeyVal{}) {
-							v := goutil.EscapeHTMLArgs(goutil.ToByteArray(val.(funcs.KeyVal).Val))
+					if val, ok := GetOpt(regex.JoinBytes([]byte("{{"), varData, []byte("}}")), &opts, false, &eachArgs); ok {
+						if reflect.TypeOf(val) == reflect.TypeOf(KeyVal{}) {
+							v := goutil.EscapeHTMLArgs(goutil.ToByteArray(val.(KeyVal).Val))
 							if escHTML {
 								v = goutil.EscapeHTMLArgs(v)
 							}
 
-							write(regex.JoinBytes(val.(funcs.KeyVal).Key, '=', '"', v, '"'))
+							write(regex.JoinBytes(val.(KeyVal).Key, '=', '"', v, '"'))
 						}else if val != nil {
 							if escHTML {
 								write(goutil.EscapeHTML(goutil.ToByteArray(val)))
@@ -2229,6 +2280,10 @@ func Compile(path string, opts map[string]interface{}) ([]byte, error) {
 	}
 
 	// fmt.Println("-----\n"+string(res[len(res)-8:]))
+
+	if *compData.Err != nil {
+		return res, *compData.Err
+	}
 
 	return res, nil
 }
@@ -2451,48 +2506,34 @@ func getSeekPos(file *os.File, reader *bufio.Reader) (int64, error) {
 }
 
 
-func callFunc(name string, args *map[string][]byte, cont *[]byte, opts *map[string]interface{}, pre bool, addVars *[]funcs.KeyVal) (interface{}, error) {
+func callFunc(name string, args *map[string][]byte, cont *[]byte, opts *map[string]interface{}, pre bool, addVars *[]KeyVal) (interface{}, error) {
 	name = string(regex.Compile(`[^\w_]`).RepStr([]byte(name), []byte{}))
 
-	isPre := false
-
-	var m reflect.Value
-	if pre {
-		m = reflect.ValueOf(&preCompFuncs).MethodByName(name)
-		if goutil.IsZeroOfUnderlyingType(m) {
-			return nil, errors.New("method '"+name+"' does not exist in Pre Compiled Functions")
-		}
-		isPre = true
-	}else{
-		m = reflect.ValueOf(&compFuncs).MethodByName(name)
-		if goutil.IsZeroOfUnderlyingType(m) {
-			// return nil, errors.New("method does not exist in Compiled Functions")
-			m = reflect.ValueOf(&preCompFuncs).MethodByName(name)
-			if goutil.IsZeroOfUnderlyingType(m) {
-				// fmt.Println(name)
-				return nil, errors.New("method '"+name+"' does not exist in Compiled Functions")
+	m := reflect.ValueOf(&funcs).MethodByName(name)
+	if goutil.IsZeroOfUnderlyingType(m) {
+		found := false
+		for key, fn := range userFuncList {
+			if key == name {
+				m = reflect.ValueOf(fn)
+				if !goutil.IsZeroOfUnderlyingType(m) {
+					found = true
+				}
 			}
-			isPre = true
+		}
+
+		if !found {
+			return nil, errors.New("method '"+name+"' does not exist in Compiled Functions")
 		}
 	}
 
-	var val []reflect.Value
-	if isPre {
-		val = m.Call([]reflect.Value{
-			reflect.ValueOf(args),
-			reflect.ValueOf(cont),
-			reflect.ValueOf(opts),
-			reflect.ValueOf(pre),
-			reflect.ValueOf(addVars),
-		})
-	}else{
-		val = m.Call([]reflect.Value{
-			reflect.ValueOf(args),
-			reflect.ValueOf(cont),
-			reflect.ValueOf(opts),
-			reflect.ValueOf(addVars),
-		})
-	}
+
+	val := m.Call([]reflect.Value{
+		reflect.ValueOf(args),
+		reflect.ValueOf(cont),
+		reflect.ValueOf(opts),
+		reflect.ValueOf(pre),
+		reflect.ValueOf(addVars),
+	})
 
 	var data interface{}
 	var err error
@@ -2508,47 +2549,21 @@ func callFunc(name string, args *map[string][]byte, cont *[]byte, opts *map[stri
 	return data, err
 }
 
-func callFuncArr(name string, args *[][]byte, cont *[]byte, opts *map[string]interface{}, pre bool, addVars *[]funcs.KeyVal) (interface{}, error) {
+func callFuncArr(name string, args *[][]byte, cont *[]byte, opts *map[string]interface{}, pre bool, addVars *[]KeyVal) (interface{}, error) {
 	name = string(regex.Compile(`[^\w_]`).RepStr([]byte(name), []byte{}))
 
-	isPre := false
-
-	var m reflect.Value
-	if pre {
-		m = reflect.ValueOf(&preCompFuncs).MethodByName(name)
-		if goutil.IsZeroOfUnderlyingType(m) {
-			return nil, errors.New("method '"+name+"' does not exist in Pre Compiled Functions")
-		}
-		isPre = true
-	}else{
-		m = reflect.ValueOf(&compFuncs).MethodByName(name)
-		if goutil.IsZeroOfUnderlyingType(m) {
-			// return nil, errors.New("method does not exist in Compiled Functions")
-			m = reflect.ValueOf(&preCompFuncs).MethodByName(name)
-			if goutil.IsZeroOfUnderlyingType(m) {
-				return nil, errors.New("method '"+name+"' does not exist in Compiled Functions")
-			}
-			isPre = true
-		}
+	m := reflect.ValueOf(&funcs).MethodByName(name)
+	if goutil.IsZeroOfUnderlyingType(m) {
+		return nil, errors.New("method '"+name+"' does not exist in Compiled Functions")
 	}
 
-	var val []reflect.Value
-	if isPre {
-		val = m.Call([]reflect.Value{
-			reflect.ValueOf(args),
-			reflect.ValueOf(cont),
-			reflect.ValueOf(opts),
-			reflect.ValueOf(pre),
-			reflect.ValueOf(addVars),
-		})
-	}else{
-		val = m.Call([]reflect.Value{
-			reflect.ValueOf(args),
-			reflect.ValueOf(cont),
-			reflect.ValueOf(opts),
-			reflect.ValueOf(addVars),
-		})
-	}
+	val := m.Call([]reflect.Value{
+		reflect.ValueOf(args),
+		reflect.ValueOf(cont),
+		reflect.ValueOf(opts),
+		reflect.ValueOf(pre),
+		reflect.ValueOf(addVars),
+	})
 
 	var data interface{}
 	var err error
@@ -2601,7 +2616,7 @@ func tmpPath(viewPath string, tries ...int) (*os.File, string, error) {
 		tmp = regex.Compile(`[^\w_\-\.]+`).RepStr(regex.Compile(`/`).RepStr([]byte(viewPath), []byte{'.'}), []byte{})
 		path, err = goutil.JoinPath(cacheTmpPath, string(tmp) + ".cache." + fileExt)
 	}else{
-		tmp = randBytes(32, nil)
+		tmp = goutil.RandBytes(32, nil)
 		path, err = goutil.JoinPath(cacheTmpPath, string(tmp) + "." + t + "." + fileExt)
 	}
 
@@ -2616,7 +2631,7 @@ func tmpPath(viewPath string, tries ...int) (*os.File, string, error) {
 			return nil, "", errors.New("failed to generate a unique tmp cache path within 10000 tries")
 		}
 
-		tmp = randBytes(32, nil)
+		tmp = goutil.RandBytes(32, nil)
 		path, err = goutil.JoinPath(cacheTmpPath, string(tmp) + "." + t + "." + fileExt)
 	}
 
@@ -2637,48 +2652,4 @@ func tmpPath(viewPath string, tries ...int) (*os.File, string, error) {
 	}
 
 	return file, path, nil
-}
-
-func randBytes(size int, exclude ...[]byte) []byte {
-	b := make([]byte, size)
-	rand.Read(b)
-	b = []byte(base64.URLEncoding.EncodeToString(b))
-
-	if len(exclude) >= 2 {
-		if exclude[0] == nil || len(exclude[0]) == 0 {
-			b = regex.Compile(`[^\w_-]`).RepStr(b, exclude[1])
-		}else{
-			b = regex.Compile(`[%1]`, string(exclude[0])).RepStr(b, exclude[1])
-		}
-	}else if len(exclude) >= 1 {
-		if exclude[0] == nil || len(exclude[0]) == 0 {
-			b = regex.Compile(`[^\w_-]`).RepStr(b, []byte{})
-		}else{
-			b = regex.Compile(`[%1]`, string(exclude[0])).RepStr(b, []byte{})
-		}
-	}
-
-	for len(b) < size {
-		a := make([]byte, size)
-		rand.Read(a)
-		a = []byte(base64.URLEncoding.EncodeToString(a))
-	
-		if len(exclude) >= 2 {
-			if exclude[0] == nil || len(exclude[0]) == 0 {
-				a = regex.Compile(`[^\w_-]`).RepStr(a, exclude[1])
-			}else{
-				a = regex.Compile(`[%1]`, string(exclude[0])).RepStr(a, exclude[1])
-			}
-		}else if len(exclude) >= 1 {
-			if exclude[0] == nil || len(exclude[0]) == 0 {
-				a = regex.Compile(`[^\w_-]`).RepStr(a, []byte{})
-			}else{
-				a = regex.Compile(`[%1]`, string(exclude[0])).RepStr(a, []byte{})
-			}
-		}
-
-		b = append(b, a...)
-	}
-
-	return b[:size]
 }
