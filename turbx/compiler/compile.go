@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -729,105 +730,8 @@ func PreCompile(path string, opts map[string]interface{}, componentOf ...string)
 				if mode == 1 {
 					if selfClose == 2 && len(fnCont) != 0 && !fnCont[len(fnCont)-1].isComponent && bytes.Equal(elm["TAG"].val, fnCont[len(fnCont)-1].tag) {
 						fn := fnCont[len(fnCont)-1]
-						// fnCont = fnCont[:len(fnCont)-1]
 
 						if bytes.Equal(elm["TAG"].val, []byte("each")) {
-							//todo: seek back to top
-							if len(*fn.each.List) != 0 {
-								// remove eachArgs from end of list
-								rmArgs := map[string][]byte{}
-								if fn.each.As != nil {
-									rmArgs["as"] = fn.each.As
-								}
-								if fn.each.Of != nil {
-									rmArgs["of"] = fn.each.Of
-								}
-
-								for i := len(eachArgs)-1; i >= 0; i-- {
-									if bytes.Equal(eachArgs[i].Key, rmArgs["as"]) {
-										eachArgs = append(eachArgs[:i], eachArgs[i+1:]...)
-										rmArgs["as"] = nil
-									}else if bytes.Equal(eachArgs[i].Key, rmArgs["of"]) {
-										eachArgs = append(eachArgs[:i], eachArgs[i+1:]...)
-										rmArgs["of"] = nil
-									}
-								}
-
-								// set new each args
-								if fn.each.As != nil {
-									k := fn.each.As
-									eachArgs = append(eachArgs, funcs.KeyVal{Key: k, Val: (*fn.each.List)[0].Val})
-								}
-								if fn.each.Of != nil {
-									k := fn.each.Of
-									eachArgs = append(eachArgs, funcs.KeyVal{Key: k, Val: (*fn.each.List)[0].Key})
-								}
-	
-								*fn.each.List = (*fn.each.List)[1:]
-
-								// return to top of each loop
-								file.Seek(fn.seek, os.SEEK_SET)
-								reader.Reset(file)
-
-								b, err = reader.Peek(1)
-								continue
-							}
-
-							fnCont = fnCont[:len(fnCont)-1]
-
-							reader.Discard(1)
-							b, err = reader.Peek(1)
-							continue
-
-
-							//old
-							/* eachOpts, e := goutil.DeepCopyJson(opts)
-							if e != nil {
-								cacheError = e
-								return
-							}
-							for i := range eachOpts {
-								if !strings.HasPrefix(i, "$") {
-									delete(eachOpts, i)
-								}
-							}
-
-							if fn.each.In != nil {
-								eachOpts[string(fn.each.In)] = fn.each.List
-							}
-
-							for _, list := range fn.each.List {
-								b := regex.Compile(`(?s){{({|)\s*((?:"(?:\\[\\"]|[^"])*"|'(?:\\[\\']|[^'])*'|\'(?:\\[\\\']|[^\'])*\'|.)*?)\s*}}(}|)`, string(fn.each.As), string(fn.each.Of), string(fn.each.In)).RepFuncRef(&fn.cont, func(data func(int) []byte) []byte {
-									allowHTML := false
-									if len(data(1)) != 0 && len(data(3)) != 0 {
-										allowHTML = true
-									}
-
-									if fn.each.As != nil {
-										eachOpts[string(fn.each.As)] = list.Val
-									}else{
-										eachOpts[string(fn.each.As)] = nil
-									}
-									if fn.each.Of != nil {
-										eachOpts[string(fn.each.Of)] = list.Key
-									}else{
-										eachOpts[string(fn.each.Of)] = nil
-									}
-
-									if opt, ok := funcs.GetOpt(data(0), &eachOpts, false); ok {
-										b := goutil.ToByteArray(opt)
-										if !allowHTML {
-											b = goutil.EscapeHTML(b)
-										}
-										return b
-									}
-
-									return data(0)
-								})
-
-								write(b)
-							}
-
 							// remove eachArgs from end of list
 							rmArgs := map[string][]byte{}
 							if fn.each.As != nil {
@@ -847,9 +751,32 @@ func PreCompile(path string, opts map[string]interface{}, componentOf ...string)
 								}
 							}
 
+							if len(*fn.each.List) != 0 {
+								// set new each args
+								if fn.each.As != nil {
+									k := fn.each.As
+									eachArgs = append(eachArgs, funcs.KeyVal{Key: k, Val: (*fn.each.List)[0].Val})
+								}
+								if fn.each.Of != nil {
+									k := fn.each.Of
+									eachArgs = append(eachArgs, funcs.KeyVal{Key: k, Val: (*fn.each.List)[0].Key})
+								}
+	
+								*fn.each.List = (*fn.each.List)[1:]
+
+								// return to top of each loop
+								file.Seek(fn.seek, io.SeekStart)
+								reader.Reset(file)
+
+								b, err = reader.Peek(1)
+								continue
+							}
+
+							fnCont = fnCont[:len(fnCont)-1]
+
 							reader.Discard(1)
 							b, err = reader.Peek(1)
-							continue */
+							continue
 						}
 
 						fnCont = fnCont[:len(fnCont)-1]
@@ -1837,8 +1764,22 @@ func Compile(path string, opts map[string]interface{}) ([]byte, error) {
 	res := []byte{}
 	write := func(b []byte){
 		if len(fnCont) != 0 {
-			fnCont[len(fnCont)-1].cont = append(fnCont[len(fnCont)-1].cont, b...)
-			return
+			if fnCont[len(fnCont)-1].cont != nil {
+				fnCont[len(fnCont)-1].cont = append(fnCont[len(fnCont)-1].cont, b...)
+				return
+			}else{
+				found := false
+				for i := len(fnCont)-1; i >= 0; i-- {
+					if fnCont[len(fnCont)-1].cont != nil {
+						fnCont[len(fnCont)-1].cont = append(fnCont[len(fnCont)-1].cont, b...)
+						found = true
+						break
+					}
+				}
+				if found {
+					return
+				}
+			}
 		}
 		res = append(res, b...)
 	}
@@ -2080,7 +2021,7 @@ func Compile(path string, opts map[string]interface{}) ([]byte, error) {
 						k := ""
 						for i, v := range argList {
 							if i == 0 {
-								args["0"] = v
+								args["1"] = v
 								continue
 							}
 
@@ -2088,7 +2029,13 @@ func Compile(path string, opts map[string]interface{}) ([]byte, error) {
 								k = string(v)
 							}else{
 								args[k] = v
+								k = ""
 							}
+						}
+
+						seekPos, e := getSeekPos(file, reader)
+						if err != nil {
+							return []byte{}, e
 						}
 
 						res, e := callFunc("Each", &args, nil, &opts, false)
@@ -2100,14 +2047,16 @@ func Compile(path string, opts map[string]interface{}) ([]byte, error) {
 							// add each statement to be handled on close
 							if res.(funcs.EachList).As != nil {
 								k := res.(funcs.EachList).As
-								eachArgs = append(eachArgs, funcs.KeyVal{Key: k})
+								eachArgs = append(eachArgs, funcs.KeyVal{Key: k, Val: (*res.(funcs.EachList).List)[0].Val})
 							}
 							if res.(funcs.EachList).Of != nil {
 								k := res.(funcs.EachList).Of
-								eachArgs = append(eachArgs, funcs.KeyVal{Key: k})
+								eachArgs = append(eachArgs, funcs.KeyVal{Key: k, Val: (*res.(funcs.EachList).List)[0].Key})
 							}
 
-							fnCont = append(fnCont, fnData{tag: append([]byte("each:"), ind...), each: res.(funcs.EachList), cont: []byte{}})
+							*res.(funcs.EachList).List = (*res.(funcs.EachList).List)[1:]
+
+							fnCont = append(fnCont, fnData{tag: append([]byte("each:"), ind...), seek: seekPos, each: res.(funcs.EachList)})
 						}else{
 							// skip each loop to closing tag
 							b, err = reader.Peek(2)
@@ -2141,7 +2090,7 @@ func Compile(path string, opts map[string]interface{}) ([]byte, error) {
 						})
 
 						args := map[string][]byte{}
-						i := 0
+						i := 1
 						regex.Compile(`([\w_-]+|)=?"((?:\\[\\"]|.)*?)"`).RepFuncRef(&varData, func(data func(int) []byte) []byte {
 							if len(data(1)) != 0 {
 								args[string(data(1))] = regex.Compile(`\\([\\"])`).RepStrComplex(data(2), []byte("$1"))
@@ -2152,6 +2101,8 @@ func Compile(path string, opts map[string]interface{}) ([]byte, error) {
 
 							return []byte{}
 						}, true)
+
+						fmt.Println(args)
 
 						if selfClosing {
 							// run func
@@ -2192,11 +2143,54 @@ func Compile(path string, opts map[string]interface{}) ([]byte, error) {
 
 						if bytes.Equal(regex.JoinBytes(tag, ':', ind), fnCont[len(fnCont)-1].tag) {
 							fn := fnCont[len(fnCont)-1]
-							fnCont = fnCont[:len(fnCont)-1]
 
 							if bytes.Equal(tag, []byte("each")) {
+								// remove eachArgs from end of list
+								rmArgs := map[string][]byte{}
+								if fn.each.As != nil {
+									rmArgs["as"] = fn.each.As
+								}
+								if fn.each.Of != nil {
+									rmArgs["of"] = fn.each.Of
+								}
+
+								for i := len(eachArgs)-1; i >= 0; i-- {
+									if bytes.Equal(eachArgs[i].Key, rmArgs["as"]) {
+										eachArgs = append(eachArgs[:i], eachArgs[i+1:]...)
+										rmArgs["as"] = nil
+									}else if bytes.Equal(eachArgs[i].Key, rmArgs["of"]) {
+										eachArgs = append(eachArgs[:i], eachArgs[i+1:]...)
+										rmArgs["of"] = nil
+									}
+								}
+
+								if len(*fn.each.List) != 0 {
+									// set new each args
+									if fn.each.As != nil {
+										k := fn.each.As
+										eachArgs = append(eachArgs, funcs.KeyVal{Key: k, Val: (*fn.each.List)[0].Val})
+									}
+									if fn.each.Of != nil {
+										k := fn.each.Of
+										eachArgs = append(eachArgs, funcs.KeyVal{Key: k, Val: (*fn.each.List)[0].Key})
+									}
+
+									*fn.each.List = (*fn.each.List)[1:]
+
+									// return to top of each loop
+									file.Seek(fn.seek, io.SeekStart)
+									reader.Reset(file)
+
+									//todo: check if this is needed
+									b, err = reader.Peek(1)
+								}else{
+									fnCont = fnCont[:len(fnCont)-1]
+								}
+
+
+								//old
 								// run each loop
-								eachOpts, e := goutil.DeepCopyJson(opts)
+								/* eachOpts, e := goutil.DeepCopyJson(opts)
 								if e != nil {
 									return []byte{}, e
 								}
@@ -2254,9 +2248,11 @@ func Compile(path string, opts map[string]interface{}) ([]byte, error) {
 										eachArgs = append(eachArgs[:i], eachArgs[i+1:]...)
 										rmArgs["of"] = nil
 									}
-								}
+								} */
 							}else{
 								// run other funcs
+								fnCont = fnCont[:len(fnCont)-1]
+
 								res, e := callFunc(string(fn.fnName), &fn.args, &fn.cont, &opts, false)
 								if e == nil {
 									if res != nil {
@@ -2490,18 +2486,18 @@ func skipStrComments(reader *bufio.Reader, b *[]byte, err *error){
 
 
 func getSeekPos(file *os.File, reader *bufio.Reader) (int64, error) {
-	seekPos, err := file.Seek(0, os.SEEK_CUR)
+	seekPosEnd, err := file.Seek(0, io.SeekEnd)
 	if err != nil {
 		return 0, err
 	}
 
-	seekPosEnd, err := file.Seek(0, os.SEEK_END)
+	seekPos, err := file.Seek(0, io.SeekCurrent)
 	if err != nil {
 		return 0, err
 	}
 
 	// if not having weird error with current referencing as end
-	if seekPos != seekPosEnd {
+	if seekPos < seekPosEnd {
 		return seekPos, err
 	}
 
@@ -2511,7 +2507,7 @@ func getSeekPos(file *os.File, reader *bufio.Reader) (int64, error) {
 	}
 	reader.UnreadByte()
 
-	seekPos, err = file.Seek(-int64(size), os.SEEK_END)
+	seekPos, err = file.Seek(-int64(size), io.SeekEnd)
 	if err != nil {
 		return 0, err
 	}

@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"time"
 	"turbx/compiler"
 
@@ -52,7 +51,7 @@ func main(){
 	compData := compiler.PreCompile("index", map[string]interface{}{
 		"$test": 3,
 		"key": "value",
-		"list": map[string]interface{}{
+		"$list": map[string]interface{}{
 			"item1": "value a",
 			"item2": "value b",
 			"item3": "value c",
@@ -63,7 +62,7 @@ func main(){
 	res, err := compiler.Compile("index", map[string]interface{}{
 		"$test": 3,
 		"key": "value",
-		"list": map[string]interface{}{
+		"$list": map[string]interface{}{
 			"item1": "value a",
 			"item2": "value b",
 			"item3": "value c",
@@ -92,5 +91,5 @@ func main(){
 
 
 	_ = res
-	fmt.Println("\n----------\n\n"+string(res))
+	// fmt.Println("\n----------\n\n"+string(res))
 }

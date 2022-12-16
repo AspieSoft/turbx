@@ -1,3 +1,16 @@
-{{#each:0 list as val of key}}
-  test {{key}} : {{val}}
-{{/each:0}}
+
+  {{#if:0 key = "item1"}}
+    this is item 1
+  {{/if:0}}
+  test item1 : value a
+
+  {{#if:0 key = "item1"}}
+    this is item 1
+  {{/if:0}}
+  test item2 : value b
+
+  {{#if:0 key = "item1"}}
+    this is item 1
+  {{/if:0}}
+  test item3 : value c
+
