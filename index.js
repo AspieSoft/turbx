@@ -71,17 +71,21 @@ function initGoCompiler() {
   }
   goCompilerLastInit = Date.now();
 
-  let compKey = zlib.gzipSync(EncKey);
-  if(!compKey){
-    throw new Error('Error: Turbx failed to compress random encryption key');
-  }else{
-    compKey = compKey.toString('base64');
-  }
+  const args = [
+    `--enc="${EncKey}"`,
+    `--root="${golangOpts.root}"`,
+    `--ext="${golangOpts.ext}"`,
+    `--components="${golangOpts.components}"`,
+    `--layout="${golangOpts.layout}"`,
+    `--public="${golangOpts.public}"`,
+    `--opts="${JSON.stringify(golangOpts.opts)}"`,
+    `--cache="${golangOpts.cache}"`,
+  ]
 
   if(DebugMode){
-    goCompiler = spawn('go', ['run', '.', '--enc='+compKey, '--debug'], {cwd: join(__dirname, 'compiler')});
+    goCompiler = spawn('go', ['run', '.', ...args], {cwd: join(__dirname, 'turbx')});
   }else{
-    goCompiler = spawn('./compiler/compiler', ['--enc='+compKey], { cwd: __dirname });
+    goCompiler = spawn('./turbx/turbx', [...args], { cwd: __dirname });
   }
 
   goCompiler.on('close', () => {
@@ -99,80 +103,76 @@ function initGoCompiler() {
       return;
     }
 
-    if (data.startsWith('debug:')) {
+    data = await decrypt(data, EncKey);
+    if(!data){
       console.log(data);
       return;
     }
 
-    if(EncKey){
-      data = await decrypt(data, EncKey)
-      if(!data){
-        return;
-      }
-    }
-
-    let idToken = undefined;
-    data = data.replace(/^([\w_-]+):/, (_, id) => {
-      idToken = id;
+    let resToken = undefined;
+    let resType = undefined;
+    data = data.replace(/^([\w_-]+):([\w_-]+):/, (_, id, type) => {
+      resToken = id;
+      resType = type;
       return '';
     });
-    if (!idToken) {
+    if (!idToken || !resType) {
       return;
     }
 
     const now = Date.now();
-    if (now - goRecentId[idToken] < 20000) {
+    if (now - goRecentId[resToken] < 20000) {
       return;
     }
 
-    goRecentId[idToken] = now;
-
-    goCompiledResults[idToken] = data;
+    goRecentId[resToken] = now;
+    goCompiledResults[resToken] = {res: resType, data};
   });
-
-  for(let key in golangOpts){
-    if(typeof key === 'string' && key.match(/^[\w_-]+$/)){
-      goCompilerSendRes('set:' + key + '=' + golangOpts[key]);
-    }
-  }
 }
 initGoCompiler();
 
 setInterval(async function(){
   pingRes = false;
   goCompiler.stdin.write('ping\n');
-  await sleep(100);
+  await sleep(1000);
   if(!pingRes){
     initGoCompiler();
   }
-}, 1000);
+}, 10000);
 
 async function goCompilerSendRes(res){
-  if(EncKey){
-    const enc = await encrypt(res, EncKey);
-    if(enc){
-      goCompiler.stdin.write(enc + '\n');
-    }
-  }else{
-    goCompiler.stdin.write(res);
+  const enc = await encrypt(res, EncKey);
+  if(enc){
+    goCompiler.stdin.write(enc + '\n');
   }
 }
 
-function goCompilerSetOpt(key, value) {
+function goCompilerSetOpt(key, value, setLiveOpts = false) {
   key = key.toString().replace(/[^\w_-]/g, '');
+
+  if(setLiveOpts){
+    golangOpts[key] = value;
+    goCompilerSendRes(`opts:${JSON.stringify(value)}`);
+    return;
+  }
+
   value = value.toString().replace(/[\r\n\v]/g, '');
   golangOpts[key] = value;
-  goCompilerSendRes('set:' + key + '=' + value);
+
+  let oldCompiler = goCompiler;
+  initGoCompiler();
+
+  setTimeout(async function(){
+    const enc = await encrypt(res, EncKey);
+    if(enc){
+      oldCompiler.stdin.write(enc + '\n');
+    }
+  }, 1000);
 }
 
 async function goCompilerPreCompile(file, opts) {
-  if(typeof opts === 'object'){
-    opts.PreCompile = true;
-    return await goCompilerCompile(file, opts);
-  }
-
   const token = randomToken(64);
-  goCompilerSendRes('pre:' + token + ':' + file.toString().replace(/[\r\n\v]/g, ''));
+  goCompilerSendRes(`pre:${token}:${file.toString().replace(/[\r\n\v]/g, '')}:${JSON.stringify(opts)}`)
 
   const updateSpeed = Number(OPTS.updateSpeed) || 1;
 
@@ -191,7 +191,7 @@ async function goCompilerPreCompile(file, opts) {
 
 async function goCompilerHasCache(file) {
   const token = randomToken(64);
-  goCompilerSendRes('has:' + token + ':' + file.toString().replace(/[\r\n\v]/g, ''));
+  goCompilerSendRes(`has:${token}:${file.toString().replace(/[\r\n\v]/g, '')}`)
 
   const updateSpeed = Number(OPTS.updateSpeed) || 1;
 
@@ -214,35 +214,10 @@ async function goCompilerHasCache(file) {
 async function goCompilerCompile(file, opts) {
   const token = randomToken(64);
 
-  let zippedOpts = undefined;
-
-  await waitForMemory();
-  zlib.gzip(JSON.stringify(opts), (err, buffer) => {
-    if (err) {
-      goCompiledResults[token] = 'error';
-      zippedOpts = null;
-      return;
-    }
-
-    zippedOpts = buffer.toString('base64');
-  });
-
   const updateSpeed = Number(OPTS.updateSpeed) || 1;
 
-  let loops = (toTimeMillis(OPTS.timeout) || 30000) / updateSpeed;
-  while (loops-- > 0) {
-    if (zippedOpts != undefined) {
-      break;
-    }
-    await sleep(updateSpeed);
-  }
-
-  if (!zippedOpts) {
-    return zippedOpts;
-  }
-
   let reqStarted = Date.now();
-  goCompilerSendRes(token + ':' + zippedOpts + ':' + file.toString().replace(/[\r\n\v]/g, ''));
+  goCompilerSendRes(`comp:${token}:${file.toString().replace(/[\r\n\v]/g, '')}:${JSON.stringify(opts)}`)
 
   while (loops-- > 0) {
     if (goCompiledResults[token]) {
@@ -259,29 +234,7 @@ async function goCompilerCompile(file, opts) {
 
   const res = goCompiledResults[token];
   delete goCompiledResults[token];
-
-  let output = undefined;
-  if (res) {
-    await waitForMemory();
-    zlib.gunzip(Buffer.from(res, 'base64'), (err, res) => {
-      if (err) {
-        output = null;
-        return;
-      }
-      output = res.toString();
-    });
-
-    while (loops-- > 0) {
-      if (output !== undefined) {
-        break;
-      }
-      await sleep(updateSpeed);
-    }
-
-    return output;
-  }
-
-  return undefined;
+  return res;
 }
 
 function exitHandler(options, exitCode) {
@@ -368,7 +321,7 @@ function setOpts(opts) {
   opts = clean(opts);
   let root = opts.views || opts.view || 'views';
 
-  OPTS.ext = (opts.ext || 'xhtml').replace(/[^\w_\-]/g, '');
+  OPTS.ext = (opts.ext || 'md').replace(/[^\w_\-]/g, '');
   let rootPath = root.replace(/[^\w_\-\\\/\.@$#!]/g, '');
   if (!rootPath.startsWith(ROOT)) {
     rootPath = join(ROOT, rootPath);
@@ -380,13 +333,12 @@ function setOpts(opts) {
     OPTS.components = componentsOpt.replace(/[^\w_\-\\\/\.@$#!]/g, '');
   }
 
-  let template = (opts.template || '').replace(/[^\w_\-\\\/\.@$#!]/g, '');
+  let template = (opts.template ?? opts.layout ?? 'layout').replace(/[^\w_\-\\\/\.@$#!]/g, '');
   if (template && template.trim() !== '') {
     OPTS.template = template;
   }
 
   OPTS.cache = opts.cache || '2h';
-  OPTS.lazyCache = opts.lazyCache || '12h';
   OPTS.timeout = opts.timeout || '30s';
 
   if (typeof before === 'function') {
@@ -401,6 +353,10 @@ function setOpts(opts) {
     OPTS.static = opts.static;
   } else {
     OPTS.static = '/';
+  }
+
+  if (typeof opts.public === 'string') {
+    OPTS.public = opts.public;
   }
 
   if (typeof opts.opts === 'object') {
@@ -419,24 +375,16 @@ function setOpts(opts) {
     OPTS.updateSpeed = 1;
   }
 
-  for (let key in OPTS) {
-    if (OPTS[key] === undefined || OPTS[key] === null) {
-      continue;
-    }
-    if (typeof OPTS[key] === 'function') {
-      goCompilerSetOpt(key, 'true');
-    } else if (typeof OPTS[key] === 'object') {
-      goCompilerSetOpt(key, JSON.stringify(OPTS[key]));
-    } else if (typeof OPTS[key] === 'string' && OPTS[key].match(/^[0-9]+(\.[0-9]+|)[a-z]{0,3}$/)) {
-      let opt = toTimeMillis(OPTS[key]);
-      if (!Number.isNaN(opt)) {
-        goCompilerSetOpt(key, opt.toString());
-      } else {
-        goCompilerSetOpt(key, OPTS[key].toString());
-      }
-    } else {
-      goCompilerSetOpt(key, OPTS[key].toString());
-    }
+  goCompilerSetOpt('root', OPTS.root);
+  goCompilerSetOpt('ext', OPTS.ext);
+  goCompilerSetOpt('components', OPTS.components);
+  goCompilerSetOpt('cache', OPTS.cache);
+  goCompilerSetOpt('opts', OPTS.opts);
+
+  if (!OPTS.template || OPTS.template === '') {
+    goCompilerSetOpt('layout', '!');
+  }else{
+    goCompilerSetOpt('layout', OPTS.template);
   }
 }
 
@@ -552,7 +500,6 @@ module.exports = (function () {
       ext: 'xhtml',
       template: undefined,
       cache: '2h',
-      lazyCache: '12h',
       timeout: '30s',
       before: undefined,
       after: undefined,
@@ -582,6 +529,7 @@ module.exports = (function () {
 
   exports.preRender = goCompilerPreCompile;
   exports.preCompiled = goCompilerHasCache;
+  exports.render = goCompilerCompile;
 
   exports.renderPages = expressFallbackPages;
   exports.rateLimit = expressRateLimit;

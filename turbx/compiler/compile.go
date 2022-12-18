@@ -25,7 +25,8 @@ var fileExt string = "md"
 var componentPath string = "components"
 var defaultLayoutPath string = "layout"
 var publicPath string
-var constOpts map[string]interface{}
+var constOpts map[string]interface{} = map[string]interface{}{}
+var cacheTime int64 = (time.Hour * 2).Milliseconds()
 
 const writeFlushSize = 1000
 const compileReadSize = 10
@@ -73,6 +74,9 @@ type Config struct {
 	//
 	// note: for an option to be read by the pre-compiler, all keys must start with a "$" in there name
 	ConstOpts map[string]interface{}
+
+	// Cache sets the amount of time before the cache will expire
+	Cache string
 }
 
 
@@ -128,6 +132,8 @@ type pathCacheData struct {
 	cachePath string
 	Ready *bool
 	Err *error
+
+	lastUsed *int64
 }
 
 var pathCache *haxmap.Map[string, pathCacheData] = haxmap.New[string, pathCacheData]()
@@ -246,6 +252,12 @@ func SetConfig(config Config) error {
 			constOpts = opts
 		}else{
 			constOpts = nil
+		}
+	}
+
+	if config.Cache != "" {
+		if n, err := time.ParseDuration(config.Cache); err == nil {
+			cacheTime = n.Milliseconds()
 		}
 	}
 
@@ -377,7 +389,8 @@ func preCompile(path string, opts *map[string]interface{}, componentOf ...string
 	//todo: make sure and old files are removed from the cache first
 
 	// prepare the cache vars and info
-	cacheRes := pathCacheData{path: fullPath, tmp: tmpPath, cachePath: fullPath + cachePath, Ready: &cacheReady, Err: &cacheError}
+	now := time.Now().UnixMilli()
+	cacheRes := pathCacheData{path: fullPath, tmp: tmpPath, cachePath: fullPath + cachePath, lastUsed: &now, Ready: &cacheReady, Err: &cacheError}
 	pathCache.Set(fullPath + cachePath, cacheRes)
 
 	// run pre compiler concurrently
@@ -1792,7 +1805,8 @@ func Compile(path string, opts map[string]interface{}) ([]byte, error) {
 
 	// check cache for pre compiled file
 	compData, ok := pathCache.Get(fullPath + cachePath)
-	if !ok {
+	now := time.Now().UnixMilli()
+	if !ok || now - *compData.lastUsed > cacheTime {
 		compData = preCompile(origPath, &opts)
 	}
 
@@ -2286,6 +2300,48 @@ func Compile(path string, opts map[string]interface{}) ([]byte, error) {
 	}
 
 	return res, nil
+}
+
+
+// HasPreCompile returns true if a file has been pre compiled in the cache and is not expired
+func HasPreCompile(path string) bool {
+	if rootPath == "" || cacheTmpPath == "" {
+		return false
+	}
+
+	// handle modified cache and layout paths
+	path = string(regex.Compile(`@([\w_-]+)(:[\w_-]+|)$`).RepStr([]byte(path), []byte{}))
+
+	cachePath := ""
+	if regex.Compile(`(:[\w_-]+)$`).Match([]byte(path)) {
+		path = string(regex.Compile(`(:[\w_-]+)$`).RepFunc([]byte(path), func(data func(int) []byte) []byte {
+			cachePath = string(data(1))
+			return []byte{}
+		}))
+	}
+
+	// resolve full file path within root
+	fullPath, err := goutil.JoinPath(rootPath, path + "." + fileExt)
+	if err != nil {
+		return false
+	}
+
+	// prevent path from leaking into tmp cache
+	if strings.HasPrefix(fullPath, cacheTmpPath) {
+		return false
+	}
+
+	cache, ok := pathCache.Get(fullPath + cachePath)
+	if !ok {
+		return false
+	}
+
+	now := time.Now().UnixMilli()
+	if now - *cache.lastUsed > cacheTime {
+		return false
+	}
+
+	return true
 }
 
 
