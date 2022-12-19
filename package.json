@@ -1,6 +1,6 @@
 {
   "name": "@aspiesoft/turbx",
-  "version": "01.0.0",
+  "version": "1.0.0",
   "description": "A Fast and Easy To Use View Engine, Compiled In Go",
   "author": "AspieSoft",
   "license": "MIT",
