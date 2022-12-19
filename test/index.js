@@ -58,10 +58,12 @@ function log(){
 //* go: 44ms 32ms, 44ms 31ms, 45ms 42ms, 43ms 31ms (full compile, without functions or cache)
 //* go: 34ms 33ms, 43ms 32ms, 43ms 33ms, 43ms 30ms (with cache)
 //* go: 20ms  8ms, 18ms 11ms, 20ms 12ms, 18ms  9ms (faster update speed)
+//* go: 15ms  3ms,  9ms  3ms, 14ms  3ms, 18ms  5ms (new compiler, reading file and compiling at the same time)
 
 //? average
 //* js: 40-50ms
-//* go: 20ms then 10ms (first is 12ms without nodemon) (can also hit 5ms)
+//* go-regex: 20ms then 10ms (first is 12ms without nodemon) (can also hit 5ms)
+//* go: 15ms then 3ms
 //! note: decreasing the updateSpeed value makes things faster. an updateSpeed of 1 can result in 10ms compile time
 
 
@@ -90,28 +92,25 @@ app.use('/assets', express.static(join(__dirname, '../assets')))
 // firewall rate limiting
 // turbx.rateLimit();
 
-
 app.get('/', async (req, res) => {
-  let preCompiled = await res.preCompiled('index');
+  let preCompiled = await res.inCache('index');
   console.log(preCompiled);
 
   res.render('index', {
     // PreCompile: true,
 
-    const: {
-      var1: 'this is a test',
-      test: 1,
-      test0: false,
-      test1: true,
-      url: 'https://www.aspiesoft.com',
-      arr: [1, 2, 3],
-      obj: {
-        test1: 'this is test 1',
-        test2: 'this is test 2',
-        test3: 'this is test 3',
-      },
-      testKey: 'test1',
+    var1: 'this is a test',
+    test: 1,
+    test0: false,
+    test1: true,
+    url: 'https://www.aspiesoft.com',
+    arr: [1, 2, 3],
+    obj: {
+      test1: 'this is test 1',
+      test2: 'this is test 2',
+      test3: 'this is test 3',
     },
+    testKey: 'test1',
 
     public: {
       js: {
@@ -125,24 +124,24 @@ app.get('/', async (req, res) => {
 });
 
 app.get('/cache', async (req, res) => {
-  let preCompiled = await res.preCompiled('index');
+  let preCompiled = await res.inCache('index');
   console.log(preCompiled);
 
   let opts = {};
   if(!preCompiled){
     opts = {
-      var1: 'this is a test',
-      test: 1,
-      test0: false,
-      test1: true,
-      url: 'https://www.aspiesoft.com',
-      arr: [1, 2, 3],
-      obj: {
+      $var1: 'this is a test',
+      $test: 1,
+      $test0: false,
+      $test1: true,
+      $url: 'https://www.aspiesoft.com',
+      $arr: [1, 2, 3],
+      $obj: {
         test1: 'this is test 1',
         test2: 'this is test 2',
         test3: 'this is test 3',
       },
-      testKey: 'test1',
+      $testKey: 'test1',
     };
   }
 
@@ -153,13 +152,13 @@ app.get('/cache', async (req, res) => {
 });
 
 app.get('/slow', async (req, res, next) => {
-  let preCompiled = await res.preCompiled('basic');
+  let preCompiled = await res.inCache('basic');
 
   if(!preCompiled){
     const SomethingConsistant = await someLongProcess();
 
     await res.preRender('basic', {
-      myConstVar: SomethingConsistant,
+      $myConstVar: SomethingConsistant,
     });
   }
 

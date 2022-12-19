@@ -6,6 +6,8 @@ const { sleep, waitForMemory, randomToken, clean, toTimeMillis, encrypt, decrypt
 
 const DebugMode = process.argv.includes('--turbx-debug');
 
+const defUpdateSpeed = 1;
+
 const ROOT = (function () {
   if (process.cwd && process.cwd()) {
     return clean(process.cwd());
@@ -148,12 +150,17 @@ async function compilerSend(action, token, msg, opts){
 
 
 function exitHandler(options, exitCode) {
+  if(exitCode && exitCode !== 'SIGINT' && exitCode !== 'SIGUSR1' && exitCode !== 'SIGUSR2'){
+    console.log(exitCode);
+  }
+
   if (options.cleanup) {
     stoppingCompiler = true;
     if(Compiler){
       Compiler.stdin.write('stop\n');
     }
   }
+
   if (options.exit) {
     stoppingCompiler = true;
     if(Compiler){
@@ -208,6 +215,9 @@ function setOpt(key, value, def = undefined){
 let ExpressApp = undefined;
 function setupExpress(app){
   app.use((req, res, next) => {
+    res.inCache = preCompileHasCache;
+    res.preRender = preCompile;
+
     const _render = res.render;
     res.render = function(view, options, fn){
       if(typeof options !== 'object'){
@@ -238,7 +248,7 @@ function setupExpress(app){
 }
 
 
-async function compile(method, path, opts){
+async function runCompile(method, path, opts){
   path = clean(path);
   if(!opts){
     opts = {};
@@ -258,6 +268,10 @@ async function compile(method, path, opts){
 
   path = path.replace(OPTS.root, '').replace(/^[\\\/]+/, '');
 
+  if(opts.settings){
+    opts.settings.filename = path;
+  }
+
   const timeout = Number(opts.timeout) || Number(OPTS.timeout) || toTimeMillis('30s');
 
   // ensure we have at least 1mb of memory available (or wait to reduce memory usage)
@@ -266,6 +280,7 @@ async function compile(method, path, opts){
     return {error: 'low memory'};
   }
 
+  // handle before functions
   if(method === 'comp' && typeof OPTS.before === 'function'){
     OPTS.before(opts);
   }
@@ -273,7 +288,7 @@ async function compile(method, path, opts){
     opts.before(opts);
   }
 
-  const updateSpeed = Number(opts.updateSpeed) || Number(OPTS.updateSpeed) || 10;
+  const updateSpeed = Number(opts.updateSpeed) || Number(OPTS.updateSpeed) || defUpdateSpeed;
 
   // request file from compiler
   const token = randomToken(64);
@@ -282,7 +297,7 @@ async function compile(method, path, opts){
     delete CompilerOutput[token]
   }
 
-  compilerSend('pre', token, path, JSON.stringify(compOpts))
+  compilerSend(method, token, path, JSON.stringify(compOpts))
 
   // wait for compiler
   const startTime = Date.now();
@@ -329,18 +344,6 @@ async function engine(path, opts, cb){
     opts = {};
   }
 
-  if(!opts._status){
-    opts._status = function(){};
-  }
-
-  const compOpts = clean({...opts});
-  const keys = Object.keys(compOpts);
-  for(let i = 0; i < keys.length; i++){
-    if(keys[i].startsWith('!') || keys[i] === 'settings'){
-      delete compOpts[keys[i]];
-    }
-  }
-
   if (!OPTS.ext) {
     setOpt('ext', (opts.settings['view engine'] || (path.includes('.') ? path.substring(path.lastIndexOf('.')).replace('.', '') : 'md')).toString())
   }
@@ -357,74 +360,10 @@ async function engine(path, opts, cb){
     setOpt('root', root);
   }
 
-  if (path.includes('.')) {
-    path = path.substring(0, path.lastIndexOf('.'));
-  }
+  const data = await runCompile('comp', path, opts);
 
-  path = path.replace(OPTS.root, '').replace(/^[\\\/]+/, '');
-  opts.settings.filename = path;
-
-  const timeout = Number(opts.timeout) || Number(OPTS.timeout) || toTimeMillis('30s');
-
-  // ensure we have at least 1mb of memory available (or wait to reduce memory usage)
-  const memAvailable = await waitForMemory(1, timeout);
-  if(!memAvailable){
-    opts._status(503);
-    return cb(null, '<h1>Error 503</h1><h2>Service Unavailable</h2><p>The server is currently overloaded and low on available memory (RAM). Please try again later.</p>');
-  }
-
-  // handle before functions
-  if (OPTS.before) {
-    OPTS.before(opts);
-  }
-  if (typeof opts.before === 'function') {
-    opts.before(opts);
-  }
-
-  const updateSpeed = Number(opts.updateSpeed) || Number(OPTS.updateSpeed) || 10;
-
-  // request file from compiler
-  const token = randomToken(64);
-  if(CompilerOutput[token]){
-    await sleep(Math.max(100, OPTS.updateSpeed + 100));
-    delete CompilerOutput[token]
-  }
-
-  compilerSend('comp', token, path, JSON.stringify(compOpts))
-
-  // wait for compiler
-  const startTime = Date.now();
-  let loops = 0;
-  let maxLoops = 1000 / updateSpeed;
-  while(!CompilerOutput[token]){
-    await sleep(updateSpeed);
-    if(loops++ > maxLoops){
-      loops = 0;
-      if(Date.now() - startTime > timeout){
-        return;
-      }
-    }
-  }
-
-  // get data if available
-  let data = undefined;
-  if(CompilerOutput[token]){
-    data = CompilerOutput[token]
-    delete CompilerOutput[token];
-  }
-
-  // handle after functions
-  if (typeof opts.after === 'function') {
-    let newData = opts.after(opts, data);
-    if (newData !== undefined) {
-      data = newData;
-    }
-  }
-  if (OPTS.after) {
-    let newData = OPTS.after(opts, data);
-    if (newData !== undefined) {
-      data = newData;
-    }
+  if(!opts._status){
+    opts._status = function(){};
   }
 
   if(!data){
@@ -456,11 +395,42 @@ async function engine(path, opts, cb){
     }
 
     opts._status(200, true);
-    zlib.gzip(html, (err, res) => {
-      return cb(null, res);
-    })
-    // return cb(null, html.toString());
+    return cb(null, html.toString());
   });
+}
+
+async function compile(path, opts){
+  path = clean(path);
+  if(!opts){
+    opts = {};
+  }
+
+  const data = await runCompile('comp', path, opts);
+
+  if(!data){
+    return {status: 503, gzip: false, html: '<h1>Error 503</h1><h2>Service Unavailable</h2><p>The server failed to complete your request. Please try again or contact a server administrator about this error if it happens frequently.</p>'};
+  }
+
+  if (data.res === 'error') {
+    if(DebugMode || process.env.NODE_ENV !== 'production'){
+      if(DebugMode){
+        console.error('\x1b[31m'+data.data, '\x1b[0m');
+      }
+      return {status: 500, gzip: false, html: '<h1>Error 500</h1><h2>Internal Server Error</h2>' + `<p>${data.data}</p>`};
+    }
+    return {status: 500, gzip: false, html: '<h1>Error 500</h1><h2>Internal Server Error</h2>'};
+  }
+
+
+  return {status: 200, gzip: true, html: Buffer.from(data.data, 'base64'), unzip: function(){
+    zlib.gunzip(Buffer.from(this.html, 'base64'), (err, html) => {
+      if(err){
+        return {status: 500, gzip: false, html: '<h1>Error 500</h1><h2>Internal Server Error</h2>'};
+      }
+
+      return {status: 200, gzip: false, html: html.toString()};
+    });
+  }};
 }
 
 async function preCompile(path, opts){
@@ -469,71 +439,7 @@ async function preCompile(path, opts){
     opts = {};
   }
 
-  const compOpts = clean({...opts});
-  const keys = Object.keys(compOpts);
-  for(let i = 0; i < keys.length; i++){
-    if(keys[i].startsWith('!')){
-      delete compOpts[keys[i]];
-    }
-  }
-
-  if (path.includes('.')) {
-    path = path.substring(0, path.lastIndexOf('.'));
-  }
-
-  path = path.replace(OPTS.root, '').replace(/^[\\\/]+/, '');
-
-  const timeout = Number(opts.timeout) || Number(OPTS.timeout) || toTimeMillis('30s');
-
-  // ensure we have at least 1mb of memory available (or wait to reduce memory usage)
-  const memAvailable = await waitForMemory(1, timeout);
-  if(!memAvailable){
-    return {error: 'low memory'};
-  }
-
-  if (typeof opts.before === 'function') {
-    opts.before(opts);
-  }
-
-  const updateSpeed = Number(opts.updateSpeed) || Number(OPTS.updateSpeed) || 10;
-
-  // request file from compiler
-  const token = randomToken(64);
-  if(CompilerOutput[token]){
-    await sleep(Math.max(100, OPTS.updateSpeed + 100));
-    delete CompilerOutput[token]
-  }
-
-  compilerSend('pre', token, path, JSON.stringify(compOpts))
-
-  // wait for compiler
-  const startTime = Date.now();
-  let loops = 0;
-  let maxLoops = 1000 / updateSpeed;
-  while(!CompilerOutput[token]){
-    await sleep(updateSpeed);
-    if(loops++ > maxLoops){
-      loops = 0;
-      if(Date.now() - startTime > timeout){
-        return;
-      }
-    }
-  }
-
-  // get data if available
-  let data = undefined;
-  if(CompilerOutput[token]){
-    data = CompilerOutput[token]
-    delete CompilerOutput[token];
-  }
-
-  // handle after functions
-  if (typeof opts.after === 'function') {
-    let newData = opts.after(opts, data);
-    if (newData !== undefined) {
-      data = newData;
-    }
-  }
+  const data = await runCompile('pre', path, opts);
 
   if(!data){
     return {error: 'failed to complete request'};
@@ -552,14 +458,6 @@ async function preCompileHasCache(path, opts){
     opts = {};
   }
 
-  const compOpts = clean({...opts});
-  const keys = Object.keys(compOpts);
-  for(let i = 0; i < keys.length; i++){
-    if(keys[i].startsWith('!')){
-      delete compOpts[keys[i]];
-    }
-  }
-
   if (path.includes('.')) {
     path = path.substring(0, path.lastIndexOf('.'));
   }
@@ -571,14 +469,10 @@ async function preCompileHasCache(path, opts){
   // ensure we have at least 1mb of memory available (or wait to reduce memory usage)
   const memAvailable = await waitForMemory(1, timeout);
   if(!memAvailable){
-    return {error: 'low memory'};
+    return null;
   }
 
-  if (typeof opts.before === 'function') {
-    opts.before(opts);
-  }
-
-  const updateSpeed = Number(opts.updateSpeed) || Number(OPTS.updateSpeed) || 10;
+  const updateSpeed = Number(opts.updateSpeed) || Number(OPTS.updateSpeed) || defUpdateSpeed;
 
   // request file from compiler
   const token = randomToken(64);
@@ -587,7 +481,7 @@ async function preCompileHasCache(path, opts){
     delete CompilerOutput[token]
   }
 
-  compilerSend('has', token, path, JSON.stringify(compOpts))
+  compilerSend('has', token, path)
 
   // wait for compiler
   const startTime = Date.now();
@@ -598,7 +492,7 @@ async function preCompileHasCache(path, opts){
     if(loops++ > maxLoops){
       loops = 0;
       if(Date.now() - startTime > timeout){
-        return;
+        break;
       }
     }
   }
@@ -610,23 +504,11 @@ async function preCompileHasCache(path, opts){
     delete CompilerOutput[token];
   }
 
-  // handle after functions
-  if (typeof opts.after === 'function') {
-    let newData = opts.after(opts, data);
-    if (newData !== undefined) {
-      data = newData;
-    }
+  if(!data || data.res === 'error'){
+    return null;
   }
 
-  if(!data){
-    return {error: 'failed to complete request'};
-  }
-
-  if (data.res === 'error') {
-    return {error: data.data};
-  }
-
-  return null;
+  return data.data === 'true';
 }
 
 
@@ -640,7 +522,7 @@ module.exports = (function(){
     cache: '2h',
     opts: {},
     timeout: '30s',
-    updateSpeed: 10,
+    updateSpeed: defUpdateSpeed,
     before: undefined,
     after: undefined,
   }, app){
@@ -688,7 +570,7 @@ module.exports = (function(){
       }
 
       OPTS.timeout = toTimeMillis(opts.timeout) || toTimeMillis('30s');
-      OPTS.updateSpeed = Number(opts.updateSpeed) || 10;
+      OPTS.updateSpeed = Number(opts.updateSpeed) || defUpdateSpeed;
 
       if(typeof opts.before === 'function'){
         OPTS.before = opts.before;
@@ -711,6 +593,10 @@ module.exports = (function(){
 
     return engine;
   };
+
+  exports.compile = compile;
+  exports.preCompile = preCompile;
+  exports.inCache = preCompileHasCache;
 
   return exports;
 })();
