@@ -5,6 +5,7 @@ const turbx = require('../index')
 
 const sleep = (waitTimeInMs) => new Promise(resolve => setTimeout(resolve, waitTimeInMs));
 
+
 function log(){
   let args = [];
   let col = '';
@@ -65,9 +66,12 @@ function log(){
 
 
 app.engine('xhtml', turbx(app, {
+  root: __dirname,
+  ext: 'xhtml',
   template: 'layout',
   components: 'components',
   timeout: '3s',
+  public: join(__dirname, 'public'),
   // updateSpeed: 10,
   updateSpeed: 1,
   before: function(opts){
@@ -84,10 +88,31 @@ app.use('/assets', express.static(join(__dirname, '../assets')))
 
 
 // firewall rate limiting
-turbx.rateLimit();
+// turbx.rateLimit();
 
 
 app.get('/', async (req, res) => {
+  // res.header('Content-Encoding', 'gzip');
+  opts.set('Content-Encoding', 'gzip');
+  res.render('index');
+  return
+
+  res.render('index', {
+    var1: 'this is a test',
+    test: 1,
+    test0: false,
+    test1: true,
+    url: 'https://www.aspiesoft.com',
+    arr: [1, 2, 3],
+    obj: {
+      test1: 'this is test 1',
+      test2: 'this is test 2',
+      test3: 'this is test 3',
+    },
+    testKey: 'test1',
+  });
+  return;
+  
   let preCompiled = await res.preCompiled('index');
   console.log(preCompiled);
 
@@ -169,9 +194,9 @@ async function someLongProcess(){
 
 
 // auto set all views to public pages
-turbx.renderPages({
+/* turbx.renderPages({
   test: 1,
-});
+}); */
 
 
 app.listen(3000)

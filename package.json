@@ -6,7 +6,7 @@
   "license": "MIT",
   "main": "index.js",
   "scripts": {
-    "test": "nodemon -e \"js,go\" test/run.js"
+    "test": "nodemon -e \"js,go\" test/run.js --turbx-debug"
   },
   "nodemonConfig": {
     "delay": 2500,

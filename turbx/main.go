@@ -24,7 +24,7 @@ func main(){
 	}
 
 	if args["enc"] != "" && args["enc"] != "true" {
-		encKey = goutil.CleanByte([]byte(args["enc"]))
+		encKey = []byte(args["enc"])
 	}
 
 	config := compiler.Config{Root: args["0"]}
@@ -80,52 +80,27 @@ func main(){
 
 		if input == "ping" {
 			fmt.Println("pong")
+		}else if input == "stop" || input == "exit" {
+			compiler.Close()
+			return
 		}else{
-			if encKey == nil && (input == "stop" || input == "exit") {
-				compiler.Close()
-				return
+			var inp []byte
+			if dec, err := Decode([]byte(input)); err == nil {
+				inp = dec
+			}else if debugMode {
+				inp = []byte(input)
 			}
 
-			if inp, err := Decode([]byte(input)); err == nil {
+			if inp != nil {
 				if bytes.Equal(inp, []byte("ping")) {
-					fmt.Println("pong")
+					if b, err := Encode([]byte("pong")); err == nil {
+						fmt.Println(string(b))
+					}
 				}else if bytes.Equal(inp, []byte("stop")) || bytes.Equal(inp, []byte("exit")) {
 					compiler.Close()
 					return
 				}else{
-					inpArgs := bytes.SplitN(inp, []byte(":"), 4)
-					if len(inpArgs) >= 3 {
-						if bytes.Equal(inpArgs[0], []byte("comp")) || bytes.Equal(inpArgs[0], []byte("pre")) {
-							opts := map[string]interface{}{}
-							if len(inpArgs) >= 4 {
-								if json, err := goutil.ParseJson(inpArgs[3]); err == nil {
-									opts = json
-								}
-							}
-
-							if bytes.Equal(inpArgs[1], []byte("comp")) {
-								res, err := compiler.Compile(string(inpArgs[2]), opts)
-								if err != nil {
-									send(inpArgs[1], []byte("error"), []byte(err.Error()))
-								}else{
-									send(inpArgs[1], []byte("res"), res)
-								}
-							} else {
-								err := compiler.PreCompile(string(inpArgs[2]), opts)
-								if err != nil {
-									send(inpArgs[1], []byte("error"), []byte(err.Error()))
-								}else{
-									send(inpArgs[1], []byte("res"), []byte("success"))
-								}
-							}
-						}else if bytes.Equal(inpArgs[0], []byte("has")) {
-							send(inpArgs[1], []byte("res"), []byte(strconv.FormatBool(compiler.HasPreCompile(string(inpArgs[2])))))
-						}else if bytes.Equal(inpArgs[0], []byte("opts")) {
-							if opts, err := goutil.ParseJson(inpArgs[1]); err == nil {
-								compiler.SetConfig(compiler.Config{ConstOpts: opts})
-							}
-						}
-					}
+					go handleInput(inp)
 				}
 			}
 		}
@@ -183,6 +158,62 @@ func main(){
 }
 
 
+func handleInput(input []byte){
+	inpArgs := bytes.SplitN(input, []byte(":"), 4)
+	if len(inpArgs) >= 2 && bytes.Equal(inpArgs[0], []byte("opts")) {
+		opts := inpArgs[1]
+		if dec, err := Decode(opts); err == nil {
+			opts = dec
+		}
+
+		if opts, err := goutil.ParseJson(opts); err == nil {
+			compiler.SetConfig(compiler.Config{ConstOpts: opts})
+		}
+	}else if len(inpArgs) >= 3 {
+		if bytes.Equal(inpArgs[0], []byte("comp")) || bytes.Equal(inpArgs[0], []byte("pre")) {
+			opts := map[string]interface{}{}
+			if len(inpArgs) >= 4 {
+				if json, err := goutil.ParseJson(inpArgs[3]); err == nil {
+					opts = json
+				}
+			}
+
+			if bytes.Equal(inpArgs[0], []byte("comp")) {
+				res, err := compiler.Compile(string(inpArgs[2]), opts)
+				if err != nil {
+					send(inpArgs[1], []byte("error"), []byte(err.Error()))
+				}else{
+					send(inpArgs[1], []byte("res"), res)
+				}
+			} else {
+				err := compiler.PreCompile(string(inpArgs[2]), opts)
+				if err != nil {
+					send(inpArgs[1], []byte("error"), []byte(err.Error()))
+				}else{
+					send(inpArgs[1], []byte("res"), []byte("success"))
+				}
+			}
+		}else if bytes.Equal(inpArgs[0], []byte("has")) {
+			send(inpArgs[1], []byte("res"), []byte(strconv.FormatBool(compiler.HasPreCompile(string(inpArgs[2])))))
+		}else if bytes.Equal(inpArgs[0], []byte("set")) {
+			if bytes.Equal(inpArgs[1], []byte("root")) {
+				compiler.SetConfig(compiler.Config{Root: string(inpArgs[2])})
+			}else if bytes.Equal(inpArgs[1], []byte("components")) || bytes.Equal(inpArgs[1], []byte("component")) {
+				compiler.SetConfig(compiler.Config{Components: string(inpArgs[2])})
+			}else if bytes.Equal(inpArgs[1], []byte("layout")) {
+				compiler.SetConfig(compiler.Config{Layout: string(inpArgs[2])})
+			}else if bytes.Equal(inpArgs[1], []byte("ext")) {
+				compiler.SetConfig(compiler.Config{Ext: string(inpArgs[2])})
+			}else if bytes.Equal(inpArgs[1], []byte("public")) {
+				compiler.SetConfig(compiler.Config{Public: string(inpArgs[2])})
+			}else if bytes.Equal(inpArgs[1], []byte("cache")) {
+				compiler.SetConfig(compiler.Config{Cache: string(inpArgs[2])})
+			}
+		}
+	}
+}
+
+
 func readInput(input chan<- string) {
 	for {
 		var u string
@@ -198,9 +229,9 @@ func send(resToken []byte, resType []byte, b []byte){
 	res := regex.JoinBytes(resToken, ':', resType, ':', b)
 	res, err := Encode(res)
 	if err != nil {
-		fmt.Println(regex.JoinBytes(resToken, ':', []byte("error:failed_to_encode_response")))
+		fmt.Println(string(regex.JoinBytes(resToken, ':', []byte("error:failed_to_encode_response"))))
 	}else{
-		fmt.Println(res)
+		fmt.Println(string(res))
 	}
 }
 

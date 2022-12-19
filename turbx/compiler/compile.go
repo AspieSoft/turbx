@@ -25,6 +25,7 @@ var fileExt string = "md"
 var componentPath string = "components"
 var defaultLayoutPath string = "layout"
 var publicPath string
+var publicUrl string
 var constOpts map[string]interface{} = map[string]interface{}{}
 var cacheTime int64 = (time.Hour * 2).Milliseconds()
 
@@ -70,13 +71,13 @@ type Config struct {
 	// note: the compiler will Not make this directory public, it will simply read from it
 	Public string
 
+	// Cache sets the amount of time before the cache will expire
+	Cache string
+
 	// ConstOpts is an optional list of constant options you would like to make default
 	//
 	// note: for an option to be read by the pre-compiler, all keys must start with a "$" in there name
 	ConstOpts map[string]interface{}
-
-	// Cache sets the amount of time before the cache will expire
-	Cache string
 }
 
 
@@ -171,8 +172,17 @@ func init(){
 	go clearTmpCache()
 }
 
+
 // Close handles stoping the compiler and clearing the cache
+var compilingCount uintptr = 0
 func Close(){
+	// wait for compiler to finish
+	time.Sleep(10 * time.Millisecond)
+	for compilingCount > 0 {
+		time.Sleep(10 * time.Millisecond)
+	}
+	time.Sleep(10 * time.Millisecond)
+
 	if !debugMode {
 		os.RemoveAll(cacheTmpPath)
 	}else{
@@ -240,10 +250,20 @@ func SetConfig(config Config) error {
 	}
 
 	if config.Public != "" {
-		if path, err := filepath.Abs(config.Public); err == nil {
+		public := strings.SplitN(config.Public, "@", 2)
+
+		if path, err := filepath.Abs(public[0]); err == nil {
 			publicPath = path
 		}else{
 			publicPath = ""
+		}
+
+		if len(public) > 1 {
+			if public[1] != "/" {
+				publicUrl = public[1]
+			}else{
+				publicUrl = ""
+			}
 		}
 	}
 
@@ -860,11 +880,15 @@ func preCompile(path string, opts *map[string]interface{}, componentOf ...string
 					}else if selfClose == 2 && (len(ifMode) == 0 || ifMode[len(ifMode)-1] == 0) && !bytes.Equal(elm["TAG"].val, []byte("else")) && !bytes.Equal(elm["TAG"].val, []byte("elif")) {
 						for len(fnLevel) != 0 && fnLevel[len(fnLevel)-1] != string(elm["TAG"].val) {
 							fnLevel = fnLevel[:len(fnLevel)-1]
-							ifMode = ifMode[:len(ifMode)-1]
+							if len(ifMode) != 0 {
+								ifMode = ifMode[:len(ifMode)-1]
+							}
 						}
 						if len(fnLevel) != 0 {
 							fnLevel = fnLevel[:len(fnLevel)-1]
-							ifMode = ifMode[:len(ifMode)-1]
+							if len(ifMode) != 0 {
+								ifMode = ifMode[:len(ifMode)-1]
+							}
 							write(regex.JoinBytes([]byte("{{/"), elm["TAG"].val, ':', len(fnLevel), []byte("}}")))
 						}
 						reader.Discard(1)
@@ -908,7 +932,9 @@ func preCompile(path string, opts *map[string]interface{}, componentOf ...string
 							}
 
 							// fnLevel = fnLevel[:len(fnLevel)-1]
-							ifMode = ifMode[:len(ifMode)-1]
+							if len(ifMode) != 0 {
+								ifMode = ifMode[:len(ifMode)-1]
+							}
 							continue
 						}
 
@@ -1240,7 +1266,7 @@ func preCompile(path string, opts *map[string]interface{}, componentOf ...string
 						if comp == nil || *compData.Err != nil {
 							if debugMode {
 								if *compData.Err != nil {
-									fmt.Println(*compData.Err)
+									// fmt.Println(*compData.Err)
 									write([]byte("{{#Error: Turbx Component Failed: '"+string(fn.fnName)+"'\n"+(*compData.Err).Error()+"}}"))
 								}else{
 									write([]byte("{{#Error: Turbx Component Failed: '"+string(fn.fnName)+"}}"))
@@ -1343,7 +1369,7 @@ func preCompile(path string, opts *map[string]interface{}, componentOf ...string
 						if comp == nil || *compData.Err != nil {
 							if debugMode {
 								if *compData.Err != nil {
-									fmt.Println(*compData.Err)
+									// fmt.Println(*compData.Err)
 									write([]byte("{{#Error: Turbx Component Failed: '"+string(fnName)+"'\n"+(*compData.Err).Error()+"}}"))
 								}else{
 									write([]byte("{{#Error: Turbx Component Failed: '"+string(fnName)+"}}"))
@@ -1435,7 +1461,7 @@ func preCompile(path string, opts *map[string]interface{}, componentOf ...string
 							link = "href"
 						}
 
-						if link != "" && bytes.HasPrefix(args[link], []byte{'/'}) {
+						if link != "" && regex.Compile(`^https?:|/`).Match(args[link]) && bytes.HasPrefix(args[link], []byte(publicUrl+"/")) {
 							if regex.Compile(`(?<!\.min)\.(\w+)$`).Match(args[link]) {
 								minSrc := regex.Compile(`\.(\w+)$`).RepStrComplex(args[link], []byte(".min.$1"))
 								if path, e := goutil.JoinPath(publicPath, string(minSrc)); e == nil {
@@ -1756,7 +1782,10 @@ func preCompile(path string, opts *map[string]interface{}, componentOf ...string
 //
 // this method will automatically call preCompile if needed, and can read the cache file while its being written for an extra performance boost
 func Compile(path string, opts map[string]interface{}) ([]byte, error) {
+	compilingCount++
+
 	if rootPath == "" || cacheTmpPath == "" {
+		compilingCount--
 		return []byte{}, errors.New("a root path was never chosen")
 	}
 
@@ -1777,16 +1806,19 @@ func Compile(path string, opts map[string]interface{}) ([]byte, error) {
 	// resolve full file path within root
 	fullPath, err := goutil.JoinPath(rootPath, path + "." + fileExt)
 	if err != nil {
+		compilingCount--
 		return []byte{}, err
 	}
 
 	// prevent path from leaking into tmp cache
 	if strings.HasPrefix(fullPath, cacheTmpPath) {
+		compilingCount--
 		return []byte{}, errors.New("path leaked into tmp cache")
 	}
 
 	// ensure the file actually exists
 	if stat, err := os.Stat(fullPath); err != nil || stat.IsDir() {
+		compilingCount--
 		return []byte{}, errors.New("file does not exist or is invalid")
 	}
 
@@ -1813,6 +1845,7 @@ func Compile(path string, opts map[string]interface{}) ([]byte, error) {
 	// open file reader
 	file, err := os.OpenFile(compData.tmp, os.O_RDONLY, 0)
 	if err != nil {
+		compilingCount--
 		return []byte{}, err
 	}
 	defer file.Close()
@@ -2042,6 +2075,7 @@ func Compile(path string, opts map[string]interface{}) ([]byte, error) {
 								var e error
 								res, e = callFuncArr("If", &args, nil, &opts, false, &eachArgs)
 								if e != nil {
+									compilingCount--
 									return []byte{}, e
 								}
 							}
@@ -2101,11 +2135,13 @@ func Compile(path string, opts map[string]interface{}) ([]byte, error) {
 
 						seekPos, e := getSeekPos(file, reader)
 						if err != nil {
+							compilingCount--
 							return []byte{}, e
 						}
 
 						res, e := callFunc("Each", &args, nil, &opts, false, &eachArgs)
 						if e != nil {
+							compilingCount--
 							return []byte{}, e
 						}
 
@@ -2176,7 +2212,7 @@ func Compile(path string, opts map[string]interface{}) ([]byte, error) {
 									write(goutil.ToByteArray(res))
 								}
 							}else if debugMode {
-								fmt.Println(e)
+								// fmt.Println("debug:", e)
 							}
 						}else{
 							// let closing tag run func
@@ -2257,7 +2293,7 @@ func Compile(path string, opts map[string]interface{}) ([]byte, error) {
 										write(goutil.ToByteArray(res))
 									}
 								}else if debugMode {
-									fmt.Println(e)
+									// fmt.Println("debug:", e)
 								}
 							}
 						}
@@ -2293,13 +2329,17 @@ func Compile(path string, opts map[string]interface{}) ([]byte, error) {
 		b, err = reader.Peek(1)
 	}
 
-	// fmt.Println("-----\n"+string(res[len(res)-8:]))
+	// fmt.Println("debug:", "-----\n"+string(res[len(res)-8:]))
 
 	if *compData.Err != nil {
+		compilingCount--
 		return res, *compData.Err
 	}
 
-	return res, nil
+	compilingCount--
+
+	// gzip compress result
+	return goutil.Compress(res)
 }
 
 

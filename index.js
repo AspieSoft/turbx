@@ -1,40 +1,20 @@
-const fs = require('fs');
-const { join } = require('path');
-const zlib = require('zlib');
-const multiTaskQueue = require('@aspiesoft/multi-task-queue');
+const {join} = require('path');
 const { spawn } = require('child_process');
+const zlib = require('zlib');
 
-const deviceRateLimit = requireOptional('express-device-rate-limit');
+const { sleep, waitForMemory, randomToken, clean, toTimeMillis, encrypt, decrypt } = require('./common');
 
-//todo: will likely rebuild for the new compiler
-
-//todo: make sure DebugMode is set to "false" before publishing to github and npm
-const DebugMode = false;
-
-function requireOptional(path) {
-  try {
-    return require(path);
-  } catch (e) {
-    return undefined;
-  }
-}
-
-const common = require('./common');
-const { sleep, waitForMemory, randomToken, clean, toTimeMillis, encrypt, decrypt } = common;
-
-const taskQueue = multiTaskQueue(10);
-
-let ExpressApp = undefined;
+const DebugMode = process.argv.includes('--turbx-debug');
 
 const ROOT = (function () {
+  if (process.cwd && process.cwd()) {
+    return clean(process.cwd());
+  }
   if (require.main.filename) {
     return clean(require.main.filename.toString()).replace(/[\\\/][^\\\/]+[\\\/]?$/, '');
   }
   if (require.main.path) {
     return clean(require.main.path.toString());
-  }
-  if (process.cwd && process.cwd()) {
-    return clean(process.cwd());
   }
   return clean(
     join(__dirname)
@@ -42,60 +22,52 @@ const ROOT = (function () {
       .replace(/[\/\\]node_modules[\/\\][^\\\/]+[\\\/]?$/, '')
   );
 })();
-
-const OPTS = {};
-
-const goCompiledResults = {};
-let goCompiler;
-let goCompilerLastInit = 0;
+let UserRoot = null;
 
 const EncKey = randomToken(32);
 
-const goRecentId = {};
-setInterval(function () {
-  const now = Date.now();
-  const id = Object.keys(goRecentId);
-  for (let i = 0; i < id.length; i++) {
-    if (now - goRecentId[id] > 20000) {
-      delete goRecentId[id];
-    }
-  }
-}, 20000);
+const CompilerOutput = {};
 
+let Compiler = undefined;
+let gettingCompiler = false;
+let stoppingCompiler = false;
 let pingRes = false;
-const golangOpts = {};
-
-function initGoCompiler() {
-  if(Date.now() - goCompilerLastInit < 100){
+function initCompiler(){
+  if(gettingCompiler && !stoppingCompiler){
     return;
   }
-  goCompilerLastInit = Date.now();
+  gettingCompiler = true;
 
   const args = [
-    `--enc="${EncKey}"`,
-    `--root="${golangOpts.root}"`,
-    `--ext="${golangOpts.ext}"`,
-    `--components="${golangOpts.components}"`,
-    `--layout="${golangOpts.layout}"`,
-    `--public="${golangOpts.public}"`,
-    `--opts="${JSON.stringify(golangOpts.opts)}"`,
-    `--cache="${golangOpts.cache}"`,
-  ]
+    OPTS.root,
+    '--debug',
+    `--enc=${EncKey}`,
+    `--ext=${OPTS.ext}`,
+    `--components=${OPTS.components}`,
+    `--layout=${OPTS.layout}`,
+    `--public=${OPTS.public}`,
+    `--opts=${OPTS.opts}`,
+    `--cache=${OPTS.cache}`,
+  ];
 
   if(DebugMode){
-    goCompiler = spawn('go', ['run', '.', ...args], {cwd: join(__dirname, 'turbx')});
+    Compiler = spawn('go', ['run', '.', ...args], {cwd: join(__dirname, 'turbx')});
   }else{
-    goCompiler = spawn('./turbx/turbx', [...args], { cwd: __dirname });
+    Compiler = spawn('./turbx/turbx', [...args], { cwd: __dirname });
   }
 
-  goCompiler.on('close', () => {
-    initGoCompiler();
+  Compiler.on('close', () => {
+    if(!stoppingCompiler){
+      initCompiler();
+    }
   })
-  goCompiler.stderr.on('end', () => {
-    initGoCompiler();
+  Compiler.stderr.on('end', () => {
+    if(!stoppingCompiler){
+      initCompiler();
+    }
   });
 
-  goCompiler.stdout.on('data', async (data) => {
+  Compiler.stdout.on('data', async (data) => {
     data = data.toString().trim();
 
     if(data === 'pong'){
@@ -103,177 +75,225 @@ function initGoCompiler() {
       return;
     }
 
-    data = await decrypt(data, EncKey);
-    if(!data){
-      console.log(data);
+    if(data.startsWith('debug:')){
+      console.log('\x1b[34m'+data.replace(/^debug:\s*/, ''), '\x1b[0m');
       return;
     }
 
-    let resToken = undefined;
-    let resType = undefined;
-    data = data.replace(/^([\w_-]+):([\w_-]+):/, (_, id, type) => {
-      resToken = id;
-      resType = type;
-      return '';
-    });
-    if (!idToken || !resType) {
+    dec = await decrypt(data, EncKey);
+    if(!dec){
+      if(DebugMode){
+        console.log('\x1b[34m'+data, '\x1b[0m');
+      }
+      return;
+    }else{
+      data = clean(dec);
+    }
+
+    if(data === 'pong'){
+      pingRes = true;
       return;
     }
 
-    const now = Date.now();
-    if (now - goRecentId[resToken] < 20000) {
-      return;
-    }
+    data = data.split(':', 3);
 
-    goRecentId[resToken] = now;
-    goCompiledResults[resToken] = {res: resType, data};
+    CompilerOutput[data[0]] = {res: data[1], data: data[2]};
   });
-}
-initGoCompiler();
 
-setInterval(async function(){
-  pingRes = false;
-  goCompiler.stdin.write('ping\n');
-  await sleep(1000);
-  if(!pingRes){
-    initGoCompiler();
-  }
-}, 10000);
-
-async function goCompilerSendRes(res){
-  const enc = await encrypt(res, EncKey);
-  if(enc){
-    goCompiler.stdin.write(enc + '\n');
-  }
+  initCompilerOnce();
+  gettingCompiler = false;
 }
 
-function goCompilerSetOpt(key, value, setLiveOpts = false) {
-  key = key.toString().replace(/[^\w_-]/g, '');
+let initCompilerOnceRan = false;
+function initCompilerOnce(){
+  if(initCompilerOnceRan){
+    return;
+  }
+  initCompilerOnceRan = true;
 
-  if(setLiveOpts){
-    golangOpts[key] = value;
-    goCompilerSendRes(`opts:${JSON.stringify(value)}`);
+  setInterval(async function(){
+    pingRes = false;
+    Compiler.stdin.write('ping\n');
+    await sleep(1000);
+    if(!pingRes){
+      initCompiler();
+    }
+  }, 10000);
+}
+
+async function compilerSend(action, token, msg, opts){
+  if(!Compiler){
     return;
   }
 
-  value = value.toString().replace(/[\r\n\v]/g, '');
-  golangOpts[key] = value;
-
-  let oldCompiler = goCompiler;
-  initGoCompiler();
-
-  setTimeout(async function(){
-    const enc = await encrypt(res, EncKey);
-    if(enc){
-      oldCompiler.stdin.write(enc + '\n');
-    }
-  }, 1000);
-}
-
-async function goCompilerPreCompile(file, opts) {
-  const token = randomToken(64);
-  goCompilerSendRes(`pre:${token}:${file.toString().replace(/[\r\n\v]/g, '')}:${JSON.stringify(opts)}`)
-
-  const updateSpeed = Number(OPTS.updateSpeed) || 1;
-
-  let loops = (toTimeMillis(OPTS.timeout) || 30000) / updateSpeed;
-  while (loops-- > 0) {
-    if (goCompiledResults[token]) {
-      break;
-    }
-    await sleep(updateSpeed);
+  if(token){
+    action += ':' + token;
+  }
+  if(msg){
+    action += ':' + msg;
+  }
+  if(opts){
+    action += ':' + opts;
   }
 
-  const res = goCompiledResults[token];
-  delete goCompiledResults[token];
-  return res;
+  const res = await encrypt(action, EncKey);
+  if(res){
+    Compiler.stdin.write(res+'\n');
+  }
 }
 
-async function goCompilerHasCache(file) {
-  const token = randomToken(64);
-  goCompilerSendRes(`has:${token}:${file.toString().replace(/[\r\n\v]/g, '')}`)
-
-  const updateSpeed = Number(OPTS.updateSpeed) || 1;
-
-  let loops = (toTimeMillis(OPTS.timeout) || 30000) / updateSpeed;
-  while (loops-- > 0) {
-    if (goCompiledResults[token]) {
-      break;
-    }
-    await sleep(updateSpeed);
-  }
-
-  const res = goCompiledResults[token];
-  delete goCompiledResults[token];
-  if(res === 'true' || res === true){
-    return true;
-  }
-  return false;
-}
-
-async function goCompilerCompile(file, opts) {
-  const token = randomToken(64);
-
-  const updateSpeed = Number(OPTS.updateSpeed) || 1;
-
-  let reqStarted = Date.now();
-  goCompilerSendRes(`comp:${token}:${file.toString().replace(/[\r\n\v]/g, '')}:${JSON.stringify(opts)}`)
-
-  while (loops-- > 0) {
-    if (goCompiledResults[token]) {
-      break;
-    }
-
-    if (reqStarted < goCompilerLastInit) {
-      reqStarted = Date.now();
-      goCompilerSendRes(token + ':' + zippedOpts + ':' + file.toString().replace(/[\r\n\v]/g, ''));
-    }
-
-    await sleep(updateSpeed);
-  }
-
-  const res = goCompiledResults[token];
-  delete goCompiledResults[token];
-  return res;
-}
 
 function exitHandler(options, exitCode) {
   if (options.cleanup) {
-    goCompilerSendRes('stop');
+    stoppingCompiler = true;
+    if(Compiler){
+      Compiler.stdin.write('stop\n');
+    }
   }
   if (options.exit) {
+    stoppingCompiler = true;
+    if(Compiler){
+      Compiler.stdin.write('stop\n');
+    }
     process.exit(exitCode);
   }
 }
 
 process.on('exit', exitHandler.bind(null, { cleanup: true }));
-
 //catches ctrl+c event
 process.on('SIGINT', exitHandler.bind(null, { exit: true }));
-
 // catches "kill pid" (for example: nodemon restart)
 process.on('SIGUSR1', exitHandler.bind(null, { exit: true }));
 process.on('SIGUSR2', exitHandler.bind(null, { exit: true }));
-
 //catches uncaught exceptions
 process.on('uncaughtException', exitHandler.bind(null, { exit: true }));
 
-function engine(path, opts, cb) {
-  path = clean(path);
-  opts = clean(opts);
 
+const OPTS = {};
+function setOpt(key, value, def = undefined){
+  if(def !== undefined){
+    let valueList = value;
+    if(!Array.isArray(valueList)){
+      valueList = [valueList];
+    }
+    const t = typeof def;
+    const tA = Array.isArray(def);
+    for(let i = 0; i < valueList.length; i++){
+      if(typeof valueList[i] === t && Array.isArray(valueList[i]) === tA){
+        value = valueList[i];
+        break;
+      }
+    }
+
+    if(typeof value !== t || Array.isArray(value) !== tA){
+      value = def;
+    }
+  }
+
+  OPTS[key] = value;
+
+  if(Compiler){
+    if(key === 'opts'){
+      compilerSend('opts', value);
+    }else{
+      compilerSend('set', key, value);
+    }
+  }
+}
+
+let ExpressApp = undefined;
+function setupExpress(app){
+  // if(OPTS.root && OPTS.ext){
+    app.use((req, res, next) => {
+      const _render = res.render;
+      res.render = function(view, options, fn){
+        if(typeof options !== 'object'){
+          options = {};
+        }
+        let enc = req.header('Accept-Encoding');
+        if(typeof enc === 'string'){
+          options._gzip = enc.split(',').includes('gzip')
+        }
+
+        options._status = res.status;
+        options._header = res.set;
+
+        _render.call(this, view, options, fn);
+      };
+
+      /* res.render = function(view, options, callback){
+        if(typeof options === 'function'){
+          [options, callback] = [callback, options];
+        }
+
+
+        if(!options){
+          options = {};
+        }
+        
+        if(!options.settings){
+          options.settings = {...app.settings};
+        }
+
+        engine(view, options, function(_, html){
+          let status = 200;
+          if(html.match(/^\s*<h1>\s*[Ee]rror:?\s*([0-9]+)\s*<\/h1>/)){
+            html.replace(/^\s*<h1>\s*[Ee]rror:?\s*([0-9]+)\s*<\/h1>/, (_, code) => {
+              status = Number(code);
+            });
+          }
+
+          let enc = req.header('Accept-Encoding');
+          if(typeof enc !== 'string' || !enc.split(',').inclides('gzip')){
+            zlib.gunzip(Buffer.from(html, 'base64'), (err, html) => {
+              if(err){
+                res.status(500).send('<h1>Error 500</h1><h2>Internal Server Error</h2>').end();
+                return;
+              }
+
+              res.header('Content-Encoding', 'gzip');
+              res.status(status).send(html).end();
+            });
+          }else{
+            res.status(status).send(html).end();
+          }
+        });
+      }; */
+
+      next();
+    });
+  // }
+}
+
+
+async function engine(path, opts, cb){
+  path = clean(path);
   if(!opts){
     opts = {};
   }
 
+  const compOpts = clean({...opts});
+  const keys = Object.keys(compOpts);
+  for(let i = 0; i < keys.length; i++){
+    if(keys[i].startsWith('!')){
+      delete compOpts[keys[i]];
+    }
+  }
+
   if (!OPTS.ext) {
-    OPTS.ext = opts.settings['view engine'] || (path.includes('.') ? path.substring(path.lastIndexOf('.')).replace('.', '') : 'xhtml');
-    goCompilerSetOpt('ext', OPTS.ext);
+    setOpt('ext', compOpts.settings['view engine'] || (path.includes('.') ? path.substring(path.lastIndexOf('.')).replace('.', '') : 'md'))
   }
 
   if (!OPTS.root) {
-    OPTS.root = opts.settings.views || opts.settings.view || (require.main.filename || process.argv[1] || __dirname).replace(/([\\\/]node_modules[\\\/].*?|[\\\/][^\\\/]*)$/, '/views');
-    goCompilerSetOpt('root', OPTS.root);
+    let root = (compOpts.settings.views || compOpts.settings.view || 'views');
+    if(UserRoot){
+      if(!root.startsWith(UserRoot)){
+        root = join(UserRoot, root);
+      }
+    }else if(!root.startsWith(ROOT)){
+      root = join(ROOT, root);
+    }
+    setOpt('root', root);
   }
 
   if (path.includes('.')) {
@@ -281,258 +301,190 @@ function engine(path, opts, cb) {
   }
 
   path = path.replace(OPTS.root, '').replace(/^[\\\/]+/, '');
-
   opts.settings.filename = path;
 
-  taskQueue(path, async () => {
-    if (OPTS.before) {
-      OPTS.before(opts);
-    }
-    if (typeof opts.before === 'function') {
-      opts.before(opts);
-    }
+  const timeout = Number(compOpts.timeout) || Number(OPTS.timeout) || toTimeMillis('30s');
 
-    let data = await goCompilerCompile(path, opts);
+  // ensure we have at least 1mb of memory available (or wait to reduce memory usage)
+  const memAvailable = await waitForMemory(1, timeout);
+  if(!memAvailable){
+    opts._status(503);
+    return cb(null, '<h1>Error 503</h1><h2>Service Unavailable</h2><p>The server is currently overloaded and low on available memory (RAM). Please try again later.</p>');
+  }
 
-    if (typeof opts.after === 'function') {
-      let newData = opts.after(opts, data);
-      if (newData !== undefined) {
-        data = newData;
+  // handle before functions
+  if (OPTS.before) {
+    OPTS.before(opts);
+  }
+  if (typeof opts.before === 'function') {
+    opts.before(opts);
+  }
+
+  const updateSpeed = Number(compOpts.updateSpeed) || Number(OPTS.updateSpeed) || 10;
+
+  // request file from compiler
+  const token = randomToken(64);
+  if(CompilerOutput[token]){
+    await sleep(Math.max(100, OPTS.updateSpeed + 100));
+    delete CompilerOutput[token]
+  }
+
+  compilerSend('comp', token, path, JSON.stringify(compOpts))
+
+  // wait for compiler
+  const startTime = Date.now();
+  let loops = 0;
+  let maxLoops = 1000 / updateSpeed;
+  while(!CompilerOutput[token]){
+    await sleep(updateSpeed);
+    if(loops++ > maxLoops){
+      loops = 0;
+      if(Date.now() - startTime > timeout){
+        return;
       }
     }
-    if (OPTS.after) {
-      let newData = OPTS.after(opts, data);
-      if (newData !== undefined) {
-        data = newData;
-      }
-    }
+  }
 
-    if (!data || data === 'error') {
+  // get data if available
+  let data = undefined;
+  if(CompilerOutput[token]){
+    data = CompilerOutput[token]
+    delete CompilerOutput[token];
+  }
+
+  // handle after functions
+  if (typeof opts.after === 'function') {
+    let newData = opts.after(opts, data);
+    if (newData !== undefined) {
+      data = newData;
+    }
+  }
+  if (OPTS.after) {
+    let newData = OPTS.after(opts, data);
+    if (newData !== undefined) {
+      data = newData;
+    }
+  }
+
+  if(!data){
+    opts._status(503);
+    return cb(null, '<h1>Error 503</h1><h2>Service Unavailable</h2><p>The server failed to complete your request. Please try again or contact a server administrator about this error if it happens frequently.</p>');
+  }
+
+  if (data.res === 'error') {
+    opts._status(500);
+    if(DebugMode || process.env.NODE_ENV !== 'production'){
+      if(DebugMode){
+        console.error('\x1b[31m'+data.data, '\x1b[0m');
+      }
+      return cb(null, '<h1>Error 500</h1><h2>Internal Server Error</h2>' + `<p>${data.data}</p>`);
+    }
+    return cb(null, '<h1>Error 500</h1><h2>Internal Server Error</h2>');
+  }
+
+
+  //temp
+  /* opts._header('Content-Encoding', 'gzip'); */
+  return cb(null, data.data);
+
+
+  if(opts._gzip){
+    opts._header('Content-Encoding', 'gzip');
+    return cb(null, data.data);
+  }
+
+  zlib.gunzip(Buffer.from(data.data, 'base64'), (err, html) => {
+    if(err){
+      opts._status(500);
       return cb(null, '<h1>Error 500</h1><h2>Internal Server Error</h2>');
     }
 
-    return cb(null, data);
+    return cb(null, html);
   });
 }
 
-function setOpts(opts) {
-  let before = opts.before;
-  let after = opts.after;
-  opts = clean(opts);
-  let root = opts.views || opts.view || 'views';
 
-  OPTS.ext = (opts.ext || 'md').replace(/[^\w_\-]/g, '');
-  let rootPath = root.replace(/[^\w_\-\\\/\.@$#!]/g, '');
-  if (!rootPath.startsWith(ROOT)) {
-    rootPath = join(ROOT, rootPath);
-  }
-  OPTS.root = rootPath;
-
-  let componentsOpt = opts.components || opts.component || 'components';
-  if (componentsOpt) {
-    OPTS.components = componentsOpt.replace(/[^\w_\-\\\/\.@$#!]/g, '');
-  }
-
-  let template = (opts.template ?? opts.layout ?? 'layout').replace(/[^\w_\-\\\/\.@$#!]/g, '');
-  if (template && template.trim() !== '') {
-    OPTS.template = template;
-  }
-
-  OPTS.cache = opts.cache || '2h';
-  OPTS.timeout = opts.timeout || '30s';
-
-  if (typeof before === 'function') {
-    OPTS.before = before;
-  }
-
-  if (typeof after === 'function') {
-    OPTS.after = after;
-  }
-
-  if (typeof opts.static === 'string') {
-    OPTS.static = opts.static;
-  } else {
-    OPTS.static = '/';
-  }
-
-  if (typeof opts.public === 'string') {
-    OPTS.public = opts.public;
-  }
-
-  if (typeof opts.opts === 'object') {
-    OPTS.opts = opts.opts;
-  } else {
-    OPTS.opts = {};
-  }
-
-  if (['number', 'string'].includes(typeof opts.updateSpeed)) {
-    updateSpeed = toTimeMillis(opts.updateSpeed);
-    if (updateSpeed && updateSpeed > 0) {
-      OPTS.updateSpeed = updateSpeed;
-    }
-  } else {
-    // OPTS.updateSpeed = 10;
-    OPTS.updateSpeed = 1;
-  }
-
-  goCompilerSetOpt('root', OPTS.root);
-  goCompilerSetOpt('ext', OPTS.ext);
-  goCompilerSetOpt('components', OPTS.components);
-  goCompilerSetOpt('cache', OPTS.cache);
-  goCompilerSetOpt('opts', OPTS.opts);
-
-  if (!OPTS.template || OPTS.template === '') {
-    goCompilerSetOpt('layout', '!');
-  }else{
-    goCompilerSetOpt('layout', OPTS.template);
-  }
-}
-
-function setupExpress(app) {
-  app.use((req, res, next) => {
-    res.preRender = goCompilerPreCompile;
-    res.preCompiled = goCompilerHasCache;
-    next();
-  });
-
-  return;
-
-  app.use('/lazyload/:token/:component', async (req, res, next) => {
-    //todo: add lazy loading option
-  });
-}
-
-function expressFallbackPages(app, opts) {
-  if (typeof app === 'object') {
-    [app, opts] = [opts, app];
-  }
-  if (typeof app !== 'function') {
-    app = ExpressApp;
-  }
-  if (typeof app !== 'function') {
-    return;
-  }
-  if (typeof opts !== 'object') {
-    opts = {};
-  }
-
-  app.use((req, res, next) => {
-    const url = clean(req.url)
-      .replace(/^[\\\/]+/, '')
-      .replace(/\?.*/, '');
-    if (url === OPTS.template || url.match(/^(errors?\/|)[0-9]{3}$/)) {
-      next();
-      return;
-    }
-
-    let urlPath = join(OPTS.root, url + '.' + OPTS.ext);
-    if (urlPath === OPTS.root || !urlPath.startsWith(OPTS.root) || urlPath.startsWith(OPTS.components)) {
-      next();
-      return;
-    }
-
-    if (!fs.existsSync(urlPath)) {
-      next();
-      return;
-    }
-
-    try {
-      res.render(url, opts);
-    } catch (e) {
-      next();
-    }
-  });
-
-  app.use((req, res) => {
-    let page404 = join(OPTS.root, 'error/404.' + OPTS.ext);
-    if (fs.existsSync(page404)) {
-      res.status(404).render('error/404', opts);
-      return;
-    }
-    page404 = join(OPTS.root, '404.' + OPTS.ext);
-    if (fs.existsSync(page404)) {
-      res.status(404).render('404', opts);
-      return;
-    }
-    res.status(404).send('<h1>Error 404</h1><h2>Page Not Found</h2>').end();
-  });
-}
-
-function expressRateLimit(app, opts) {
-  if (typeof app === 'object') {
-    [app, opts] = [opts, app];
-  }
-  if (typeof app !== 'function') {
-    app = ExpressApp;
-  }
-  if (typeof app !== 'function') {
-    return;
-  }
-  if (typeof opts !== 'object') {
-    opts = {};
-  }
-
-  const rateLimit = deviceRateLimit({
-    err: function (req, res) {
-      let page = join(OPTS.root, 'error/429.' + OPTS.ext);
-      if (fs.existsSync(page)) {
-        res.status(429).render('error/429', opts);
-        return;
-      }
-      page = join(OPTS.root, err + '.' + OPTS.ext);
-      if (fs.existsSync(page)) {
-        res.status(429).render('429', opts);
-        return;
-      }
-      res.status(429).send('<h1>Error 429</h1><h2>Too Many Requests</h2>').end();
-    },
-    ...opts,
-  });
-
-  rateLimit.all(app);
-}
-
-module.exports = (function () {
-  const exports = function (
-    opts = {
-      views: 'views',
-      components: 'components',
-      ext: 'xhtml',
-      template: undefined,
-      cache: '2h',
-      timeout: '30s',
-      before: undefined,
-      after: undefined,
-      static: '/',
-      opts: {},
-      updateSpeed: 10,
-    },
-    app
-  ) {
+module.exports = (function(){
+  const exports = function(opts = {
+    views: 'views',
+    ext: 'md',
+    components: 'components',
+    layout: 'layout',
+    public: 'public',
+    cache: '2h',
+    opts: {},
+    timeout: '30s',
+    updateSpeed: 10,
+    before: undefined,
+    after: undefined,
+  }, app){
     if (typeof opts === 'function' || typeof app === 'object') {
       [opts, app] = [app, opts];
     }
 
-    if (typeof opts === 'object') {
-      setOpts(opts);
-    } else {
-      setOpts({});
+    // set options
+    if(typeof opts === 'object'){
+      if(opts.root && typeof opts.root === 'string'){
+        UserRoot = opts.root;
+      }
+
+      let root = (opts.views || opts.view || 'views');
+      if(UserRoot){
+        if(!root.startsWith(UserRoot)){
+          root = join(UserRoot, root);
+        }
+      }else if(!root.startsWith(ROOT)){
+        root = join(ROOT, root);
+      }
+      setOpt('root', root);
+
+      if(typeof opts.ext === 'string'){
+        setOpt('ext', opts.ext.replace(/[^\w_-]/g, ''))
+      }else if(typeof opts.type === 'string'){
+        setOpt('ext', opts.type.replace(/[^\w_-]/g, ''))
+      }else{
+        setOpt('ext', 'md');
+      }
+
+      setOpt('components', [opts.components, opts.component], 'components');
+      setOpt('layout', [opts.layout, opts.template], 'components');
+      setOpt('public', [opts.public, opts.static], 'public');
+      setOpt('cache', opts.cache, '2h');
+
+      if(typeof opts.opts === 'object'){
+        setOpt('opts', '{}');
+        ;(async function(){
+          let json = await encrypt(JSON.stringify(opts.opts));
+          setOpt('opts', json);
+        })();
+      }else{
+        setOpt('opts', '{}');
+      }
+
+      OPTS.timeout = toTimeMillis(opts.timeout) || toTimeMillis('30s');
+      OPTS.updateSpeed = Number(opts.updateSpeed) || 10;
+
+      if(typeof opts.before === 'function'){
+        OPTS.before = opts.before;
+      }
+
+      if(typeof opts.after === 'function'){
+        OPTS.after = opts.after;
+      }
     }
 
+    // init express app
     if (typeof app === 'function') {
       setupExpress(app);
       ExpressApp = app;
     }
 
+    // init compiler after a delay
+    // this delay is to avoid overloading the system if nodemon is constantly turning the server off and on again
+    setTimeout(initCompiler, 1000);
+
     return engine;
   };
-
-  exports.preRender = goCompilerPreCompile;
-  exports.preCompiled = goCompilerHasCache;
-  exports.render = goCompilerCompile;
-
-  exports.renderPages = expressFallbackPages;
-  exports.rateLimit = expressRateLimit;
 
   return exports;
 })();

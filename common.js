@@ -3,14 +3,25 @@ const validator = require('validator');
 
 const sleep = (waitTimeInMs) => new Promise(resolve => setTimeout(resolve, waitTimeInMs));
 
+// convert to megabytes
 const formatMemoryUsage = (data) => Math.round(data / 1024 / 1024 * 100) / 100;
 
-async function waitForMemory(size = 1){
+// @size: megabytes
+async function waitForMemory(size = 1, timeout = 0){
   let mem = process.memoryUsage();
+  let loops = 0;
+  const startTime = Date.now();
   while(formatMemoryUsage(mem.heapTotal - mem.heapUsed) < size){
+    if(timeout && loops++ > 1000){
+      loops = 0;
+      if(Date.now() - startTime > timeout){
+        return false;
+      }
+    }
     await sleep(1);
     mem = process.memoryUsage();
   }
+  return true;
 }
 
 function randomToken(size){
@@ -244,8 +255,13 @@ async function decrypt(text, key){
   const keyBytes = hash.digest();
 
   const contents = Buffer.from(text, 'base64');
-  const iv = contents.slice(0, 16);
-  const textBytes = contents.slice(16);
+  // const iv = contents.slice(0, 16);
+  const iv = contents.subarray(0, 16);
+  // const textBytes = contents.slice(16);
+  const textBytes = contents.subarray(16);
+  if(!textBytes.length){
+    return undefined;
+  }
   const decipher = crypto.createDecipheriv('aes-256-cfb', keyBytes, iv);
   let res = decipher.update(textBytes, '', 'utf8');
   res += decipher.final('utf8');
