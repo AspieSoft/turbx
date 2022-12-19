@@ -135,6 +135,7 @@ type pathCacheData struct {
 	Err *error
 
 	lastUsed *int64
+	inUse *uintptr
 }
 
 var pathCache *haxmap.Map[string, pathCacheData] = haxmap.New[string, pathCacheData]()
@@ -170,6 +171,28 @@ func init(){
 	}
 
 	go clearTmpCache()
+
+	go func(){
+		time.Sleep(10 * time.Minute)
+		pathCache.ForEach(func(key string, cache pathCacheData) bool {
+			if *cache.lastUsed > cacheTime {
+				go func(){
+					time.Sleep(10 * time.Millisecond)
+					for *cache.inUse > 0 {
+						time.Sleep(10 * time.Millisecond)
+					}
+					time.Sleep(10 * time.Millisecond)
+
+					os.Remove(cache.tmp)
+
+					if val, ok := pathCache.Get(key); ok && val.tmp == cache.tmp {
+						pathCache.Del(key)
+					}
+				}()
+			}
+			return true
+		})
+	}()
 }
 
 
@@ -192,8 +215,8 @@ func Close(){
 			time.Sleep(10 * time.Millisecond)
 
 			done = true
-			pathCache.ForEach(func(s string, pcd pathCacheData) bool {
-				if !*pcd.Ready && *pcd.Err == nil {
+			pathCache.ForEach(func(key string, cache pathCacheData) bool {
+				if !*cache.Ready && *cache.Err == nil {
 					done = false
 					return false
 				}
@@ -406,7 +429,18 @@ func preCompile(path string, opts *map[string]interface{}, componentOf ...string
 	}
 
 
-	//todo: make sure old files are removed from the cache first
+	// remove old files from the cache
+	if cache, ok := pathCache.Get(fullPath + cachePath); ok {
+		go func(){
+			time.Sleep(10 * time.Millisecond)
+			for *cache.inUse > 0 {
+				time.Sleep(10 * time.Millisecond)
+			}
+			time.Sleep(10 * time.Millisecond)
+
+			os.Remove(cache.tmp)
+		}()
+	}
 
 	// prepare the cache vars and info
 	now := time.Now().UnixMilli()
@@ -1729,7 +1763,7 @@ func preCompile(path string, opts *map[string]interface{}, componentOf ...string
 				}
 			}
 
-			if compileMarkdown(reader, &write, &b, &err, &linePos) {
+			if compileMarkdown(reader, &write, &b, &err, &linePos, &fnCont) {
 				linePos++
 				continue
 			}
@@ -1841,11 +1875,13 @@ func Compile(path string, opts map[string]interface{}) ([]byte, error) {
 	if !ok || now - *compData.lastUsed > cacheTime {
 		compData = preCompile(origPath, &opts)
 	}
+	*compData.inUse++
 
 	// open file reader
 	file, err := os.OpenFile(compData.tmp, os.O_RDONLY, 0)
 	if err != nil {
 		compilingCount--
+		*compData.inUse--
 		return []byte{}, err
 	}
 	defer file.Close()
@@ -2076,6 +2112,7 @@ func Compile(path string, opts map[string]interface{}) ([]byte, error) {
 								res, e = callFuncArr("If", &args, nil, &opts, false, &eachArgs)
 								if e != nil {
 									compilingCount--
+									*compData.inUse--
 									return []byte{}, e
 								}
 							}
@@ -2136,12 +2173,14 @@ func Compile(path string, opts map[string]interface{}) ([]byte, error) {
 						seekPos, e := getSeekPos(file, reader)
 						if err != nil {
 							compilingCount--
+							*compData.inUse--
 							return []byte{}, e
 						}
 
 						res, e := callFunc("Each", &args, nil, &opts, false, &eachArgs)
 						if e != nil {
 							compilingCount--
+							*compData.inUse--
 							return []byte{}, e
 						}
 
@@ -2333,10 +2372,12 @@ func Compile(path string, opts map[string]interface{}) ([]byte, error) {
 
 	if *compData.Err != nil {
 		compilingCount--
+		*compData.inUse--
 		return res, *compData.Err
 	}
 
 	compilingCount--
+	*compData.inUse--
 
 	// gzip compress result
 	return goutil.Compress(res)

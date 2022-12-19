@@ -37,6 +37,7 @@ https://www.aspiesoft.com
 
 <script>
   // console.log('this is a js script test')
+  // console.log('this is a js script test: {{test}}')
   console.log('this is a js script test: ' + OPTS.test)
 </script>
 
@@ -46,7 +47,7 @@ https://www.aspiesoft.com
   }
 
   h1 {
-    color: red;
+    color: var(--header-color);
   }
 </style>
 
@@ -85,11 +86,11 @@ https://www.aspiesoft.com
 <br><br>
 <br><br>
 
-<_each obj as="item" of="key" in="i">
-  {{key}} - {{item}} - {{i}}
+<_each obj as="item" of="key">
+  {{key}} - {{item}}
   <br>
-  <_each obj as="item" of="key" in="i">
-    <span style="color: red;">{{key}} - {{item}} - {{i}}</span>
+  <_each obj as="item" of="key">
+    <span style="color: red;">{{key}} - {{item}}</span>
     <br>
   </_each>
 </_each>

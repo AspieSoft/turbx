@@ -72,6 +72,14 @@ func main(){
 	}
 
 
+	//temp
+	err = compiler.PreCompile("index", map[string]interface{}{})
+	if err != nil {
+		fmt.Println(err)
+	}
+	return
+
+
 	userInput := make(chan string)
 	go readInput(userInput)
 

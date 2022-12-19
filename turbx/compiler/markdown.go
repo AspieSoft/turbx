@@ -53,8 +53,46 @@ func escapeChar(char byte) []byte {
 	return []byte{char}
 }
 
+
+// markdown funcs
+func getFormInput(args *map[string][]byte) []byte {
+	return nil
+}
+
+func getLinkEmbed(args *map[string][]byte) []byte {
+	if (*args)["emb"] == nil {
+		// normal link
+
+		//todo: handle (*args)["url"]
+
+		//todo: prevent url from being a non http link
+
+		return regex.JoinBytes([]byte("<a href=\""), (*args)["url"], []byte("\">"), (*args)["name"], []byte("</a>"))
+	}
+
+	return nil
+}
+
+
+func hasClosingChar(char []byte, offset int, reader *bufio.Reader, b *[]byte, err *error) bool {
+	offset++
+	*b, *err = reader.Peek(offset+1)
+
+	for *err == nil && !((*b)[offset] == '\n' || (*b)[offset] == '\r') {
+		if len(*b) >= len(char) && bytes.Equal((*b)[len(*b)-len(char):], char) {
+			break
+		}
+
+		offset++
+		*b, *err = reader.Peek(offset+1)
+	}
+
+	return bytes.Equal((*b)[len(*b)-len(char):], char)
+}
+
+
 // returning true will run the "continue" function on the pre compiler loop
-func compileMarkdown(reader *bufio.Reader, write *func([]byte), b *[]byte, err *error, linePos *int) bool {
+func compileMarkdown(reader *bufio.Reader, write *func([]byte), b *[]byte, err *error, linePos *int, fnCont *[]fnData) bool {
 	// handle http links
 	if (*b)[0] == 'h' {
 		*b, *err = reader.Peek(8)
@@ -78,8 +116,123 @@ func compileMarkdown(reader *bufio.Reader, write *func([]byte), b *[]byte, err *
 		}
 	}
 
+	offset := 0
+	if (*b)[0] == '!' {
+		offset++
+		*b, *err = reader.Peek(offset+1)
+	}
+
+	if (*b)[offset] == '[' && hasClosingChar([]byte{']'}, offset, reader, b, err) {
+		offset = 1
+
+		args := map[string][]byte{}
+		if (*b)[0] == '!' {
+			args["emb"] = []byte{1}
+			offset++
+		}
+
+		*fnCont = append(*fnCont, fnData{tag: []byte("@md:link-name"), args: args, cont: []byte{}})
+
+		reader.Discard(offset)
+		*b, *err = reader.Peek(1)
+		return true
+	}
+
+	if (*b)[0] == ']' && len(*fnCont) != 0 && bytes.Equal((*fnCont)[len(*fnCont)-1].tag, []byte("@md:link-name")) {
+		(*fnCont)[len(*fnCont)-1].args["name"] = (*fnCont)[len(*fnCont)-1].cont
+		(*fnCont)[len(*fnCont)-1].cont = []byte{}
+
+		reader.Discard(1)
+		*b, *err = reader.Peek(1)
+
+		if (*b)[0] == '(' && hasClosingChar([]byte{')'}, offset, reader, b, err) {
+			(*fnCont)[len(*fnCont)-1].tag = []byte("@md:link-url")
+			reader.Discard(1)
+			*b, *err = reader.Peek(1)
+		}else if (*b)[0] == '{' && hasClosingChar([]byte{'}'}, offset, reader, b, err) {
+			(*fnCont)[len(*fnCont)-1].tag = []byte("@md:link-args")
+			(*fnCont)[len(*fnCont)-1].args["form"] = []byte{1}
+			reader.Discard(1)
+			*b, *err = reader.Peek(1)
+		}else{
+			if res := getFormInput(&(*fnCont)[len(*fnCont)-1].args); res != nil {
+				*fnCont = (*fnCont)[:len(*fnCont)-1]
+				(*write)(res)
+			}else{
+				res := []byte{}
+				if (*fnCont)[len(*fnCont)-1].args["emb"] != nil {
+					res = []byte{'!'}
+				}
+				res = append(res, regex.JoinBytes('[', (*fnCont)[len(*fnCont)-1].args["name"], ']')...)
+				*fnCont = (*fnCont)[:len(*fnCont)-1]
+				(*write)(res)
+			}
+		}
+
+		return true
+	}
+
+	if (*b)[0] == ')' && len(*fnCont) != 0 && bytes.Equal((*fnCont)[len(*fnCont)-1].tag, []byte("@md:link-url")) {
+		(*fnCont)[len(*fnCont)-1].args["url"] = (*fnCont)[len(*fnCont)-1].cont
+		(*fnCont)[len(*fnCont)-1].cont = []byte{}
+
+		reader.Discard(1)
+		*b, *err = reader.Peek(1)
+
+		if (*b)[0] == '{' && hasClosingChar([]byte{'}'}, offset, reader, b, err) {
+			(*fnCont)[len(*fnCont)-1].tag = []byte("@md:link-args")
+			reader.Discard(1)
+			*b, *err = reader.Peek(1)
+		}else{
+			if res := getLinkEmbed(&(*fnCont)[len(*fnCont)-1].args); res != nil {
+				*fnCont = (*fnCont)[:len(*fnCont)-1]
+				(*write)(res)
+			}else{
+				res := []byte{}
+				if (*fnCont)[len(*fnCont)-1].args["emb"] != nil {
+					res = []byte{'!'}
+				}
+				res = append(res, regex.JoinBytes('[', (*fnCont)[len(*fnCont)-1].args["name"], ']', '(', (*fnCont)[len(*fnCont)-1].args["url"], ')')...)
+				*fnCont = (*fnCont)[:len(*fnCont)-1]
+				(*write)(res)
+			}
+		}
+
+		return true
+	}
+
+	if (*b)[0] == '}' && len(*fnCont) != 0 && bytes.Equal((*fnCont)[len(*fnCont)-1].tag, []byte("@md:link-args")) {
+		(*fnCont)[len(*fnCont)-1].args["args"] = (*fnCont)[len(*fnCont)-1].cont
+		(*fnCont)[len(*fnCont)-1].cont = []byte{}
+
+		reader.Discard(1)
+		*b, *err = reader.Peek(1)
+
+		if (*fnCont)[len(*fnCont)-1].args["form"] != nil {
+			if res := getFormInput(&(*fnCont)[len(*fnCont)-1].args); res != nil {
+				*fnCont = (*fnCont)[:len(*fnCont)-1]
+				(*write)(res)
+				return true
+			}
+		}else if res := getLinkEmbed(&(*fnCont)[len(*fnCont)-1].args); res != nil{
+			*fnCont = (*fnCont)[:len(*fnCont)-1]
+			(*write)(res)
+			return true
+		}
+
+		res := []byte{}
+		if (*fnCont)[len(*fnCont)-1].args["emb"] != nil {
+			res = []byte{'!'}
+		}
+		res = append(res, regex.JoinBytes('[', (*fnCont)[len(*fnCont)-1].args["name"], ']', '(', (*fnCont)[len(*fnCont)-1].args["url"], ')', '{', (*fnCont)[len(*fnCont)-1].args["args"], '}')...)
+		*fnCont = (*fnCont)[:len(*fnCont)-1]
+		(*write)(res)
+
+		return true
+	}
+
 	//todo: handle md links
-	if (*b)[0] == '[' {
+	/* if (*b)[0] == '[' {
 		//todo: may need to use similar method to components to allow markdown within inner text
 
 		offset := 1
@@ -201,7 +354,7 @@ func compileMarkdown(reader *bufio.Reader, write *func([]byte), b *[]byte, err *
 				}
 			}
 		}
-	}
+	} */
 
 	// handle bold and italic text
 	if (*b)[0] == '*' {
