@@ -406,7 +406,7 @@ func preCompile(path string, opts *map[string]interface{}, componentOf ...string
 	}
 
 
-	//todo: make sure and old files are removed from the cache first
+	//todo: make sure old files are removed from the cache first
 
 	// prepare the cache vars and info
 	now := time.Now().UnixMilli()
