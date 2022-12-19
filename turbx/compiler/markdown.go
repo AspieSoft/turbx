@@ -3,6 +3,7 @@ package compiler
 import (
 	"bufio"
 	"bytes"
+	"reflect"
 
 	"github.com/AspieSoft/go-regex/v4"
 	"github.com/AspieSoft/goutil/v3"
@@ -13,8 +14,29 @@ var leyoutHead = regex.Compile(`\n\s+`).RepStr(bytes.TrimSpace([]byte(`
 `)), []byte{'\n'})
 
 // an optional head to add to a layout
-func addLayoutHead() []byte {
-	return leyoutHead
+func addLayoutHead(opts *map[string]interface{}) []byte {
+	publicOpts := []byte{}
+	if (*opts)["public"] != nil && reflect.TypeOf((*opts)["public"]) == goutil.VarType["map"] {
+		public := (*opts)["public"].(map[string]interface{})
+		
+		// add public js options
+		if public["js"] != nil && reflect.TypeOf(public["js"]) == goutil.VarType["map"] {
+			if json, err := goutil.StringifyJSON(public["js"]); err == nil {
+				publicOpts = regex.JoinBytes([]byte("<script>;const OPTS = "), json, []byte(";</script>"))
+			}
+		}
+
+		// add public css options
+		if public["css"] != nil && reflect.TypeOf(public["css"]) == goutil.VarType["map"] {
+			publicOpts = append(publicOpts, []byte("<style>:root{")...)
+			for key, val := range public["css"].(map[string]interface{}) {
+				publicOpts = append(publicOpts, regex.JoinBytes([]byte("--"), key, ':', bytes.ReplaceAll(goutil.ToByteArray(val), []byte(";"), []byte{}), ';')...)
+			}
+			publicOpts = append(publicOpts, []byte("}</style>")...)
+		}
+
+	}
+	return append(leyoutHead, publicOpts...)
 }
 
 func escapeChar(char byte) []byte {

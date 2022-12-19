@@ -132,13 +132,13 @@ app.use('/fix-cache', async function(req, res, next){
 <!-- functions start with an _ -->
 <_if var1 & var2 = 'b' | var2 = 'c' | !var3>
   do stuff...
-<_elif !var1 & var2 = 'a'/>
+<_else !var1 & var2 = 'a'/>
   do other stuff...
 <_else/>
   do final stuff...
 </_if>
 
-<_each myObj as value of key in index>
+<_each myObj as value of key>
   {{key}}: {{value}}
   array index: {{index}}
 </_each>

@@ -1266,7 +1266,7 @@ func preCompile(path string, opts *map[string]interface{}, componentOf ...string
 						if comp == nil || *compData.Err != nil {
 							if debugMode {
 								if *compData.Err != nil {
-									// fmt.Println(*compData.Err)
+									fmt.Println("error:", *compData.Err)
 									write([]byte("{{#Error: Turbx Component Failed: '"+string(fn.fnName)+"'\n"+(*compData.Err).Error()+"}}"))
 								}else{
 									write([]byte("{{#Error: Turbx Component Failed: '"+string(fn.fnName)+"}}"))
@@ -1369,7 +1369,7 @@ func preCompile(path string, opts *map[string]interface{}, componentOf ...string
 						if comp == nil || *compData.Err != nil {
 							if debugMode {
 								if *compData.Err != nil {
-									// fmt.Println(*compData.Err)
+									fmt.Println("error:", *compData.Err)
 									write([]byte("{{#Error: Turbx Component Failed: '"+string(fnName)+"'\n"+(*compData.Err).Error()+"}}"))
 								}else{
 									write([]byte("{{#Error: Turbx Component Failed: '"+string(fnName)+"}}"))
@@ -1607,9 +1607,9 @@ func preCompile(path string, opts *map[string]interface{}, componentOf ...string
 							}
 						}else if isLayout && bytes.Equal(bytes.ToLower(varName), []byte("head")) {
 							if escHTML {
-								write(goutil.EscapeHTML(addLayoutHead()))
+								write(goutil.EscapeHTML(addLayoutHead(opts)))
 							}else{
-								write(addLayoutHead())
+								write(addLayoutHead(opts))
 							}
 						} else{
 							if val, ok := GetOpt(varName, opts, true, &eachArgs); ok {
@@ -2212,7 +2212,7 @@ func Compile(path string, opts map[string]interface{}) ([]byte, error) {
 									write(goutil.ToByteArray(res))
 								}
 							}else if debugMode {
-								// fmt.Println("debug:", e)
+								fmt.Println("error:", e)
 							}
 						}else{
 							// let closing tag run func
@@ -2293,7 +2293,7 @@ func Compile(path string, opts map[string]interface{}) ([]byte, error) {
 										write(goutil.ToByteArray(res))
 									}
 								}else if debugMode {
-									// fmt.Println("debug:", e)
+									fmt.Println("error:", e)
 								}
 							}
 						}

@@ -105,56 +105,6 @@ func main(){
 			}
 		}
 	}
-
-
-	return
-
-
-	//temp: will remove
-	// will use "html" ext in production (or use md with custom markdown support by default)
-	// may create my own markdown compiler to fix issues with modules lack of html support
-	compiler.SetConfig(compiler.Config{Ext: "xhtml"})
-
-	//temp: test
-	err = compiler.PreCompile("index", map[string]interface{}{
-		"$test": 3,
-		"key": "value",
-		"$list": map[string]interface{}{
-			"item1": "value a",
-			"item2": "value b",
-			"item3": "value c",
-		},
-	})
-
-	if err != nil {
-		panic(err)
-	}
-
-
-	res, err := compiler.Compile("index", map[string]interface{}{
-		"$test": 3,
-		"key": "value",
-		"$list": map[string]interface{}{
-			"item1": "value a",
-			"item2": "value b",
-			"item3": "value c",
-		},
-	})
-
-	if err != nil {
-		panic(err)
-	}
-
-	// fmt.Println(compData)
-
-	// path is the temp dir to be stored in the cache (do not use ttlcache, the file will need to be removed when an object expires)
-	// may update ttlCache to accept an optional OnExpire callback
-	// _ = path
-	// fmt.Println(path)
-
-
-	_ = res
-	// fmt.Println("\n----------\n\n"+string(res))
 }
 
 

@@ -92,27 +92,6 @@ app.use('/assets', express.static(join(__dirname, '../assets')))
 
 
 app.get('/', async (req, res) => {
-  // res.header('Content-Encoding', 'gzip');
-  opts.set('Content-Encoding', 'gzip');
-  res.render('index');
-  return
-
-  res.render('index', {
-    var1: 'this is a test',
-    test: 1,
-    test0: false,
-    test1: true,
-    url: 'https://www.aspiesoft.com',
-    arr: [1, 2, 3],
-    obj: {
-      test1: 'this is test 1',
-      test2: 'this is test 2',
-      test3: 'this is test 3',
-    },
-    testKey: 'test1',
-  });
-  return;
-  
   let preCompiled = await res.preCompiled('index');
   console.log(preCompiled);
 
@@ -137,6 +116,9 @@ app.get('/', async (req, res) => {
     public: {
       js: {
         test: 'Test 1',
+      },
+      css: {
+        'header-color': 'red',
       }
     }
   });
