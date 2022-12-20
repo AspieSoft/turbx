@@ -15,8 +15,6 @@
 
 <br><br>
 
-%!encoding!%
-
 'test'
 
 <!--comment-->
@@ -31,7 +29,7 @@ https://www.aspiesoft.com
 
 <Input type="text" name="test"/>
 
-<a {{{href="url"}}}>Link</a>
+<a {{href="url"}}>Link</a>
 
 <_yt url="https://www.youtube.com/watch?v=SJeBRW1QQMA" />
 <_youtube url="https://www.youtube.com/playlist?list=PL0vfts4VzfNjnYhJMfTulea5McZbQLM7G" />
@@ -39,16 +37,17 @@ https://www.aspiesoft.com
 
 <script>
   // console.log('this is a js script test')
+  // console.log('this is a js script test: {{test}}')
   console.log('this is a js script test: ' + OPTS.test)
 </script>
 
 <style>
   body {
     background: lightblue;
+  }
 
-    h1 {
-      color: red;
-    }
+  h1 {
+    color: var(--header-color);
   }
 </style>
 
@@ -61,11 +60,13 @@ https://www.aspiesoft.com
 <Component test=8 {{a="b"}}/>
 
 <!-- import test.xhtml -->
-<_:test/>
+<Test/>
 
-<_if test = "1">
+<Tests.Test1/>
+
+<_if test="1">
   <h2>Test 1</h2>
-<_elif test = "2"/>
+<_else test="2"/>
   <h2>Test 2</h2>
 <_else/>
   <h2>Test 0</h2>
@@ -85,14 +86,14 @@ https://www.aspiesoft.com
 <br><br>
 <br><br>
 
-<_each obj as item of key in i>
-  {{key}} - {{item}} - {{i}}
+<_each obj as="item" of="key">
+  {{key}} - {{item}}
   <br>
-  <_each obj as item of key in i>
-    <span style="color: red;">{{key}} - {{item}} - {{i}}</span>
+  <_each obj as="item" of="key">
+    <span style="color: red;">{{key}} - {{item}}</span>
     <br>
   </_each>
-</_each a="b">
+</_each>
 
 <br><br>
 
@@ -112,11 +113,10 @@ https://www.aspiesoft.com
 
 {{{"test"}}
 
-<div class={{var|"default"}}></div>
+<div class="{{var|'default'}}"></div>
 
 <div {{class="var|'default'"}}></div>
 
 <div {{="var|'default'"}}></div>
-<div {{"var|'default'"}}></div>
 
 <div class="a" b c="2"></div>

@@ -8,7 +8,7 @@
 ![npm weekly downloads](https://img.shields.io/npm/dw/turbx)
 ![npm monthly downloads](https://img.shields.io/npm/dm/turbx)
 
-[![donation link](https://img.shields.io/badge/buy%20me%20a%20coffee-square-blue)](https://buymeacoffee.aspiesoft.com)
+[![donation link](https://img.shields.io/badge/buy%20me%20a%20coffee-paypal-blue)](https://paypal.me/shaynejrtaylor?country.x=US&locale.x=en_US)
 
 A Fast and Easy To Use View Engine, Compiled In Go.
 
@@ -16,7 +16,7 @@ A Fast and Easy To Use View Engine, Compiled In Go.
 
 ## Whats New
 
-- Repeated vars can now optionally be pre compiled
+- Rebuilt the compiler in go from the ground up
 
 ## Installation
 
@@ -50,27 +50,27 @@ app.engine('xhtml', turbx({
   },
 }));
 app.set('views', join(__dirname, 'views'));
-app.set('view engine', 'xhtml');
+app.set('view engine', 'md');
 
 app.use(function(req, res, next){
   res.render('index', {
     title: 'example',
     content: '<h2>Hello, World!</h2>',
-    const: {
-      // the const object can be used to precompile a var, and not need to compile it again
-      GoogleAuthToken: 'This Value Will Never Change',
-    },
+
+    // const vars can be used to precompile a var, and not need to compile it again
+    // a const var is defined by starting with a '$' in the key name
+    $GoogleAuthToken: 'This Value Will Never Change',
   });
 });
 
 // pre compiling constant vars
 app.use(async function(req, res, next){
-  let preCompiled = await res.preCompiled('index');
+  let preCompiled = await res.inCache('index');
   if(!preCompiled){
     const SomethingConsistant = await someLongProcess();
 
     await res.preRender('index', {
-      myConstVar: SomethingConsistant,
+      $myConstVar: SomethingConsistant,
     });
   }
 
@@ -82,9 +82,11 @@ app.use(async function(req, res, next){
 
 // pre compiling and overriding the cache
 app.use('/fix-cache', async function(req, res, next){
-  res.render('index', {
-    PreCompile: true, // this will override the existing cache and rebuild it with the new data (or create a new cache)
+  turbx.preCompile('index', {
+    $MyConstOpts: 'new constant option',
+  });
 
+  res.render('index', {
     title: 'example',
     content: '<h2>Hello, World!</h2>',
   });
@@ -129,25 +131,28 @@ app.use('/fix-cache', async function(req, res, next){
 {{obj[myVar]}}
 
 
+<!-- using vars as if they were constant -->
+{{$normalVal|'make this constant anyway, even if not sent as a constant'}}
+
+
 <!-- functions start with an _ -->
-<_if var1 & var2 = 'b' | var2 = 'c' | !var3>
+<_if var1 & var2="'b'" | var2="'c'" | !var3 | (group & group1.test1)>
   do stuff...
-<_elif !var1 & var2 = 'a'/>
+<_else !var1 & var2="var3" | (var3=">=3" & var3="!0")/>
   do other stuff...
 <_else/>
   do final stuff...
 </_if>
 
-<_each myObj as value of key in index>
+<_each myObj as="value" of="key">
   {{key}}: {{value}}
-  array index: {{index}}
 </_each>
 
 
 <!-- A component is imported by using a capital first letter -->
 <!-- The file should also be named with a capital first letter -->
 <!-- args can be passed into a component -->
-<MyComponent arg1="value 1" arg2="value 2" type="h1">
+<MyComponent arg1="value 1" arg2="value 2">
   Some body to add to the component
 </MyComponent>
 
@@ -156,9 +161,9 @@ app.use('/fix-cache', async function(req, res, next){
 
 <!-- file: MyComponent.xhtml -->
 {{arg1}} - {{arg2}}
-<{{type}}>
+<h1>
   {{{body}}}
-</{{type}}>
+</h1>
 
 
 <!-- file: layout.xhtml -->
@@ -180,23 +185,17 @@ app.use('/fix-cache', async function(req, res, next){
 
 ```xhtml
 
-  <!-- random paragraph of lorem ipsum text -->
-  <_lorem/>
-  <!-- paragraph of lorem ipsum text with 2 sentences -->
-  <_lorem 2/>
-  <!-- sentence of lorem ipsum text with 3-5 words -->
-  <_lorem s 3 5/>
-  <!-- word of lorem ipsum text with 5-10 letters -->
-  <_lorem w 5 10/>
+<!-- random paragraph of lorem ipsum text -->
+<_lorem/>
+<!-- 2 paragraphs of lorem ipsum text -->
+<_lorem 2/>
+<!-- 3 sentence of lorem ipsum text with 5-10 words -->
+<_lorem s 3 5 10/>
+<!-- 1 word of lorem ipsum text with 5-10 letters -->
+<_lorem w 1 5 10/>
 
-  <!-- embed a youtube video -->
-  <_youtube url="https://www.youtube.com/watch?v=SJeBRW1QQMA" />
-  <!-- embed a youtube playlist -->
-  <_youtube url="https://www.youtube.com/playlist?list=PL0vfts4VzfNjnYhJMfTulea5McZbQLM7G" />
-  <!-- alias for yourube embed function -->
-  <_yt url="https://www.youtube.com/watch?v=SJeBRW1QQMA" />
-  <!-- this function accepts multiple url formats -->
-  <_yt url="youtu.be/SJeBRW1QQMA" />
+<!-- embed a youtube video -->
+<_json myList/>
 
 ```
 

@@ -1,38 +1,25 @@
 const fs = require('fs');
-const { join } = require('path');
-const zlib = require('zlib');
-const multiTaskQueue = require('@aspiesoft/multi-task-queue');
+const {join} = require('path');
 const { spawn } = require('child_process');
+const zlib = require('zlib');
+
+const { sleep, waitForMemory, randomToken, clean, toTimeMillis, encrypt, decrypt, requireOptional } = require('./common');
 
 const deviceRateLimit = requireOptional('express-device-rate-limit');
 
-//todo: make sure DebugMode is set to "false" before publishing to github and npm
-const DebugMode = false;
+const DebugMode = process.argv.includes('--turbx-debug');
 
-function requireOptional(path) {
-  try {
-    return require(path);
-  } catch (e) {
-    return undefined;
-  }
-}
-
-const common = require('./common');
-const { sleep, waitForMemory, randomToken, clean, toTimeMillis, encrypt, decrypt } = common;
-
-const taskQueue = multiTaskQueue(10);
-
-let ExpressApp = undefined;
+const defUpdateSpeed = 1;
 
 const ROOT = (function () {
+  if (process.cwd && process.cwd()) {
+    return clean(process.cwd());
+  }
   if (require.main.filename) {
     return clean(require.main.filename.toString()).replace(/[\\\/][^\\\/]+[\\\/]?$/, '');
   }
   if (require.main.path) {
     return clean(require.main.path.toString());
-  }
-  if (process.cwd && process.cwd()) {
-    return clean(process.cwd());
   }
   return clean(
     join(__dirname)
@@ -40,56 +27,57 @@ const ROOT = (function () {
       .replace(/[\/\\]node_modules[\/\\][^\\\/]+[\\\/]?$/, '')
   );
 })();
-
-const OPTS = {};
-
-const goCompiledResults = {};
-let goCompiler;
-let goCompilerLastInit = 0;
+let UserRoot = null;
 
 const EncKey = randomToken(32);
 
-const goRecentId = {};
-setInterval(function () {
-  const now = Date.now();
-  const id = Object.keys(goRecentId);
-  for (let i = 0; i < id.length; i++) {
-    if (now - goRecentId[id] > 20000) {
-      delete goRecentId[id];
-    }
-  }
-}, 20000);
+const CompilerOutput = {};
 
+let Compiler = undefined;
+let gettingCompiler = false;
+let stoppingCompiler = false;
 let pingRes = false;
-const golangOpts = {};
+let lastErr = 0;
 
-function initGoCompiler() {
-  if(Date.now() - goCompilerLastInit < 100){
+function initCompiler(){
+  if(gettingCompiler && !stoppingCompiler){
     return;
   }
-  goCompilerLastInit = Date.now();
+  gettingCompiler = true;
 
-  let compKey = zlib.gzipSync(EncKey);
-  if(!compKey){
-    throw new Error('Error: Turbx failed to compress random encryption key');
-  }else{
-    compKey = compKey.toString('base64');
-  }
+  const args = [
+    OPTS.root,
+    `--enc=${EncKey}`,
+    `--ext=${OPTS.ext}`,
+    `--components=${OPTS.components}`,
+    `--layout=${OPTS.layout}`,
+    `--public=${OPTS.public}`,
+    `--opts=${OPTS.opts}`,
+    `--cache=${OPTS.cache}`,
+  ];
 
   if(DebugMode){
-    goCompiler = spawn('go', ['run', '.', '--enc='+compKey, '--debug'], {cwd: join(__dirname, 'compiler')});
+    Compiler = spawn('go', ['run', '.', ...args], {cwd: join(__dirname, 'turbx')});
   }else{
-    goCompiler = spawn('./compiler/compiler', ['--enc='+compKey], { cwd: __dirname });
+    Compiler = spawn('./turbx/turbx', [...args], { cwd: __dirname });
   }
 
-  goCompiler.on('close', () => {
-    initGoCompiler();
-  })
-  goCompiler.stderr.on('end', () => {
-    initGoCompiler();
-  });
+  async function onExit(){
+    if(!stoppingCompiler){
+      let now = Date.now();
+      if(now - lastErr < 1000){
+        await sleep(10000);
+      }
+      lastErr = now;
 
-  goCompiler.stdout.on('data', async (data) => {
+      await sleep(100);
+      initCompiler();
+    }
+  }
+  Compiler.on('close', onExit);
+  Compiler.stderr.on('end', onExit);
+
+  Compiler.stdout.on('data', async (data) => {
     data = data.toString().trim();
 
     if(data === 'pong'){
@@ -97,228 +85,291 @@ function initGoCompiler() {
       return;
     }
 
-    if (data.startsWith('debug:')) {
-      console.log(data);
+    if(data.startsWith('debug:')){
+      console.log('\x1b[34m'+data.replace(/^debug:\s*/, ''), '\x1b[0m');
       return;
     }
 
-    if(EncKey){
-      data = await decrypt(data, EncKey)
-      if(!data){
-        return;
+    if(data.startsWith('error:')){
+      console.log('\x1b[31m'+data.replace(/^error:\s*/, ''), '\x1b[0m');
+      return;
+    }
+
+    dec = await decrypt(data, EncKey);
+    if(!dec){
+      if(DebugMode){
+        console.log('\x1b[34m'+data, '\x1b[0m');
       }
+      return;
+    }else{
+      data = clean(dec);
     }
 
-    let idToken = undefined;
-    data = data.replace(/^([\w_-]+):/, (_, id) => {
-      idToken = id;
-      return '';
-    });
-    if (!idToken) {
+    if(data === 'pong'){
+      pingRes = true;
       return;
     }
 
-    const now = Date.now();
-    if (now - goRecentId[idToken] < 20000) {
-      return;
-    }
+    data = data.split(':', 3);
 
-    goRecentId[idToken] = now;
-
-    goCompiledResults[idToken] = data;
+    CompilerOutput[data[0]] = {res: data[1], data: data[2]};
   });
 
-  for(let key in golangOpts){
-    if(typeof key === 'string' && key.match(/^[\w_-]+$/)){
-      goCompilerSendRes('set:' + key + '=' + golangOpts[key]);
-    }
-  }
-}
-initGoCompiler();
-
-setInterval(async function(){
-  pingRes = false;
-  goCompiler.stdin.write('ping\n');
-  await sleep(100);
-  if(!pingRes){
-    initGoCompiler();
-  }
-}, 1000);
-
-async function goCompilerSendRes(res){
-  if(EncKey){
-    const enc = await encrypt(res, EncKey);
-    if(enc){
-      goCompiler.stdin.write(enc + '\n');
-    }
-  }else{
-    goCompiler.stdin.write(res);
-  }
+  initCompilerOnce();
+  gettingCompiler = false;
 }
 
-function goCompilerSetOpt(key, value) {
-  key = key.toString().replace(/[^\w_-]/g, '');
-  value = value.toString().replace(/[\r\n\v]/g, '');
-  golangOpts[key] = value;
-  goCompilerSendRes('set:' + key + '=' + value);
+let initCompilerOnceRan = false;
+function initCompilerOnce(){
+  if(initCompilerOnceRan){
+    return;
+  }
+  initCompilerOnceRan = true;
+
+  setInterval(async function(){
+    pingRes = false;
+    Compiler.stdin.write('ping\n');
+    await sleep(1000);
+    if(!pingRes){
+      initCompiler();
+    }
+  }, 10000);
 }
 
-async function goCompilerPreCompile(file, opts) {
-  if(typeof opts === 'object'){
-    opts.PreCompile = true;
-    return await goCompilerCompile(file, opts);
+async function compilerSend(action, token, msg, opts){
+  if(!Compiler){
+    return;
   }
 
-  const token = randomToken(64);
-  goCompilerSendRes('pre:' + token + ':' + file.toString().replace(/[\r\n\v]/g, ''));
-
-  const updateSpeed = Number(OPTS.updateSpeed) || 1;
-
-  let loops = (toTimeMillis(OPTS.timeout) || 30000) / updateSpeed;
-  while (loops-- > 0) {
-    if (goCompiledResults[token]) {
-      break;
-    }
-    await sleep(updateSpeed);
+  if(token){
+    action += ':' + token;
+  }
+  if(msg){
+    action += ':' + msg;
+  }
+  if(opts){
+    action += ':' + opts;
   }
 
-  const res = goCompiledResults[token];
-  delete goCompiledResults[token];
-  return res;
+  const res = await encrypt(action, EncKey);
+  if(res){
+    Compiler.stdin.write(res+'\n');
+  }
 }
 
-async function goCompilerHasCache(file) {
-  const token = randomToken(64);
-  goCompilerSendRes('has:' + token + ':' + file.toString().replace(/[\r\n\v]/g, ''));
-
-  const updateSpeed = Number(OPTS.updateSpeed) || 1;
-
-  let loops = (toTimeMillis(OPTS.timeout) || 30000) / updateSpeed;
-  while (loops-- > 0) {
-    if (goCompiledResults[token]) {
-      break;
-    }
-    await sleep(updateSpeed);
-  }
-
-  const res = goCompiledResults[token];
-  delete goCompiledResults[token];
-  if(res === 'true' || res === true){
-    return true;
-  }
-  return false;
-}
-
-async function goCompilerCompile(file, opts) {
-  const token = randomToken(64);
-
-  let zippedOpts = undefined;
-
-  await waitForMemory();
-  zlib.gzip(JSON.stringify(opts), (err, buffer) => {
-    if (err) {
-      goCompiledResults[token] = 'error';
-      zippedOpts = null;
-      return;
-    }
-
-    zippedOpts = buffer.toString('base64');
-  });
-
-  const updateSpeed = Number(OPTS.updateSpeed) || 1;
-
-  let loops = (toTimeMillis(OPTS.timeout) || 30000) / updateSpeed;
-  while (loops-- > 0) {
-    if (zippedOpts != undefined) {
-      break;
-    }
-    await sleep(updateSpeed);
-  }
-
-  if (!zippedOpts) {
-    return zippedOpts;
-  }
-
-  let reqStarted = Date.now();
-  goCompilerSendRes(token + ':' + zippedOpts + ':' + file.toString().replace(/[\r\n\v]/g, ''));
-
-  while (loops-- > 0) {
-    if (goCompiledResults[token]) {
-      break;
-    }
-
-    if (reqStarted < goCompilerLastInit) {
-      reqStarted = Date.now();
-      goCompilerSendRes(token + ':' + zippedOpts + ':' + file.toString().replace(/[\r\n\v]/g, ''));
-    }
-
-    await sleep(updateSpeed);
-  }
-
-  const res = goCompiledResults[token];
-  delete goCompiledResults[token];
-
-  let output = undefined;
-  if (res) {
-    await waitForMemory();
-    zlib.gunzip(Buffer.from(res, 'base64'), (err, res) => {
-      if (err) {
-        output = null;
-        return;
-      }
-      output = res.toString();
-    });
-
-    while (loops-- > 0) {
-      if (output !== undefined) {
-        break;
-      }
-      await sleep(updateSpeed);
-    }
-
-    return output;
-  }
-
-  return undefined;
-}
 
 function exitHandler(options, exitCode) {
-  if (options.cleanup) {
-    goCompilerSendRes('stop');
+  if(exitCode && exitCode !== 'SIGINT' && exitCode !== 'SIGUSR1' && exitCode !== 'SIGUSR2'){
+    console.log(exitCode);
   }
+
+  if (options.cleanup) {
+    stoppingCompiler = true;
+    if(Compiler){
+      Compiler.stdin.write('stop\n');
+    }
+  }
+
   if (options.exit) {
+    stoppingCompiler = true;
+    if(Compiler){
+      Compiler.stdin.write('stop\n');
+    }
     process.exit(exitCode);
   }
 }
 
 process.on('exit', exitHandler.bind(null, { cleanup: true }));
-
 //catches ctrl+c event
 process.on('SIGINT', exitHandler.bind(null, { exit: true }));
-
 // catches "kill pid" (for example: nodemon restart)
 process.on('SIGUSR1', exitHandler.bind(null, { exit: true }));
 process.on('SIGUSR2', exitHandler.bind(null, { exit: true }));
-
 //catches uncaught exceptions
 process.on('uncaughtException', exitHandler.bind(null, { exit: true }));
 
-function engine(path, opts, cb) {
-  path = clean(path);
-  opts = clean(opts);
 
+const OPTS = {};
+function setOpt(key, value, def = undefined){
+  if(def !== undefined){
+    let valueList = value;
+    if(!Array.isArray(valueList)){
+      valueList = [valueList];
+    }
+    const t = typeof def;
+    const tA = Array.isArray(def);
+    for(let i = 0; i < valueList.length; i++){
+      if(typeof valueList[i] === t && Array.isArray(valueList[i]) === tA){
+        value = valueList[i];
+        break;
+      }
+    }
+
+    if(typeof value !== t || Array.isArray(value) !== tA){
+      value = def;
+    }
+  }
+
+  OPTS[key] = value;
+
+  if(Compiler){
+    if(key === 'opts'){
+      compilerSend('opts', value);
+    }else{
+      compilerSend('set', key, value);
+    }
+  }
+}
+
+let ExpressApp = undefined;
+function setupExpress(app){
+  app.use((req, res, next) => {
+    res.inCache = preCompileHasCache;
+    res.preRender = preCompile;
+
+    const _render = res.render;
+    res.render = async function(view, options, fn){
+      if(typeof options !== 'object'){
+        options = {};
+      }
+      let enc = req.header('Accept-Encoding');
+      if(typeof enc === 'string'){
+        options._gzip = enc.split(',').includes('gzip')
+      }
+
+      options._status = function(status, gzip = false){
+        res.status(status);
+        if(gzip){
+          res.set('Content-Encoding', 'gzip');
+          res.set('Content-Type', 'text/html');
+        }
+      };
+
+      options._send = function(data){
+        res.send(data).end();
+      };
+
+
+      // fix input to prevent crashing
+      view = clean(view);
+      if(!options){
+        options = {};
+      }
+
+      if(!OPTS.ext || !OPTS.root){
+        _render.call(this, view, options, fn);
+        return true;
+      }
+
+      if(view.includes('@')) {
+        let data = view.split('@', 2);
+        view = data[0];
+        options.layout = data[1];
+      }
+
+      if(view.includes(':')) {
+        let data = view.split(':', 2);
+        view = data[0];
+        options.cacheID = data[1];
+      }
+
+      let ext = (view.includes('.') ? view.substring(view.lastIndexOf('.')).replace('.', '') : undefined);
+      if(ext && !options.ext){
+        options.ext = ext
+      }
+
+      if (view.includes('.')) {
+        view = view.substring(0, view.lastIndexOf('.'));
+      }
+
+      view = view.replace(OPTS.root, '').replace(/^[\\\/]+/, '');
+
+      const viewPath = join(OPTS.root, view);
+      let fullpath = undefined;
+      if(options.ext && fs.existsSync(viewPath + '.' + options.ext)){
+        fullpath = viewPath + '.' + options.ext;
+      }else if(fs.existsSync(viewPath + '.' + OPTS.ext)){
+        fullpath = viewPath + '.' + OPTS.ext;
+      }
+
+      if(!fullpath){
+        let page404 = join(OPTS.root, 'error/404.' + OPTS.ext);
+        if (fs.existsSync(page404)) {
+          _render.call(this, 'error/404', options, fn);
+          return false;
+        }
+        page404 = join(OPTS.root, '404.' + OPTS.ext);
+        if (fs.existsSync(page404)) {
+          res.status(404)
+          _render.call(this, '404', options, fn);
+          return false;
+        }
+        res.status(404).send('<h1>Error 404</h1><h2>Page Not Found</h2>').end();
+        return false;
+      }
+
+      let delFile = undefined;
+      if(!fs.existsSync(viewPath + '.' + OPTS.ext)){
+        // let err = fs.writeFileSync(viewPath + '.' + OPTS.ext, '');
+        let wErr = undefined;
+        fs.writeFile(viewPath + '.' + OPTS.ext, '', (err) => {
+          if(err){
+            wErr = err;
+            return;
+          }
+          wErr = null;
+        });
+
+        let loops = 1000000;
+        while(wErr === undefined && loops-- > 0){
+          await sleep(1);
+        }
+
+        if(wErr || wErr === undefined){
+          let page404 = join(OPTS.root, 'error/404.' + OPTS.ext);
+          if (fs.existsSync(page404)) {
+            _render.call(this, 'error/404', options, fn);
+            return false;
+          }
+          page404 = join(OPTS.root, '404.' + OPTS.ext);
+          if (fs.existsSync(page404)) {
+            res.status(404)
+            _render.call(this, '404', options, fn);
+            return false;
+          }
+          res.status(404).send('<h1>Error 404</h1><h2>Page Not Found</h2>').end();
+          return false;
+        }
+        
+        delFile = viewPath + '.' + OPTS.ext;
+      }
+
+      _render.call(this, view, options, fn);
+
+      if(delFile){
+        fs.unlink(delFile, (err) => {});
+      }
+
+      return true;
+    };
+    
+    next();
+  });
+}
+
+
+async function runCompile(method, path, opts){
+  path = clean(path);
   if(!opts){
     opts = {};
   }
 
-  if (!OPTS.ext) {
-    OPTS.ext = opts.settings['view engine'] || (path.includes('.') ? path.substring(path.lastIndexOf('.')).replace('.', '') : 'xhtml');
-    goCompilerSetOpt('ext', OPTS.ext);
-  }
-
-  if (!OPTS.root) {
-    OPTS.root = opts.settings.views || opts.settings.view || (require.main.filename || process.argv[1] || __dirname).replace(/([\\\/]node_modules[\\\/].*?|[\\\/][^\\\/]*)$/, '/views');
-    goCompilerSetOpt('root', OPTS.root);
+  const compOpts = clean({...opts});
+  const keys = Object.keys(compOpts);
+  for(let i = 0; i < keys.length; i++){
+    if(keys[i].startsWith('!') || keys[i] === 'settings'){
+      delete compOpts[keys[i]];
+    }
   }
 
   if (path.includes('.')) {
@@ -327,132 +378,267 @@ function engine(path, opts, cb) {
 
   path = path.replace(OPTS.root, '').replace(/^[\\\/]+/, '');
 
-  opts.settings.filename = path;
+  if(opts.settings){
+    opts.settings.filename = path;
+  }
 
-  taskQueue(path, async () => {
-    if (OPTS.before) {
-      OPTS.before(opts);
-    }
-    if (typeof opts.before === 'function') {
-      opts.before(opts);
-    }
+  if(opts.cacheID){
+    path += ':' + opts.cacheID.replace(/[^\w_-]+/, '')
+  }
 
-    let data = await goCompilerCompile(path, opts);
+  if(opts.layout){
+    path += '@' + opts.layout.replace(/[^\w_\-:\\\/]+/, '')
+  }
 
-    if (typeof opts.after === 'function') {
-      let newData = opts.after(opts, data);
-      if (newData !== undefined) {
-        data = newData;
+  const timeout = Number(opts.timeout) || Number(OPTS.timeout) || toTimeMillis('30s');
+
+  // ensure we have at least 1mb of memory available (or wait to reduce memory usage)
+  const memAvailable = await waitForMemory(1, timeout);
+  if(!memAvailable){
+    return {error: 'low memory'};
+  }
+
+  // handle before functions
+  if(method === 'comp' && typeof OPTS.before === 'function'){
+    OPTS.before(opts);
+  }
+  if (typeof opts.before === 'function') {
+    opts.before(opts);
+  }
+
+  const updateSpeed = Number(opts.updateSpeed) || Number(OPTS.updateSpeed) || defUpdateSpeed;
+
+  // request file from compiler
+  const token = randomToken(64);
+  if(CompilerOutput[token]){
+    await sleep(Math.max(100, OPTS.updateSpeed + 100));
+    delete CompilerOutput[token]
+  }
+
+  compilerSend(method, token, path, JSON.stringify(compOpts))
+
+  // wait for compiler
+  const startTime = Date.now();
+  let loops = 0;
+  let maxLoops = 1000 / updateSpeed;
+  while(!CompilerOutput[token]){
+    await sleep(updateSpeed);
+    if(loops++ > maxLoops){
+      loops = 0;
+      if(Date.now() - startTime > timeout){
+        return;
       }
     }
-    if (OPTS.after) {
-      let newData = OPTS.after(opts, data);
-      if (newData !== undefined) {
-        data = newData;
-      }
-    }
+  }
 
-    if (!data || data === 'error') {
+  // get data if available
+  let data = undefined;
+  if(CompilerOutput[token]){
+    data = CompilerOutput[token]
+    delete CompilerOutput[token];
+  }
+
+  // handle after functions
+  if (typeof opts.after === 'function') {
+    let newData = opts.after(opts, data);
+    if (newData !== undefined) {
+      data = newData;
+    }
+  }
+  if(method === 'comp' && typeof OPTS.after === 'function'){
+    let newData = OPTS.after(opts);
+    if (newData !== undefined) {
+      data = newData;
+    }
+  }
+
+  return data;
+}
+
+
+async function engine(path, opts, cb){
+  path = clean(path);
+  if(!opts){
+    opts = {};
+  }
+
+  if (!OPTS.ext) {
+    setOpt('ext', (opts.settings['view engine'] || (path.includes('.') ? path.substring(path.lastIndexOf('.')).replace('.', '') : 'md')).toString())
+  }
+
+  if (!OPTS.root) {
+    let root = (opts.settings.views || opts.settings.view || 'views').toString();
+    if(UserRoot){
+      if(!root.startsWith(UserRoot)){
+        root = join(UserRoot, root);
+      }
+    }else if(!root.startsWith(ROOT)){
+      root = join(ROOT, root);
+    }
+    setOpt('root', root);
+  }
+
+  const data = await runCompile('comp', path, opts);
+
+  if(!opts._status){
+    opts._status = function(){};
+  }
+
+  if(!data){
+    opts._status(503);
+    return cb(null, '<h1>Error 503</h1><h2>Service Unavailable</h2><p>The server failed to complete your request. Please try again or contact a server administrator about this error if it happens frequently.</p>');
+  }
+
+  if (data.res === 'error') {
+    opts._status(500);
+    if(DebugMode || process.env.NODE_ENV !== 'production'){
+      if(DebugMode){
+        console.error('\x1b[31m'+data.data, '\x1b[0m');
+      }
+      return cb(null, '<h1>Error 500</h1><h2>Internal Server Error</h2>' + `<p>${data.data}</p>`);
+    }
+    return cb(null, '<h1>Error 500</h1><h2>Internal Server Error</h2>');
+  }
+
+
+  if(opts._gzip){
+    opts._status(200, true);
+    return cb(null, Buffer.from(data.data, 'base64'));
+  }
+
+  zlib.gunzip(Buffer.from(data.data, 'base64'), (err, html) => {
+    if(err){
+      opts._status(500);
       return cb(null, '<h1>Error 500</h1><h2>Internal Server Error</h2>');
     }
 
-    return cb(null, data);
+    opts._status(200, true);
+    return cb(null, html.toString());
   });
 }
 
-function setOpts(opts) {
-  let before = opts.before;
-  let after = opts.after;
-  opts = clean(opts);
-  let root = opts.views || opts.view || 'views';
-
-  OPTS.ext = (opts.ext || 'xhtml').replace(/[^\w_\-]/g, '');
-  let rootPath = root.replace(/[^\w_\-\\\/\.@$#!]/g, '');
-  if (!rootPath.startsWith(ROOT)) {
-    rootPath = join(ROOT, rootPath);
-  }
-  OPTS.root = rootPath;
-
-  let componentsOpt = opts.components || opts.component || 'components';
-  if (componentsOpt) {
-    OPTS.components = componentsOpt.replace(/[^\w_\-\\\/\.@$#!]/g, '');
+async function compile(path, opts){
+  path = clean(path);
+  if(!opts){
+    opts = {};
   }
 
-  let template = (opts.template || '').replace(/[^\w_\-\\\/\.@$#!]/g, '');
-  if (template && template.trim() !== '') {
-    OPTS.template = template;
+  const data = await runCompile('comp', path, opts);
+
+  if(!data){
+    return {status: 503, gzip: false, html: '<h1>Error 503</h1><h2>Service Unavailable</h2><p>The server failed to complete your request. Please try again or contact a server administrator about this error if it happens frequently.</p>'};
   }
 
-  OPTS.cache = opts.cache || '2h';
-  OPTS.lazyCache = opts.lazyCache || '12h';
-  OPTS.timeout = opts.timeout || '30s';
-
-  if (typeof before === 'function') {
-    OPTS.before = before;
-  }
-
-  if (typeof after === 'function') {
-    OPTS.after = after;
-  }
-
-  if (typeof opts.static === 'string') {
-    OPTS.static = opts.static;
-  } else {
-    OPTS.static = '/';
-  }
-
-  if (typeof opts.opts === 'object') {
-    OPTS.opts = opts.opts;
-  } else {
-    OPTS.opts = {};
-  }
-
-  if (['number', 'string'].includes(typeof opts.updateSpeed)) {
-    updateSpeed = toTimeMillis(opts.updateSpeed);
-    if (updateSpeed && updateSpeed > 0) {
-      OPTS.updateSpeed = updateSpeed;
-    }
-  } else {
-    // OPTS.updateSpeed = 10;
-    OPTS.updateSpeed = 1;
-  }
-
-  for (let key in OPTS) {
-    if (OPTS[key] === undefined || OPTS[key] === null) {
-      continue;
-    }
-    if (typeof OPTS[key] === 'function') {
-      goCompilerSetOpt(key, 'true');
-    } else if (typeof OPTS[key] === 'object') {
-      goCompilerSetOpt(key, JSON.stringify(OPTS[key]));
-    } else if (typeof OPTS[key] === 'string' && OPTS[key].match(/^[0-9]+(\.[0-9]+|)[a-z]{0,3}$/)) {
-      let opt = toTimeMillis(OPTS[key]);
-      if (!Number.isNaN(opt)) {
-        goCompilerSetOpt(key, opt.toString());
-      } else {
-        goCompilerSetOpt(key, OPTS[key].toString());
+  if (data.res === 'error') {
+    if(DebugMode || process.env.NODE_ENV !== 'production'){
+      if(DebugMode){
+        console.error('\x1b[31m'+data.data, '\x1b[0m');
       }
-    } else {
-      goCompilerSetOpt(key, OPTS[key].toString());
+      return {status: 500, gzip: false, html: '<h1>Error 500</h1><h2>Internal Server Error</h2>' + `<p>${data.data}</p>`};
+    }
+    return {status: 500, gzip: false, html: '<h1>Error 500</h1><h2>Internal Server Error</h2>'};
+  }
+
+
+  return {status: 200, gzip: true, html: Buffer.from(data.data, 'base64'), unzip: function(){
+    zlib.gunzip(Buffer.from(this.html, 'base64'), (err, html) => {
+      if(err){
+        return {status: 500, gzip: false, html: '<h1>Error 500</h1><h2>Internal Server Error</h2>'};
+      }
+
+      return {status: 200, gzip: false, html: html.toString()};
+    });
+  }};
+}
+
+async function preCompile(path, opts){
+  path = clean(path);
+  if(!opts){
+    opts = {};
+  }
+
+  const data = await runCompile('pre', path, opts);
+
+  if(!data){
+    return {error: 'failed to complete request'};
+  }
+
+  if (data.res === 'error') {
+    return {error: data.data};
+  }
+
+  return null;
+}
+
+async function preCompileHasCache(path, opts){
+  path = clean(path);
+  if(!opts){
+    opts = {};
+  }
+
+  if (path.includes('.')) {
+    path = path.substring(0, path.lastIndexOf('.'));
+  }
+
+  path = path.replace(OPTS.root, '').replace(/^[\\\/]+/, '');
+
+  if(opts.cacheID){
+    path += ':' + opts.cacheID.replace(/[^\w_-]+/, '')
+  }
+
+  if(opts.layout){
+    path += '@' + opts.layout.replace(/[^\w_\-:\\\/]+/, '')
+  }
+
+  const timeout = Number(opts.timeout) || Number(OPTS.timeout) || toTimeMillis('30s');
+
+  // ensure we have at least 1mb of memory available (or wait to reduce memory usage)
+  const memAvailable = await waitForMemory(1, timeout);
+  if(!memAvailable){
+    return null;
+  }
+
+  const updateSpeed = Number(opts.updateSpeed) || Number(OPTS.updateSpeed) || defUpdateSpeed;
+
+  // request file from compiler
+  const token = randomToken(64);
+  if(CompilerOutput[token]){
+    await sleep(Math.max(100, OPTS.updateSpeed + 100));
+    delete CompilerOutput[token]
+  }
+
+  compilerSend('has', token, path)
+
+  // wait for compiler
+  const startTime = Date.now();
+  let loops = 0;
+  let maxLoops = 1000 / updateSpeed;
+  while(!CompilerOutput[token]){
+    await sleep(updateSpeed);
+    if(loops++ > maxLoops){
+      loops = 0;
+      if(Date.now() - startTime > timeout){
+        break;
+      }
     }
   }
+
+  // get data if available
+  let data = undefined;
+  if(CompilerOutput[token]){
+    data = CompilerOutput[token]
+    delete CompilerOutput[token];
+  }
+
+  if(!data || data.res === 'error'){
+    return null;
+  }
+
+  return data.data === 'true';
 }
 
-function setupExpress(app) {
-  app.use((req, res, next) => {
-    res.preRender = goCompilerPreCompile;
-    res.preCompiled = goCompilerHasCache;
-    next();
-  });
 
-  return;
-
-  app.use('/lazyload/:token/:component', async (req, res, next) => {
-    //todo: add lazy loading option
-  });
-}
-
-function expressFallbackPages(app, opts) {
+function sortAppArgs(app, opts){
   if (typeof app === 'object') {
     [app, opts] = [opts, app];
   }
@@ -460,17 +646,30 @@ function expressFallbackPages(app, opts) {
     app = ExpressApp;
   }
   if (typeof app !== 'function') {
-    return;
+    return [null, null, 'app is not a function'];
   }
+  if (typeof ExpressApp !== 'function') {
+    ExpressApp = app;
+  }
+
   if (typeof opts !== 'object') {
     opts = {};
+  }
+
+  return [app, opts];
+}
+
+function renderPages(app, opts){
+  [app, opts, error] = sortAppArgs(app, opts);
+  if(error){
+    return;
   }
 
   app.use((req, res, next) => {
     const url = clean(req.url)
       .replace(/^[\\\/]+/, '')
-      .replace(/\?.*/, '');
-    if (url === OPTS.template || url.match(/^(errors?\/|)[0-9]{3}$/)) {
+      .replace(/\?.*/, '').replace(/[^\w_-]/g, '').toLowerCase();
+    if (url === OPTS.layout || url.match(/^(errors?\/|)[0-9]{3}$/)) {
       next();
       return;
     }
@@ -509,17 +708,9 @@ function expressFallbackPages(app, opts) {
 }
 
 function expressRateLimit(app, opts) {
-  if (typeof app === 'object') {
-    [app, opts] = [opts, app];
-  }
-  if (typeof app !== 'function') {
-    app = ExpressApp;
-  }
-  if (typeof app !== 'function') {
+  [app, opts, error] = sortAppArgs(app, opts);
+  if(error){
     return;
-  }
-  if (typeof opts !== 'object') {
-    opts = {};
   }
 
   const rateLimit = deviceRateLimit({
@@ -539,49 +730,103 @@ function expressRateLimit(app, opts) {
     ...opts,
   });
 
+  if(!rateLimit){
+    return false;
+  }
+
   rateLimit.all(app);
+
+  return true;
 }
 
-module.exports = (function () {
-  const exports = function (
-    opts = {
-      views: 'views',
-      components: 'components',
-      ext: 'xhtml',
-      template: undefined,
-      cache: '2h',
-      lazyCache: '12h',
-      timeout: '30s',
-      before: undefined,
-      after: undefined,
-      static: '/',
-      opts: {},
-      updateSpeed: 10,
-    },
-    app
-  ) {
+
+module.exports = (function(){
+  const exports = function(opts = {
+    views: 'views',
+    ext: 'md',
+    components: 'components',
+    layout: 'layout',
+    public: 'public',
+    cache: '2h',
+    opts: {},
+    timeout: '30s',
+    updateSpeed: defUpdateSpeed,
+    before: undefined,
+    after: undefined,
+  }, app){
     if (typeof opts === 'function' || typeof app === 'object') {
       [opts, app] = [app, opts];
     }
 
-    if (typeof opts === 'object') {
-      setOpts(opts);
-    } else {
-      setOpts({});
+    // set options
+    if(typeof opts === 'object'){
+      if(opts.root && typeof opts.root === 'string'){
+        UserRoot = opts.root;
+      }
+
+      let root = (opts.views || opts.view || 'views');
+      if(UserRoot){
+        if(!root.startsWith(UserRoot)){
+          root = join(UserRoot, root);
+        }
+      }else if(!root.startsWith(ROOT)){
+        root = join(ROOT, root);
+      }
+      setOpt('root', root);
+
+      if(typeof opts.ext === 'string'){
+        setOpt('ext', opts.ext.replace(/[^\w_-]/g, ''))
+      }else if(typeof opts.type === 'string'){
+        setOpt('ext', opts.type.replace(/[^\w_-]/g, ''))
+      }else{
+        setOpt('ext', 'md');
+      }
+
+      setOpt('components', [opts.components, opts.component], 'components');
+      setOpt('layout', [opts.layout, opts.template], 'components');
+      setOpt('public', [opts.public, opts.static], 'public');
+      setOpt('cache', opts.cache, '2h');
+
+      if(typeof opts.opts === 'object'){
+        setOpt('opts', '{}');
+        ;(async function(){
+          let json = await encrypt(JSON.stringify(opts.opts));
+          setOpt('opts', json);
+        })();
+      }else{
+        setOpt('opts', '{}');
+      }
+
+      OPTS.timeout = toTimeMillis(opts.timeout) || toTimeMillis('30s');
+      OPTS.updateSpeed = Number(opts.updateSpeed) || defUpdateSpeed;
+
+      if(typeof opts.before === 'function'){
+        OPTS.before = opts.before;
+      }
+
+      if(typeof opts.after === 'function'){
+        OPTS.after = opts.after;
+      }
     }
 
+    // init express app
     if (typeof app === 'function') {
       setupExpress(app);
       ExpressApp = app;
     }
 
+    // init compiler after a delay
+    // this delay is to avoid overloading the system if nodemon is constantly turning the server off and on again
+    setTimeout(initCompiler, 1000);
+
     return engine;
   };
 
-  exports.preRender = goCompilerPreCompile;
-  exports.preCompiled = goCompilerHasCache;
+  exports.compile = compile;
+  exports.preCompile = preCompile;
+  exports.inCache = preCompileHasCache;
 
-  exports.renderPages = expressFallbackPages;
+  exports.renderPages = renderPages;
   exports.rateLimit = expressRateLimit;
 
   return exports;
