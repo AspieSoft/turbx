@@ -12,8 +12,6 @@
 
 A Fast and Easy To Use View Engine, Compiled In Go.
 
-> Notice: This View Engine Is Currently In Beta
-
 ## Whats New
 
 - Rebuilt the compiler in go from the ground up
