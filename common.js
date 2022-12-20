@@ -269,6 +269,17 @@ async function decrypt(text, key){
 }
 
 
+function requireOptional(path) {
+  try {
+    return require(path);
+  } catch (e) {
+    return function(){
+      console.error(`\x1b[31mThe module \x1b[34m${path}\x1b[31m is not installed!\nYou can install it by running \x1b[34mnpm i ${path}\x1b[0m`)
+    };
+  }
+}
+
+
 module.exports = {
   sleep,
   waitForMemory,
@@ -281,4 +292,5 @@ module.exports = {
   loadedMiddleware,
   encrypt,
   decrypt,
+  requireOptional
 };

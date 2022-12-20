@@ -91,7 +91,7 @@ app.use('/assets', express.static(join(__dirname, '../assets')))
 
 
 // firewall rate limiting
-// turbx.rateLimit();
+turbx.rateLimit();
 
 app.get('/', async (req, res) => {
   let preCompiled = await res.inCache('index');
@@ -173,6 +173,11 @@ async function someLongProcess(){
   await sleep(3000);
   return 'test 1';
 }
+
+
+app.get('/md', async (req, res) => {
+  res.render('md.md');
+});
 
 
 // auto set all views to public pages

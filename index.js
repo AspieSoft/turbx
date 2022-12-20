@@ -3,7 +3,9 @@ const {join} = require('path');
 const { spawn } = require('child_process');
 const zlib = require('zlib');
 
-const { sleep, waitForMemory, randomToken, clean, toTimeMillis, encrypt, decrypt } = require('./common');
+const { sleep, waitForMemory, randomToken, clean, toTimeMillis, encrypt, decrypt, requireOptional } = require('./common');
+
+const deviceRateLimit = requireOptional('express-device-rate-limit');
 
 const DebugMode = process.argv.includes('--turbx-debug');
 
@@ -226,7 +228,7 @@ function setupExpress(app){
     res.preRender = preCompile;
 
     const _render = res.render;
-    res.render = function(view, options, fn){
+    res.render = async function(view, options, fn){
       if(typeof options !== 'object'){
         options = {};
       }
@@ -247,7 +249,108 @@ function setupExpress(app){
         res.send(data).end();
       };
 
+
+      // fix input to prevent crashing
+      view = clean(view);
+      if(!options){
+        options = {};
+      }
+
+      if(!OPTS.ext || !OPTS.root){
+        _render.call(this, view, options, fn);
+        return true;
+      }
+
+      if(view.includes('@')) {
+        let data = view.split('@', 2);
+        view = data[0];
+        options.layout = data[1];
+      }
+
+      if(view.includes(':')) {
+        let data = view.split(':', 2);
+        view = data[0];
+        options.cacheID = data[1];
+      }
+
+      let ext = (view.includes('.') ? view.substring(view.lastIndexOf('.')).replace('.', '') : undefined);
+      if(ext && !options.ext){
+        options.ext = ext
+      }
+
+      if (view.includes('.')) {
+        view = view.substring(0, view.lastIndexOf('.'));
+      }
+
+      view = view.replace(OPTS.root, '').replace(/^[\\\/]+/, '');
+
+      const viewPath = join(OPTS.root, view);
+      let fullpath = undefined;
+      if(options.ext && fs.existsSync(viewPath + '.' + options.ext)){
+        fullpath = viewPath + '.' + options.ext;
+      }else if(fs.existsSync(viewPath + '.' + OPTS.ext)){
+        fullpath = viewPath + '.' + OPTS.ext;
+      }
+
+      if(!fullpath){
+        let page404 = join(OPTS.root, 'error/404.' + OPTS.ext);
+        if (fs.existsSync(page404)) {
+          _render.call(this, 'error/404', options, fn);
+          return false;
+        }
+        page404 = join(OPTS.root, '404.' + OPTS.ext);
+        if (fs.existsSync(page404)) {
+          res.status(404)
+          _render.call(this, '404', options, fn);
+          return false;
+        }
+        res.status(404).send('<h1>Error 404</h1><h2>Page Not Found</h2>').end();
+        return false;
+      }
+
+      let delFile = undefined;
+      if(!fs.existsSync(viewPath + '.' + OPTS.ext)){
+        // let err = fs.writeFileSync(viewPath + '.' + OPTS.ext, '');
+        let wErr = undefined;
+        fs.writeFile(viewPath + '.' + OPTS.ext, '', (err) => {
+          if(err){
+            wErr = err;
+            return;
+          }
+          wErr = null;
+        });
+
+        let loops = 1000000;
+        while(wErr === undefined && loops-- > 0){
+          await sleep(1);
+        }
+
+        if(wErr || wErr === undefined){
+          let page404 = join(OPTS.root, 'error/404.' + OPTS.ext);
+          if (fs.existsSync(page404)) {
+            _render.call(this, 'error/404', options, fn);
+            return false;
+          }
+          page404 = join(OPTS.root, '404.' + OPTS.ext);
+          if (fs.existsSync(page404)) {
+            res.status(404)
+            _render.call(this, '404', options, fn);
+            return false;
+          }
+          res.status(404).send('<h1>Error 404</h1><h2>Page Not Found</h2>').end();
+          return false;
+        }
+        
+        delFile = viewPath + '.' + OPTS.ext;
+      }
+
       _render.call(this, view, options, fn);
+
+      if(delFile){
+        fs.unlink(delFile, (err) => {});
+      }
+
+      return true;
     };
     
     next();
@@ -277,6 +380,14 @@ async function runCompile(method, path, opts){
 
   if(opts.settings){
     opts.settings.filename = path;
+  }
+
+  if(opts.cacheID){
+    path += ':' + opts.cacheID.replace(/[^\w_-]+/, '')
+  }
+
+  if(opts.layout){
+    path += '@' + opts.layout.replace(/[^\w_\-:\\\/]+/, '')
   }
 
   const timeout = Number(opts.timeout) || Number(OPTS.timeout) || toTimeMillis('30s');
@@ -471,6 +582,14 @@ async function preCompileHasCache(path, opts){
 
   path = path.replace(OPTS.root, '').replace(/^[\\\/]+/, '');
 
+  if(opts.cacheID){
+    path += ':' + opts.cacheID.replace(/[^\w_-]+/, '')
+  }
+
+  if(opts.layout){
+    path += '@' + opts.layout.replace(/[^\w_\-:\\\/]+/, '')
+  }
+
   const timeout = Number(opts.timeout) || Number(OPTS.timeout) || toTimeMillis('30s');
 
   // ensure we have at least 1mb of memory available (or wait to reduce memory usage)
@@ -519,7 +638,7 @@ async function preCompileHasCache(path, opts){
 }
 
 
-function renderPages(app, opts){
+function sortAppArgs(app, opts){
   if (typeof app === 'object') {
     [app, opts] = [opts, app];
   }
@@ -527,7 +646,7 @@ function renderPages(app, opts){
     app = ExpressApp;
   }
   if (typeof app !== 'function') {
-    return;
+    return [null, null, 'app is not a function'];
   }
   if (typeof ExpressApp !== 'function') {
     ExpressApp = app;
@@ -537,10 +656,19 @@ function renderPages(app, opts){
     opts = {};
   }
 
+  return [app, opts];
+}
+
+function renderPages(app, opts){
+  [app, opts, error] = sortAppArgs(app, opts);
+  if(error){
+    return;
+  }
+
   app.use((req, res, next) => {
     const url = clean(req.url)
       .replace(/^[\\\/]+/, '')
-      .replace(/\?.*/, '');
+      .replace(/\?.*/, '').replace(/[^\w_-]/g, '').toLowerCase();
     if (url === OPTS.layout || url.match(/^(errors?\/|)[0-9]{3}$/)) {
       next();
       return;
@@ -577,6 +705,38 @@ function renderPages(app, opts){
     }
     res.status(404).send('<h1>Error 404</h1><h2>Page Not Found</h2>').end();
   });
+}
+
+function expressRateLimit(app, opts) {
+  [app, opts, error] = sortAppArgs(app, opts);
+  if(error){
+    return;
+  }
+
+  const rateLimit = deviceRateLimit({
+    err: function (req, res) {
+      let page = join(OPTS.root, 'error/429.' + OPTS.ext);
+      if (fs.existsSync(page)) {
+        res.status(429).render('error/429', opts);
+        return;
+      }
+      page = join(OPTS.root, err + '.' + OPTS.ext);
+      if (fs.existsSync(page)) {
+        res.status(429).render('429', opts);
+        return;
+      }
+      res.status(429).send('<h1>Error 429</h1><h2>Too Many Requests</h2>').end();
+    },
+    ...opts,
+  });
+
+  if(!rateLimit){
+    return false;
+  }
+
+  rateLimit.all(app);
+
+  return true;
 }
 
 
@@ -667,6 +827,7 @@ module.exports = (function(){
   exports.inCache = preCompileHasCache;
 
   exports.renderPages = renderPages;
+  exports.rateLimit = expressRateLimit;
 
   return exports;
 })();

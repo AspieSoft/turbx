@@ -154,7 +154,11 @@ func handleInput(input []byte){
 				}
 			}
 		}else if bytes.Equal(inpArgs[0], []byte("has")) {
-			send(inpArgs[1], []byte("res"), []byte(strconv.FormatBool(compiler.HasPreCompile(string(inpArgs[2])))))
+			if len(inpArgs) >= 4 {
+				send(inpArgs[1], []byte("res"), []byte(strconv.FormatBool(compiler.HasPreCompile(string(inpArgs[2]), string(inpArgs[3])))))
+			}else{
+				send(inpArgs[1], []byte("res"), []byte(strconv.FormatBool(compiler.HasPreCompile(string(inpArgs[2]), ""))))
+			}
 		}else if bytes.Equal(inpArgs[0], []byte("set")) {
 			if bytes.Equal(inpArgs[1], []byte("root")) {
 				compiler.SetConfig(compiler.Config{Root: string(inpArgs[2])})

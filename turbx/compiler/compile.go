@@ -378,10 +378,17 @@ func preCompile(path string, opts *map[string]interface{}, componentOf ...string
 		}))
 	}
 
+	ext := fileExt
+	if (*opts)["ext"] != nil {
+		if str := string(regex.Compile(`[^\w_-]+`).RepStr(goutil.ToByteArray((*opts)["ext"]), []byte{})); str != "" {
+			ext = str
+		}
+	}
+
 	// resolve full file path within root
 	var fullPath string
 	if len(componentOf) != 0 {
-		if p, err := goutil.JoinPath(rootPath, componentPath, path + "." + fileExt); err == nil {
+		if p, err := goutil.JoinPath(rootPath, componentPath, path + "." + ext); err == nil {
 			// prevent path from leaking into tmp cache
 			if strings.HasPrefix(p, cacheTmpPath) {
 				err := errors.New("path leaked into tmp cache")
@@ -397,7 +404,7 @@ func preCompile(path string, opts *map[string]interface{}, componentOf ...string
 
 	if fullPath == "" {
 		var err error
-		fullPath, err = goutil.JoinPath(rootPath, path + "." + fileExt)
+		fullPath, err = goutil.JoinPath(rootPath, path + "." + ext)
 		if err != nil {
 			return pathCacheData{Ready: &cacheReady, Err: &err}
 		}
@@ -1839,8 +1846,15 @@ func Compile(path string, opts map[string]interface{}) ([]byte, error) {
 		}))
 	}
 
+	ext := fileExt
+	if opts["ext"] != nil {
+		if str := string(regex.Compile(`[^\w_-]+`).RepStr(goutil.ToByteArray(opts["ext"]), []byte{})); str != "" {
+			ext = str
+		}
+	}
+
 	// resolve full file path within root
-	fullPath, err := goutil.JoinPath(rootPath, path + "." + fileExt)
+	fullPath, err := goutil.JoinPath(rootPath, path + "." + ext)
 	if err != nil {
 		compilingCount--
 		return []byte{}, err
@@ -2387,7 +2401,7 @@ func Compile(path string, opts map[string]interface{}) ([]byte, error) {
 
 
 // HasPreCompile returns true if a file has been pre compiled in the cache and is not expired
-func HasPreCompile(path string) bool {
+func HasPreCompile(path string, optExt string) bool {
 	if rootPath == "" || cacheTmpPath == "" {
 		return false
 	}
@@ -2403,8 +2417,15 @@ func HasPreCompile(path string) bool {
 		}))
 	}
 
+	ext := fileExt
+	if optExt != "" {
+		if str := string(regex.Compile(`[^\w_-]+`).RepStr([]byte(optExt), []byte{})); str != "" {
+			ext = str
+		}
+	}
+
 	// resolve full file path within root
-	fullPath, err := goutil.JoinPath(rootPath, path + "." + fileExt)
+	fullPath, err := goutil.JoinPath(rootPath, path + "." + ext)
 	if err != nil {
 		return false
 	}

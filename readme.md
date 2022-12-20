@@ -131,10 +131,14 @@ app.use('/fix-cache', async function(req, res, next){
 {{obj[myVar]}}
 
 
+<!-- using vars as if they were constant -->
+{{$normalVal|'make this constant anyway, even if not sent as a constant'}}
+
+
 <!-- functions start with an _ -->
 <_if var1 & var2="'b'" | var2="'c'" | !var3 | (group & group1.test1)>
   do stuff...
-<_else !var1 & var2="var3" | (var3=">=3" & var3="!100")/>
+<_else !var1 & var2="var3" | (var3=">=3" & var3="!0")/>
   do other stuff...
 <_else/>
   do final stuff...
