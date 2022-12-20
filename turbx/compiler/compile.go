@@ -174,8 +174,9 @@ func init(){
 
 	go func(){
 		time.Sleep(10 * time.Minute)
+		now := time.Now().UnixMilli()
 		pathCache.ForEach(func(key string, cache pathCacheData) bool {
-			if *cache.lastUsed > cacheTime {
+			if now - *cache.lastUsed > cacheTime {
 				go func(){
 					time.Sleep(10 * time.Millisecond)
 					for *cache.inUse > 0 {
@@ -444,7 +445,8 @@ func preCompile(path string, opts *map[string]interface{}, componentOf ...string
 
 	// prepare the cache vars and info
 	now := time.Now().UnixMilli()
-	cacheRes := pathCacheData{path: fullPath, tmp: tmpPath, cachePath: fullPath + cachePath, lastUsed: &now, Ready: &cacheReady, Err: &cacheError}
+	inUse := uintptr(0)
+	cacheRes := pathCacheData{path: fullPath, tmp: tmpPath, cachePath: fullPath + cachePath, lastUsed: &now, inUse: &inUse, Ready: &cacheReady, Err: &cacheError}
 	pathCache.Set(fullPath + cachePath, cacheRes)
 
 	// run pre compiler concurrently

@@ -69,6 +69,7 @@ function log(){
 
 app.engine('xhtml', turbx(app, {
   root: __dirname,
+  views: join(__dirname, 'views'),
   ext: 'xhtml',
   template: 'layout',
   components: 'components',
@@ -175,9 +176,9 @@ async function someLongProcess(){
 
 
 // auto set all views to public pages
-/* turbx.renderPages({
+turbx.renderPages({
   test: 1,
-}); */
+});
 
 
 app.listen(3000)

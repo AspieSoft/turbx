@@ -1,3 +1,4 @@
+const fs = require('fs');
 const {join} = require('path');
 const { spawn } = require('child_process');
 const zlib = require('zlib');
@@ -34,6 +35,8 @@ let Compiler = undefined;
 let gettingCompiler = false;
 let stoppingCompiler = false;
 let pingRes = false;
+let lastErr = 0;
+
 function initCompiler(){
   if(gettingCompiler && !stoppingCompiler){
     return;
@@ -57,16 +60,20 @@ function initCompiler(){
     Compiler = spawn('./turbx/turbx', [...args], { cwd: __dirname });
   }
 
-  Compiler.on('close', () => {
+  async function onExit(){
     if(!stoppingCompiler){
+      let now = Date.now();
+      if(now - lastErr < 1000){
+        await sleep(10000);
+      }
+      lastErr = now;
+
+      await sleep(100);
       initCompiler();
     }
-  })
-  Compiler.stderr.on('end', () => {
-    if(!stoppingCompiler){
-      initCompiler();
-    }
-  });
+  }
+  Compiler.on('close', onExit);
+  Compiler.stderr.on('end', onExit);
 
   Compiler.stdout.on('data', async (data) => {
     data = data.toString().trim();
@@ -512,6 +519,67 @@ async function preCompileHasCache(path, opts){
 }
 
 
+function renderPages(app, opts){
+  if (typeof app === 'object') {
+    [app, opts] = [opts, app];
+  }
+  if (typeof app !== 'function') {
+    app = ExpressApp;
+  }
+  if (typeof app !== 'function') {
+    return;
+  }
+  if (typeof ExpressApp !== 'function') {
+    ExpressApp = app;
+  }
+
+  if (typeof opts !== 'object') {
+    opts = {};
+  }
+
+  app.use((req, res, next) => {
+    const url = clean(req.url)
+      .replace(/^[\\\/]+/, '')
+      .replace(/\?.*/, '');
+    if (url === OPTS.layout || url.match(/^(errors?\/|)[0-9]{3}$/)) {
+      next();
+      return;
+    }
+
+    let urlPath = join(OPTS.root, url + '.' + OPTS.ext);
+    if (urlPath === OPTS.root || !urlPath.startsWith(OPTS.root) || urlPath.startsWith(OPTS.components)) {
+      next();
+      return;
+    }
+
+    if (!fs.existsSync(urlPath)) {
+      next();
+      return;
+    }
+
+    try {
+      res.render(url, opts);
+    } catch (e) {
+      next();
+    }
+  });
+
+  app.use((req, res) => {
+    let page404 = join(OPTS.root, 'error/404.' + OPTS.ext);
+    if (fs.existsSync(page404)) {
+      res.status(404).render('error/404', opts);
+      return;
+    }
+    page404 = join(OPTS.root, '404.' + OPTS.ext);
+    if (fs.existsSync(page404)) {
+      res.status(404).render('404', opts);
+      return;
+    }
+    res.status(404).send('<h1>Error 404</h1><h2>Page Not Found</h2>').end();
+  });
+}
+
+
 module.exports = (function(){
   const exports = function(opts = {
     views: 'views',
@@ -597,6 +665,8 @@ module.exports = (function(){
   exports.compile = compile;
   exports.preCompile = preCompile;
   exports.inCache = preCompileHasCache;
+
+  exports.renderPages = renderPages;
 
   return exports;
 })();

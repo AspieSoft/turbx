@@ -73,11 +73,13 @@ func main(){
 
 
 	//temp
-	err = compiler.PreCompile("index", map[string]interface{}{})
-	if err != nil {
-		fmt.Println(err)
-	}
-	return
+	/* if args["debug"] != "" {
+		err = compiler.PreCompile("index", map[string]interface{}{})
+		if err != nil {
+			fmt.Println(err)
+		}
+		return
+	} */
 
 
 	userInput := make(chan string)

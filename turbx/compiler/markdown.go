@@ -222,8 +222,6 @@ func getLinkEmbed(args *map[string][]byte) []byte {
 		//todo: new idea - may have all embeds use an optional lazy loading feature
 		return regex.JoinBytes([]byte("<iframe src=\""), goutil.EscapeHTMLArgs(url), []byte("\" alt=\""), (*args)["name"], '"', htmlArgs, []byte("></iframe>"))
 	}
-
-	return nil
 }
 
 
