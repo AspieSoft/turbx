@@ -46,7 +46,7 @@ jobs:
         env:
           AUTHOR_EMAIL: aspiesoftweb@gmail.com
           AUTHOR_NAME: aspiesoft
-          NODE_AUTH_TOKEN: ${{secrets.GITHUB_TOKEN}}
+          NODE_AUTH_TOKEN: ${{secrets.GH_TOKEN}}
 
   publish-npm-noscope:
     needs: test
