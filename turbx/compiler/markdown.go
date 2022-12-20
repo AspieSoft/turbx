@@ -3,6 +3,7 @@ package compiler
 import (
 	"bufio"
 	"bytes"
+	"fmt"
 	"reflect"
 
 	"github.com/AspieSoft/go-regex/v4"
@@ -262,7 +263,14 @@ func compileMarkdown(reader *bufio.Reader, write *func([]byte), b *[]byte, err *
 				*b, *err = reader.Peek(1)
 			}
 
+			if len(*fnCont) != 0 && bytes.HasPrefix((*fnCont)[len(*fnCont)-1].tag, []byte("@md")) {
+				(*write)(link)
+				return true
+			}
+
 			(*write)(regex.JoinBytes([]byte("<a href=\""), goutil.EscapeHTMLArgs(link, '"'), []byte("\">"), link, []byte("</a>")))
+
+			fmt.Println("debug:", string(*b))
 			return true
 		}
 	}
