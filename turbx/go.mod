@@ -4,7 +4,7 @@ go 1.19
 
 require (
 	github.com/AspieSoft/go-regex/v4 v4.1.0
-	github.com/AspieSoft/goutil/v3 v3.1.0
+	github.com/AspieSoft/goutil/v3 v3.1.3
 	github.com/alphadose/haxmap v1.2.0
 	github.com/drhodes/golorem v0.0.0-20220328165741-da82e5b29246
 )

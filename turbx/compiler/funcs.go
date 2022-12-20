@@ -269,10 +269,10 @@ func (t *compFN) If(args *[][]byte, cont *[]byte, opts *map[string]interface{}, 
 
 				// unsolved[grp] = append(unsolved[grp], arg1, signB, arg2)
 				if inv[grp] {
-					unsolved[grp] = append(unsolved[grp], modeB, []byte{'^'}, arg1, signB, regex.JoinBytes('"', goutil.EscapeHTMLArgs(arg2), '"'))
+					unsolved[grp] = append(unsolved[grp], modeB, []byte{'^'}, arg1, signB, regex.JoinBytes('"', goutil.EscapeHTMLArgs(arg2, '"'), '"'))
 					inv[grp] = false
 				}else{
-					unsolved[grp] = append(unsolved[grp], modeB, arg1, signB, regex.JoinBytes('"', goutil.EscapeHTMLArgs(arg2), '"'))
+					unsolved[grp] = append(unsolved[grp], modeB, arg1, signB, regex.JoinBytes('"', goutil.EscapeHTMLArgs(arg2, '"'), '"'))
 				}
 
 				continue

@@ -112,7 +112,7 @@ func getLinkEmbed(args *map[string][]byte) []byte {
 				noCtrl = true
 			}else{
 				if len(val) != 0 {
-					htmlArgs = append(htmlArgs, regex.JoinBytes(' ', key, '=', '"', goutil.EscapeHTMLArgs(val), '"')...)
+					htmlArgs = append(htmlArgs, regex.JoinBytes(' ', key, '=', '"', goutil.EscapeHTMLArgs(val, '"'), '"')...)
 				}else if len(key) != 0{
 					htmlArgs = append(htmlArgs, regex.JoinBytes(' ', key)...)
 				}
@@ -181,7 +181,7 @@ func getLinkEmbed(args *map[string][]byte) []byte {
 	url := (*args)["url"]
 
 	if regex.Compile(`(?i)\.(a?png|jpe?g|webp|avif|gif|jfif|pjpeg|pjp|svg|bmp|ico|cur|tiff?)$`).MatchRef(&url) {
-		return regex.JoinBytes([]byte("<img src=\""), goutil.EscapeHTMLArgs(url), []byte("\" alt=\""), goutil.EscapeHTMLArgs((*args)["name"]), []byte("\""), htmlArgs, []byte("/>"))
+		return regex.JoinBytes([]byte("<img src=\""), goutil.EscapeHTMLArgs(url, '"'), []byte("\" alt=\""), goutil.EscapeHTMLArgs((*args)["name"], '"'), []byte("\""), htmlArgs, []byte("/>"))
 	}else if regex.Compile(`(?i)\.(mp4|mov|webm|avi|mpeg|ogv|ts|3gp2?)$`).MatchRef(&url) {
 		//todo: may have videos use an optional lazy loading feature with an image until clicked
 
@@ -192,12 +192,12 @@ func getLinkEmbed(args *map[string][]byte) []byte {
 		if bytes.ContainsRune(url, '|') {
 			list := []byte{}
 			for _, val := range bytes.Split(url, []byte("|")) {
-				list = append(list, regex.JoinBytes([]byte("<source src=\""), goutil.EscapeHTMLArgs(val), []byte("\" type=\"video/"), regex.Compile(`^.*\.([\w_-]+)$`).RepStrComplexRef(&val, []byte("$1")), []byte("\"/>\n"))...)
+				list = append(list, regex.JoinBytes([]byte("<source src=\""), goutil.EscapeHTMLArgs(val, '"'), []byte("\" type=\"video/"), regex.Compile(`^.*\.([\w_-]+)$`).RepStrComplexRef(&val, []byte("$1")), []byte("\"/>\n"))...)
 			}
 
 			return regex.JoinBytes([]byte("<video"), htmlArgs, '>', list, (*args)["name"], []byte("\n</video>"))
 		}else{
-			return regex.JoinBytes([]byte("<video"), htmlArgs, []byte(">\n<source src=\""), goutil.EscapeHTMLArgs(url), []byte("\" type=\"video/"), regex.Compile(`^.*\.([\w_-]+)$`).RepStrComplexRef(&url, []byte("$1")), []byte("\"/>\n"), (*args)["name"], []byte("\n</video>"))
+			return regex.JoinBytes([]byte("<video"), htmlArgs, []byte(">\n<source src=\""), goutil.EscapeHTMLArgs(url, '"'), []byte("\" type=\"video/"), regex.Compile(`^.*\.([\w_-]+)$`).RepStrComplexRef(&url, []byte("$1")), []byte("\"/>\n"), (*args)["name"], []byte("\n</video>"))
 		}
 	}else if regex.Compile(`(?i)\.(mp3|wav|weba|ogg|oga|aac|midi?|opus|3gpp2?)$`).MatchRef(&url) {
 		//todo: may have audio use an optional lazy loading feature with an image until clicked
@@ -209,18 +209,18 @@ func getLinkEmbed(args *map[string][]byte) []byte {
 		if bytes.ContainsRune(url, '|') {
 			list := []byte{}
 			for _, val := range bytes.Split(url, []byte("|")) {
-				list = append(list, regex.JoinBytes([]byte("<source src=\""), goutil.EscapeHTMLArgs(val), []byte("\" type=\"audio/"), regex.Compile(`^.*\.([\w_-]+)$`).RepStrComplexRef(&val, []byte("$1")), []byte("\"/>\n"))...)
+				list = append(list, regex.JoinBytes([]byte("<source src=\""), goutil.EscapeHTMLArgs(val, '"'), []byte("\" type=\"audio/"), regex.Compile(`^.*\.([\w_-]+)$`).RepStrComplexRef(&val, []byte("$1")), []byte("\"/>\n"))...)
 			}
 			return regex.JoinBytes([]byte("<audio"), htmlArgs, '>', list, (*args)["name"], []byte("\n</audio>"))
 		}else{
-			return regex.JoinBytes([]byte("<audio"), htmlArgs, []byte(">\n<source src=\""), goutil.EscapeHTMLArgs(url), []byte("\" type=\"audio/"), regex.Compile(`^.*\.([\w_-]+)$`).RepStrComplexRef(&url, []byte("$1")), []byte("\"/>\n"), (*args)["name"], []byte("\n</audio>"))
+			return regex.JoinBytes([]byte("<audio"), htmlArgs, []byte(">\n<source src=\""), goutil.EscapeHTMLArgs(url, '"'), []byte("\" type=\"audio/"), regex.Compile(`^.*\.([\w_-]+)$`).RepStrComplexRef(&url, []byte("$1")), []byte("\"/>\n"), (*args)["name"], []byte("\n</audio>"))
 		}
 	}else{
 		//todo: may have embeds use an optional lazy loading feature with an image until clicked
 		//todo: may add special case for youtube.com urls
 
 		//todo: new idea - may have all embeds use an optional lazy loading feature
-		return regex.JoinBytes([]byte("<iframe src=\""), goutil.EscapeHTMLArgs(url), []byte("\" alt=\""), (*args)["name"], '"', htmlArgs, []byte("></iframe>"))
+		return regex.JoinBytes([]byte("<iframe src=\""), goutil.EscapeHTMLArgs(url, '"'), []byte("\" alt=\""), (*args)["name"], '"', htmlArgs, []byte("></iframe>"))
 	}
 }
 
@@ -262,7 +262,7 @@ func compileMarkdown(reader *bufio.Reader, write *func([]byte), b *[]byte, err *
 				*b, *err = reader.Peek(1)
 			}
 
-			(*write)(regex.JoinBytes([]byte("<a href=\""), goutil.EscapeHTMLArgs(link), []byte("\">"), link, []byte("</a>")))
+			(*write)(regex.JoinBytes([]byte("<a href=\""), goutil.EscapeHTMLArgs(link, '"'), []byte("\">"), link, []byte("</a>")))
 			return true
 		}
 	}
@@ -529,6 +529,25 @@ func compileMarkdown(reader *bufio.Reader, write *func([]byte), b *[]byte, err *
 				
 				reader.Discard(offset+1)
 				*b, *err = reader.Peek(1)
+				return true
+			}
+		}
+	}
+
+	if *linePos == 0 && (*b)[0] == '-' {
+		*b, *err = reader.Peek(3)
+		if (*b)[1] == '-' && (*b)[2] == '-' {
+			offset := 3
+			*b, *err = reader.Peek(offset+1)
+			for *err == nil && ((*b)[offset] == '-' || (*b)[offset] == ' ') {
+				offset++
+				*b, *err = reader.Peek(offset+1)
+			}
+
+			if (*b)[offset] == '\n' || (*b)[offset] == '\r' {
+				reader.Discard(offset+1)
+				*b, *err = reader.Peek(1)
+				(*write)([]byte("<hr/>"))
 				return true
 			}
 		}

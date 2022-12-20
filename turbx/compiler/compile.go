@@ -180,7 +180,7 @@ func init(){
 				go func(){
 					time.Sleep(10 * time.Millisecond)
 					for *cache.inUse > 0 {
-						time.Sleep(10 * time.Millisecond)
+						return
 					}
 					time.Sleep(10 * time.Millisecond)
 
@@ -232,13 +232,20 @@ func clearTmpCache(){
 		return
 	}
 
-	if dir, err := os.ReadDir(cacheTmpPath); err == nil {
-		for _, file := range dir {
-			if p, err := goutil.JoinPath(cacheTmpPath, file.Name()); err != nil {
-				os.RemoveAll(p)
+	pathCache.ForEach(func(key string, cache pathCacheData) bool {
+		pathCache.Del(key)
+
+		go func(){
+			time.Sleep(10 * time.Millisecond)
+			for *cache.inUse > 0 {
+				time.Sleep(10 * time.Millisecond)
 			}
-		}
-	}
+			time.Sleep(10 * time.Millisecond)
+
+			os.Remove(cache.tmp)
+		}()
+		return true
+	})
 }
 
 
@@ -252,7 +259,31 @@ func SetConfig(config Config) error {
 			return err
 		}
 
+		goutil.CloseWatchers(rootPath)
 		rootPath = path
+
+		go func(){
+			goutil.WatchDir(rootPath, &goutil.Watcher{
+				Any: func(path, op string) {
+					pathCache.ForEach(func(key string, cache pathCacheData) bool {
+						if cache.path == path {
+							pathCache.Del(key)
+	
+							go func(){
+								time.Sleep(10 * time.Millisecond)
+								for *cache.inUse > 0 {
+									time.Sleep(10 * time.Millisecond)
+								}
+								time.Sleep(10 * time.Millisecond)
+	
+								os.Remove(cache.tmp)
+							}()
+						}
+						return true
+					})
+				},
+			})
+		}()
 	}
 
 	if config.Components != "" {
@@ -901,7 +932,7 @@ func preCompile(path string, opts *map[string]interface{}, componentOf ...string
 							argStr := []byte{}
 							for i := 0; i < len(fn.args); i++ {
 								if val, ok := fn.args[strconv.Itoa(i)]; ok {
-									argStr = append(argStr, regex.JoinBytes(' ', '"', goutil.EscapeHTMLArgs(val), '"')...)
+									argStr = append(argStr, regex.JoinBytes(' ', '"', goutil.EscapeHTMLArgs(val, '"'), '"')...)
 								}
 							}
 							for key, val := range fn.args {
@@ -910,7 +941,7 @@ func preCompile(path string, opts *map[string]interface{}, componentOf ...string
 								}
 
 								if _, err := strconv.Atoi(key); err != nil {
-									argStr = append(argStr, regex.JoinBytes(' ', key, '=', '"', goutil.EscapeHTMLArgs(val), '"')...)
+									argStr = append(argStr, regex.JoinBytes(' ', key, '=', '"', goutil.EscapeHTMLArgs(val, '"'), '"')...)
 								}
 							}
 
@@ -1257,7 +1288,7 @@ func preCompile(path string, opts *map[string]interface{}, componentOf ...string
 								argStr := []byte{}
 								for i := 0; i < len(args); i++ {
 									if val, ok := args[strconv.Itoa(i)]; ok {
-										argStr = append(argStr, regex.JoinBytes(' ', '"', goutil.EscapeHTMLArgs(val), '"')...)
+										argStr = append(argStr, regex.JoinBytes(' ', '"', goutil.EscapeHTMLArgs(val, '"'), '"')...)
 									}
 								}
 								for key, val := range args {
@@ -1266,7 +1297,7 @@ func preCompile(path string, opts *map[string]interface{}, componentOf ...string
 									}
 
 									if _, err := strconv.Atoi(key); err != nil {
-										argStr = append(argStr, regex.JoinBytes(' ', key, '=', '"', goutil.EscapeHTMLArgs(val), '"')...)
+										argStr = append(argStr, regex.JoinBytes(' ', key, '=', '"', goutil.EscapeHTMLArgs(val, '"'), '"')...)
 									}
 								}
 
@@ -1523,7 +1554,7 @@ func preCompile(path string, opts *map[string]interface{}, componentOf ...string
 								val := regex.Compile(`[^\w_-]`).RepStr(args[arg], []byte{})
 								res = regex.JoinBytes(res, ' ', val)
 							}else{
-								val := goutil.EscapeHTMLArgs(args[arg])
+								val := goutil.EscapeHTMLArgs(args[arg], '"')
 
 								if bytes.HasPrefix(val, []byte("{{{")) && bytes.HasSuffix(val, []byte("}}}")) {
 									val = bytes.TrimLeft(val, "{")
@@ -2356,9 +2387,10 @@ func Compile(path string, opts map[string]interface{}) ([]byte, error) {
 				}else{
 					if val, ok := GetOpt(regex.JoinBytes([]byte("{{"), varData, []byte("}}")), &opts, false, &eachArgs); ok {
 						if reflect.TypeOf(val) == reflect.TypeOf(KeyVal{}) {
-							v := goutil.EscapeHTMLArgs(goutil.ToByteArray(val.(KeyVal).Val))
+							v := goutil.EscapeHTMLArgs(goutil.ToByteArray(val.(KeyVal).Val), '"')
 							if escHTML {
-								v = goutil.EscapeHTMLArgs(v)
+								//todo: escape data: and non http: attrs
+								v = goutil.EscapeHTMLArgs(v, '"')
 							}
 
 							write(regex.JoinBytes(val.(KeyVal).Key, '=', '"', v, '"'))
