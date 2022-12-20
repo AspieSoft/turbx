@@ -56,29 +56,182 @@ func escapeChar(char byte) []byte {
 
 // markdown funcs
 func getFormInput(args *map[string][]byte) []byte {
+	//todo: handle form inputs
 	return nil
 }
 
 func getLinkEmbed(args *map[string][]byte) []byte {
+	htmlArgs := []byte{}
+	css := []byte{}
+	compArgs := (*args)["args"]
+
+	noCtrl := false
+
+	key := []byte{}
+	for i := 0; i < len(compArgs); i++ {
+		if regex.Compile(`[\s\r\n]`).MatchRef(&[]byte{compArgs[i]}) {
+			if bytes.Equal(key, []byte("no-controls")) {
+				noCtrl = true
+			}else if len(key) != 0 {
+				htmlArgs = append(htmlArgs, regex.JoinBytes(' ', key)...)
+			}
+			key = []byte{}
+			continue
+		}
+		
+		if compArgs[i] == '=' {
+			i++
+
+			val := []byte{}
+			if i < len(compArgs) && compArgs[i] == '"' || compArgs[i] == '\'' || compArgs[i] == '`' {
+				q := compArgs[i]
+				i++
+				for i < len(compArgs) && compArgs[i] != q {
+					if compArgs[i] == '\\' && i+1 < len(compArgs) {
+						if regex.Compile(`[A-Za-z]`).MatchRef(&[]byte{compArgs[i]}) {
+							val = append(val, compArgs[i], compArgs[i+1])
+						}else{
+							val = append(val, compArgs[i+1])
+						}
+
+						i += 2
+					}else{
+						val = append(val, compArgs[i])
+						i++
+					}
+				}
+
+				i++
+			}else{
+				for i < len(compArgs) && !regex.Compile(`[\s\r\n]`).MatchRef(&[]byte{compArgs[i]}) {
+					val = append(val, compArgs[i])
+				}
+			}
+
+			if bytes.Equal(key, []byte("no-controls")) {
+				noCtrl = true
+			}else{
+				if len(val) != 0 {
+					htmlArgs = append(htmlArgs, regex.JoinBytes(' ', key, '=', '"', goutil.EscapeHTMLArgs(val), '"')...)
+				}else if len(key) != 0{
+					htmlArgs = append(htmlArgs, regex.JoinBytes(' ', key)...)
+				}
+			}
+
+			key = []byte{}
+		}else if compArgs[i] == ':' {
+			i++
+
+			val := []byte{}
+			for i < len(compArgs) && compArgs[i] != ';' {
+				if compArgs[i] == '"' || compArgs[i] == '\'' || compArgs[i] == '`' {
+					q := compArgs[i]
+					val = append(val, q)
+					i++
+					for i < len(compArgs) && compArgs[i] != q {
+						if compArgs[i] == '\\' && i+1 < len(compArgs) {
+							if compArgs[i] == q || regex.Compile(`[A-Za-z]`).MatchRef(&[]byte{compArgs[i]}) {
+								val = append(val, compArgs[i], compArgs[i+1])
+							}else{
+								val = append(val, compArgs[i+1])
+							}
+
+							i += 2
+						}else{
+							val = append(val, compArgs[i])
+							i++
+						}
+					}
+
+					val = append(val, q)
+					i++
+				}else{
+					val = append(val, compArgs[i])
+					i++
+				}
+			}
+
+			css = append(css, regex.JoinBytes(key, ':', val, ';')...)
+			key = []byte{}
+		} else {
+			key = append(key, compArgs[i])
+		}
+	}
+
+	if len(key) != 0 {
+		if bytes.Equal(key, []byte("no-controls")) {
+			noCtrl = true
+		}else{
+			htmlArgs = append(htmlArgs, regex.JoinBytes(' ', key)...)
+		}
+	}
+
+	if len(css) != 0 {
+		htmlArgs = append(htmlArgs, regex.JoinBytes(' ', []byte("style=\""), css, '"')...)
+	}
+
 	if (*args)["emb"] == nil {
 		// normal link
 
-		//todo: handle (*args)["url"]
-
 		//todo: prevent url from being a non http link
 
-		return regex.JoinBytes([]byte("<a href=\""), (*args)["url"], []byte("\">"), (*args)["name"], []byte("</a>"))
+		return regex.JoinBytes([]byte("<a href=\""), (*args)["url"], []byte("\""), htmlArgs, '>', (*args)["name"], []byte("</a>"))
+	}
+
+	url := (*args)["url"]
+
+	if regex.Compile(`(?i)\.(a?png|jpe?g|webp|avif|gif|jfif|pjpeg|pjp|svg|bmp|ico|cur|tiff?)$`).MatchRef(&url) {
+		return regex.JoinBytes([]byte("<img src=\""), goutil.EscapeHTMLArgs(url), []byte("\" alt=\""), goutil.EscapeHTMLArgs((*args)["name"]), []byte("\""), htmlArgs, []byte("/>"))
+	}else if regex.Compile(`(?i)\.(mp4|mov|webm|avi|mpeg|ogv|ts|3gp2?)$`).MatchRef(&url) {
+		//todo: may have videos use an optional lazy loading feature with an image until clicked
+
+		if !noCtrl {
+			htmlArgs = append(htmlArgs, []byte(" controls")...)
+		}
+
+		if bytes.ContainsRune(url, '|') {
+			list := []byte{}
+			for _, val := range bytes.Split(url, []byte("|")) {
+				list = append(list, regex.JoinBytes([]byte("<source src=\""), goutil.EscapeHTMLArgs(val), []byte("\" type=\"video/"), regex.Compile(`^.*\.([\w_-]+)$`).RepStrComplexRef(&val, []byte("$1")), []byte("\"/>\n"))...)
+			}
+
+			return regex.JoinBytes([]byte("<video"), htmlArgs, '>', list, (*args)["name"], []byte("\n</video>"))
+		}else{
+			return regex.JoinBytes([]byte("<video"), htmlArgs, []byte(">\n<source src=\""), goutil.EscapeHTMLArgs(url), []byte("\" type=\"video/"), regex.Compile(`^.*\.([\w_-]+)$`).RepStrComplexRef(&url, []byte("$1")), []byte("\"/>\n"), (*args)["name"], []byte("\n</video>"))
+		}
+	}else if regex.Compile(`(?i)\.(mp3|wav|weba|ogg|oga|aac|midi?|opus|3gpp2?)$`).MatchRef(&url) {
+		//todo: may have audio use an optional lazy loading feature with an image until clicked
+
+		if !noCtrl {
+			htmlArgs = append(htmlArgs, []byte(" controls")...)
+		}
+
+		if bytes.ContainsRune(url, '|') {
+			list := []byte{}
+			for _, val := range bytes.Split(url, []byte("|")) {
+				list = append(list, regex.JoinBytes([]byte("<source src=\""), goutil.EscapeHTMLArgs(val), []byte("\" type=\"audio/"), regex.Compile(`^.*\.([\w_-]+)$`).RepStrComplexRef(&val, []byte("$1")), []byte("\"/>\n"))...)
+			}
+			return regex.JoinBytes([]byte("<audio"), htmlArgs, '>', list, (*args)["name"], []byte("\n</audio>"))
+		}else{
+			return regex.JoinBytes([]byte("<audio"), htmlArgs, []byte(">\n<source src=\""), goutil.EscapeHTMLArgs(url), []byte("\" type=\"audio/"), regex.Compile(`^.*\.([\w_-]+)$`).RepStrComplexRef(&url, []byte("$1")), []byte("\"/>\n"), (*args)["name"], []byte("\n</audio>"))
+		}
+	}else{
+		//todo: may have embeds use an optional lazy loading feature with an image until clicked
+		//todo: may add special case for youtube.com urls
+
+		//todo: new idea - may have all embeds use an optional lazy loading feature
+		return regex.JoinBytes([]byte("<iframe src=\""), goutil.EscapeHTMLArgs(url), []byte("\" alt=\""), (*args)["name"], '"', htmlArgs, []byte("></iframe>"))
 	}
 
 	return nil
 }
 
 
-func hasClosingChar(char []byte, offset int, reader *bufio.Reader, b *[]byte, err *error) bool {
+func hasClosingChar(char []byte, offset int, reader *bufio.Reader, b *[]byte, err *error, allowLineBreaks ...bool) bool {
 	offset++
 	*b, *err = reader.Peek(offset+1)
 
-	for *err == nil && !((*b)[offset] == '\n' || (*b)[offset] == '\r') {
+	for *err == nil && (len(allowLineBreaks) != 0 || !((*b)[offset] == '\n' || (*b)[offset] == '\r')) {
 		if len(*b) >= len(char) && bytes.Equal((*b)[len(*b)-len(char):], char) {
 			break
 		}
@@ -149,7 +302,7 @@ func compileMarkdown(reader *bufio.Reader, write *func([]byte), b *[]byte, err *
 			(*fnCont)[len(*fnCont)-1].tag = []byte("@md:link-url")
 			reader.Discard(1)
 			*b, *err = reader.Peek(1)
-		}else if (*b)[0] == '{' && hasClosingChar([]byte{'}'}, offset, reader, b, err) {
+		}else if (*b)[0] == '{' && hasClosingChar([]byte{'}'}, offset, reader, b, err, true) {
 			(*fnCont)[len(*fnCont)-1].tag = []byte("@md:link-args")
 			(*fnCont)[len(*fnCont)-1].args["form"] = []byte{1}
 			reader.Discard(1)
@@ -179,7 +332,7 @@ func compileMarkdown(reader *bufio.Reader, write *func([]byte), b *[]byte, err *
 		reader.Discard(1)
 		*b, *err = reader.Peek(1)
 
-		if (*b)[0] == '{' && hasClosingChar([]byte{'}'}, offset, reader, b, err) {
+		if (*b)[0] == '{' && hasClosingChar([]byte{'}'}, offset, reader, b, err, true) {
 			(*fnCont)[len(*fnCont)-1].tag = []byte("@md:link-args")
 			reader.Discard(1)
 			*b, *err = reader.Peek(1)
@@ -230,131 +383,6 @@ func compileMarkdown(reader *bufio.Reader, write *func([]byte), b *[]byte, err *
 
 		return true
 	}
-
-	//todo: handle md links
-	/* if (*b)[0] == '[' {
-		//todo: may need to use similar method to components to allow markdown within inner text
-
-		offset := 1
-		*b, *err = reader.Peek(offset+1)
-
-		text := []byte{}
-		for *err == nil && !((*b)[offset] == ']' || (*b)[offset] == '\n' || (*b)[offset] == '\r') {
-			text = append(text, (*b)[offset])
-
-			offset++
-			*b, *err = reader.Peek(offset+1)
-		}
-
-		if (*b)[offset] == ']' {
-			offset++
-			*b, *err = reader.Peek(offset+1)
-
-			if (*b)[offset] == '(' {
-				offset++
-				*b, *err = reader.Peek(offset+1)
-
-				url := []byte{}
-				for *err == nil && !((*b)[offset] == ')' || (*b)[offset] == '\n' || (*b)[offset] == '\r') {
-					url = append(url, (*b)[offset])
-		
-					offset++
-					*b, *err = reader.Peek(offset+1)
-				}
-
-				if (*b)[offset] == ')' {
-					//todo: may be able to use this to verify the link, then run another method to compile other markdown within the link text
-
-					(*write)(regex.JoinBytes([]byte("<a href=\""), goutil.EscapeHTMLArgs(url), '"', '>', text, []byte("</a>")))
-
-					reader.Discard(offset+1)
-					*b, *err = reader.Peek(1)
-					return true
-				}
-			}
-		}
-	}
-
-	// handle md embeds
-	if (*b)[0] == '!' {
-		*b, *err = reader.Peek(2)
-		if (*b)[1] == '[' {
-			offset := 2
-			*b, *err = reader.Peek(offset+1)
-
-			text := []byte{}
-			for *err == nil && !((*b)[offset] == ']' || (*b)[offset] == '\n' || (*b)[offset] == '\r') {
-				text = append(text, (*b)[offset])
-
-				offset++
-				*b, *err = reader.Peek(offset+1)
-			}
-
-			if (*b)[offset] == ']' {
-				offset++
-				*b, *err = reader.Peek(offset+1)
-
-				if (*b)[offset] == '(' {
-					offset++
-					*b, *err = reader.Peek(offset+1)
-
-					url := []byte{}
-					for *err == nil && !((*b)[offset] == ')' || (*b)[offset] == '\n' || (*b)[offset] == '\r') {
-						url = append(url, (*b)[offset])
-
-						offset++
-						*b, *err = reader.Peek(offset+1)
-					}
-
-					if (*b)[offset] == ')' {
-						//todo: may use this to verify the link, then run another method to compile other markdown within the link text (similar to the normal link handler)
-
-						//todo: optionally grab additional html args from '{attrs}' right after content (also merge css styles)
-						// may add a seperate function to handle this
-
-						//todo: handle embeding 'url' with alt 'text'
-
-						if regex.Compile(`(?i)\.(a?png|jpe?g|webp|avif|gif|jfif|pjpeg|pjp|svg|bmp|ico|cur|tiff?)$`).MatchRef(&url) {
-							(*write)(regex.JoinBytes([]byte("<img src=\""), goutil.EscapeHTMLArgs(url), []byte("\" alt=\""), goutil.EscapeHTMLArgs(text), []byte("\"/>")))
-						}else if regex.Compile(`(?i)\.(mp4|mov|webm|avi|mpeg|ogv|ts|3gp2?)$`).MatchRef(&url) {
-							//todo: may have videos use an optional lazy loading feature with an image until clicked
-
-							if bytes.ContainsRune(url, '|') {
-								list := []byte{}
-								for _, val := range bytes.Split(url, []byte("|")) {
-									list = append(list, regex.JoinBytes([]byte("<source src=\""), goutil.EscapeHTMLArgs(val), []byte("\" type=\"video/"), regex.Compile(`^.*\.([\w_-]+)$`).RepStrComplexRef(&val, []byte("$1")), []byte("\"/>\n"))...)
-								}
-								(*write)(regex.JoinBytes([]byte("<video controls>"), list, text, []byte("\n</video>")))
-							}else{
-								(*write)(regex.JoinBytes([]byte("<video controls>\n<source src=\""), goutil.EscapeHTMLArgs(url), []byte("\" type=\"video/"), regex.Compile(`^.*\.([\w_-]+)$`).RepStrComplexRef(&url, []byte("$1")), []byte("\"/>\n"), text, []byte("\n</video>")))
-							}
-						}else if regex.Compile(`(?i)\.(mp3|wav|weba|ogg|oga|aac|midi?|opus|3gpp2?)$`).MatchRef(&url) {
-							//todo: may have audio use an optional lazy loading feature with an image until clicked
-
-							if bytes.ContainsRune(url, '|') {
-								list := []byte{}
-								for _, val := range bytes.Split(url, []byte("|")) {
-									list = append(list, regex.JoinBytes([]byte("<source src=\""), goutil.EscapeHTMLArgs(val), []byte("\" type=\"audio/"), regex.Compile(`^.*\.([\w_-]+)$`).RepStrComplexRef(&val, []byte("$1")), []byte("\"/>\n"))...)
-								}
-								(*write)(regex.JoinBytes([]byte("<audio controls>"), list, text, []byte("\n</audio>")))
-							}else{
-								(*write)(regex.JoinBytes([]byte("<audio controls>\n<source src=\""), goutil.EscapeHTMLArgs(url), []byte("\" type=\"audio/"), regex.Compile(`^.*\.([\w_-]+)$`).RepStrComplexRef(&url, []byte("$1")), []byte("\"/>\n"), text, []byte("\n</audio>")))
-							}
-						}else{
-							//todo: may have embeds use an optional lazy loading feature with an image until clicked
-							//todo: may add special case for youtube.com urls
-							(*write)(regex.JoinBytes([]byte("<iframe src=\""), goutil.EscapeHTMLArgs(url), []byte("\" alt=\""), text, []byte("\"></iframe>")))
-						}
-
-
-						reader.Discard(offset+1)
-						*b, *err = reader.Peek(1)
-						return true
-					}
-				}
-			}
-		}
-	} */
 
 	// handle bold and italic text
 	if (*b)[0] == '*' {
