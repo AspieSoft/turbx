@@ -50,27 +50,27 @@ app.engine('xhtml', turbx({
   },
 }));
 app.set('views', join(__dirname, 'views'));
-app.set('view engine', 'xhtml');
+app.set('view engine', 'md');
 
 app.use(function(req, res, next){
   res.render('index', {
     title: 'example',
     content: '<h2>Hello, World!</h2>',
-    const: {
-      // the const object can be used to precompile a var, and not need to compile it again
-      GoogleAuthToken: 'This Value Will Never Change',
-    },
+
+    // const vars can be used to precompile a var, and not need to compile it again
+    // a const var is defined by starting with a '$' in the key name
+    $GoogleAuthToken: 'This Value Will Never Change',
   });
 });
 
 // pre compiling constant vars
 app.use(async function(req, res, next){
-  let preCompiled = await res.preCompiled('index');
+  let preCompiled = await res.inCache('index');
   if(!preCompiled){
     const SomethingConsistant = await someLongProcess();
 
     await res.preRender('index', {
-      myConstVar: SomethingConsistant,
+      $myConstVar: SomethingConsistant,
     });
   }
 
