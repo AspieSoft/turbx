@@ -16,7 +16,7 @@ A Fast and Easy To Use View Engine, Compiled In Go.
 
 ## Whats New
 
-- Repeated vars can now optionally be pre compiled
+- Rebuilt the compiler in go from the ground up
 
 ## Installation
 
