@@ -71,7 +71,7 @@ app.engine('xhtml', turbx(app, {
   root: __dirname,
   views: join(__dirname, 'views'),
   ext: 'xhtml',
-  template: 'layout',
+  layout: 'layout',
   components: 'components',
   timeout: '3s',
   public: join(__dirname, 'public'),

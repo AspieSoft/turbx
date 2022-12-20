@@ -790,7 +790,7 @@ module.exports = (function(){
       if(typeof opts.opts === 'object'){
         setOpt('opts', '{}');
         ;(async function(){
-          let json = await encrypt(JSON.stringify(opts.opts));
+          let json = await encrypt(JSON.stringify(opts.opts), EncKey);
           setOpt('opts', json);
         })();
       }else{
