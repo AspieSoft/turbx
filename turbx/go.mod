@@ -1,4 +1,4 @@
-module github.com/AspieSoft/turbx
+module github.com/AspieSoft/turbx/turbx
 
 go 1.19
 

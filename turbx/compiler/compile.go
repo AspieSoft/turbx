@@ -33,6 +33,7 @@ const writeFlushSize = 1000
 const compileReadSize = 10
 var debugMode = false
 
+// Config is used in the SetConfig method to simplify the args and make them optional
 type Config struct {
 	// Root is the root directory for your html/markdown files to be compiled
 	//
@@ -197,8 +198,9 @@ func init(){
 }
 
 
-// Close handles stoping the compiler and clearing the cache
 var compilingCount uintptr = 0
+
+// Close handles stoping the compiler and clearing the cache
 func Close(){
 	// wait for compiler to finish
 	time.Sleep(10 * time.Millisecond)
