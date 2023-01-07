@@ -29,7 +29,17 @@ var HasPreCompile = compiler.HasPreCompile
 // SetConfig can be used to set change the config options provided in the Config struct
 //
 // this method will also clear the cache
-var SetConfig = compiler.SetConfig
+func SetConfig(config Config) error {
+	return compiler.SetConfig(compiler.Config{
+		Root: config.Root,
+		Components: config.Components,
+		Layout: config.Layout,
+		Ext: config.Ext,
+		Public: config.Public,
+		Cache: config.Cache,
+		ConstOpts: config.ConstOpts,
+	})
+}
 
 // NewFunc can be used to create custom functions for the compiler
 //
