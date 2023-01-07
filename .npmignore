@@ -1,7 +1,0 @@
-.gitignore
-.npmignore
-.github
-node_modules
-test
-compiler/test.sh
-assets/
