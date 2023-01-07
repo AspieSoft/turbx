@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"strconv"
-	"github.com/AspieSoft/turbx/compiler"
+	"turbx/compiler"
 
 	"github.com/AspieSoft/go-regex/v4"
 	"github.com/AspieSoft/goutil/v3"
