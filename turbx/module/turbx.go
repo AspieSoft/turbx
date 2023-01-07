@@ -1,6 +1,6 @@
 package turbx
 
-import "github.com/AspieSoft/turbx/turbx/compiler"
+import "github.com/AspieSoft/turbx/compiler"
 
 // Config is used in the SetConfig method to simplify the args and make them optional
 type Config compiler.Config
