@@ -234,13 +234,25 @@ function setupExpress(app){
       }
       let enc = req.header('Accept-Encoding');
       if(typeof enc === 'string'){
-        options._gzip = enc.split(',').includes('gzip')
+        enc = enc.split(/\s*,\s*/);
+        if(enc.includes('br')){
+          options._gzip = 2
+        }else if(enc.includes('gzip')){
+          options._gzip = 1
+        }else{
+          options._gzip = 0;
+        }
       }
 
       options._status = function(status, gzip = false){
         res.status(status);
-        if(gzip){
+        if(gzip === 1){
           res.set('Content-Encoding', 'gzip');
+        }else if(gzip === 2){
+          res.set('Content-Encoding', 'br');
+        }
+
+        if(gzip || gzip === 0){
           res.set('Content-Type', 'text/html');
         }
       };
@@ -478,7 +490,13 @@ async function engine(path, opts, cb){
     setOpt('root', root);
   }
 
-  const data = await runCompile('comp', path, opts);
+  let compType = 'comp';
+  if(opts._gzip === 1){
+    compType += ':gzip';
+  }else if(opts._gzip === 2){
+    compType += ':brotli';
+  }
+  const data = await runCompile(compType, path, opts);
 
   if(!opts._status){
     opts._status = function(){};
@@ -501,8 +519,9 @@ async function engine(path, opts, cb){
   }
 
 
-  if(opts._gzip){
-    opts._status(200, true);
+  // check compression method and return result
+  if(opts._gzip !== 0){
+    opts._status(200, opts._gzip);
     return cb(null, Buffer.from(data.data, 'base64'));
   }
 
@@ -512,7 +531,7 @@ async function engine(path, opts, cb){
       return cb(null, '<h1>Error 500</h1><h2>Internal Server Error</h2>');
     }
 
-    opts._status(200, true);
+    opts._status(200, 0);
     return cb(null, html.toString());
   });
 }

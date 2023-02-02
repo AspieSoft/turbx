@@ -16,7 +16,7 @@ import (
 	"time"
 
 	"github.com/AspieSoft/go-regex/v4"
-	"github.com/AspieSoft/goutil/v3"
+	"github.com/AspieSoft/goutil/v4"
 	"github.com/alphadose/haxmap"
 )
 
@@ -413,7 +413,7 @@ func preCompile(path string, opts *map[string]interface{}, componentOf ...string
 
 	ext := fileExt
 	if (*opts)["ext"] != nil {
-		if str := string(regex.Compile(`[^\w_-]+`).RepStr(goutil.ToByteArray((*opts)["ext"]), []byte{})); str != "" {
+		if str := string(regex.Compile(`[^\w_-]+`).RepStr(goutil.ToString[[]byte]((*opts)["ext"]), []byte{})); str != "" {
 			ext = str
 		}
 	}
@@ -928,7 +928,7 @@ func preCompile(path string, opts *map[string]interface{}, componentOf ...string
 
 						if res, e := callFunc(string(fn.fnName), &fn.args, &fn.cont, opts, true, &eachArgs); e == nil {
 							if res != nil {
-								write(goutil.ToByteArray(res))
+								write(goutil.ToString[[]byte](res))
 							}
 						}else{
 							argStr := []byte{}
@@ -1284,7 +1284,7 @@ func preCompile(path string, opts *map[string]interface{}, componentOf ...string
 						if selfClose == 1 {
 							if res, e := callFunc(string(fnName), &args, nil, opts, true, &eachArgs); e == nil {
 								if res != nil {
-									write(goutil.ToByteArray(res))
+									write(goutil.ToString[[]byte](res))
 								}
 							}else{
 								argStr := []byte{}
@@ -1383,9 +1383,9 @@ func preCompile(path string, opts *map[string]interface{}, componentOf ...string
 							if bytes.HasPrefix(arg.val, []byte("{{")) && bytes.HasSuffix(arg.val, []byte("}}")) {
 								if val, ok := GetOpt(arg.val, opts, true, &eachArgs); ok {
 									if key[0] != '$' {
-										args["$"+key] = goutil.ToByteArray(val)
+										args["$"+key] = goutil.ToString[[]byte](val)
 									}else{
-										args[key] = goutil.ToByteArray(val)
+										args[key] = goutil.ToString[[]byte](val)
 									}
 								}else{
 									if key[0] != '$' {
@@ -1495,9 +1495,9 @@ func preCompile(path string, opts *map[string]interface{}, componentOf ...string
 							if bytes.HasPrefix(arg.val, []byte("{{")) && bytes.HasSuffix(arg.val, []byte("}}")) {
 								if val, ok := GetOpt(arg.val, opts, true, &eachArgs); ok {
 									if _, ok := args[key]; !ok {
-										args[key] = goutil.ToByteArray(val)
+										args[key] = goutil.ToString[[]byte](val)
 									}else{
-										args[key] = append(append(args[key], ' '), goutil.ToByteArray(val)...)
+										args[key] = append(append(args[key], ' '), goutil.ToString[[]byte](val)...)
 									}
 								}else{
 									if _, ok := args[key]; !ok {
@@ -1690,9 +1690,9 @@ func preCompile(path string, opts *map[string]interface{}, componentOf ...string
 						} else{
 							if val, ok := GetOpt(varName, opts, true, &eachArgs); ok {
 								if escHTML {
-									write(goutil.EscapeHTML(goutil.ToByteArray(val)))
+									write(goutil.EscapeHTML(goutil.ToString[[]byte](val)))
 								}else{
-									write(goutil.ToByteArray(val))
+									write(goutil.ToString[[]byte](val))
 								}
 							}else{
 								if escHTML {
@@ -1857,7 +1857,9 @@ func preCompile(path string, opts *map[string]interface{}, componentOf ...string
 // Compile handles the final output and returns valid html/xhtml that can be passed to the user
 //
 // this method will automatically call preCompile if needed, and can read the cache file while its being written for an extra performance boost
-func Compile(path string, opts map[string]interface{}) ([]byte, error) {
+//
+// @compressOutput: 0 = none, 1 = gzip, 2 = brotli
+func Compile(path string, opts map[string]interface{}, compressOutput uint8) ([]byte, error) {
 	compilingCount++
 
 	if rootPath == "" || cacheTmpPath == "" {
@@ -1881,7 +1883,7 @@ func Compile(path string, opts map[string]interface{}) ([]byte, error) {
 
 	ext := fileExt
 	if opts["ext"] != nil {
-		if str := string(regex.Compile(`[^\w_-]+`).RepStr(goutil.ToByteArray(opts["ext"]), []byte{})); str != "" {
+		if str := string(regex.Compile(`[^\w_-]+`).RepStr(goutil.ToString[[]byte](opts["ext"]), []byte{})); str != "" {
 			ext = str
 		}
 	}
@@ -2297,7 +2299,7 @@ func Compile(path string, opts map[string]interface{}) ([]byte, error) {
 							res, e := callFunc(string(tag), &args, nil, &opts, false, &eachArgs)
 							if e == nil {
 								if res != nil {
-									write(goutil.ToByteArray(res))
+									write(goutil.ToString[[]byte](res))
 								}
 							}else if debugMode {
 								fmt.Println("error:", e)
@@ -2378,7 +2380,7 @@ func Compile(path string, opts map[string]interface{}) ([]byte, error) {
 								res, e := callFunc(string(fn.fnName), &fn.args, &fn.cont, &opts, false, &eachArgs)
 								if e == nil {
 									if res != nil {
-										write(goutil.ToByteArray(res))
+										write(goutil.ToString[[]byte](res))
 									}
 								}else if debugMode {
 									fmt.Println("error:", e)
@@ -2389,7 +2391,7 @@ func Compile(path string, opts map[string]interface{}) ([]byte, error) {
 				}else{
 					if val, ok := GetOpt(regex.JoinBytes([]byte("{{"), varData, []byte("}}")), &opts, false, &eachArgs); ok {
 						if reflect.TypeOf(val) == reflect.TypeOf(KeyVal{}) {
-							v := goutil.EscapeHTMLArgs(goutil.ToByteArray(val.(KeyVal).Val), '"')
+							v := goutil.EscapeHTMLArgs(goutil.ToString[[]byte](val.(KeyVal).Val), '"')
 							if escHTML {
 								//todo: escape data: and non http: attrs
 								v = goutil.EscapeHTMLArgs(v, '"')
@@ -2398,9 +2400,9 @@ func Compile(path string, opts map[string]interface{}) ([]byte, error) {
 							write(regex.JoinBytes(val.(KeyVal).Key, '=', '"', v, '"'))
 						}else if val != nil {
 							if escHTML {
-								write(goutil.EscapeHTML(goutil.ToByteArray(val)))
+								write(goutil.EscapeHTML(goutil.ToString[[]byte](val)))
 							}else{
-								write(goutil.ToByteArray(val))
+								write(goutil.ToString[[]byte](val))
 							}
 						}
 					}
@@ -2429,8 +2431,14 @@ func Compile(path string, opts map[string]interface{}) ([]byte, error) {
 	compilingCount--
 	*compData.inUse--
 
-	// gzip compress result
-	return goutil.Compress(res)
+	// compress result
+	if compressOutput == 1 {
+		return goutil.Gzip(res)
+	}else if compressOutput == 2 {
+		return goutil.BrotliCompress(res, 5)
+	}
+
+	return res, nil
 }
 
 

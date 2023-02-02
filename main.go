@@ -2,12 +2,14 @@ package main
 
 import (
 	"bytes"
+	"encoding/base64"
 	"fmt"
 	"strconv"
+
 	"github.com/AspieSoft/turbx/compiler"
 
 	"github.com/AspieSoft/go-regex/v4"
-	"github.com/AspieSoft/goutil/v3"
+	"github.com/AspieSoft/goutil/v4"
 )
 
 var debugMode bool = false
@@ -119,7 +121,22 @@ func main(){
 
 
 func handleInput(input []byte){
-	inpArgs := bytes.SplitN(input, []byte(":"), 4)
+	inpArgs := bytes.SplitN(input, []byte(":"), 5)
+
+	// get compression type
+	compType := uint8(0)
+	for i := 0; i < len(inpArgs); i++ {
+		if bytes.Equal(inpArgs[i], []byte("gzip")) {
+			compType = 1
+			inpArgs = append(inpArgs[:i], inpArgs[i+1:]...)
+			break
+		}else if bytes.Equal(inpArgs[i], []byte("brotli")) {
+			compType = 2
+			inpArgs = append(inpArgs[:i], inpArgs[i+1:]...)
+			break
+		}
+	}
+
 	if len(inpArgs) >= 2 && bytes.Equal(inpArgs[0], []byte("opts")) {
 		opts := inpArgs[1]
 		if dec, err := Decode(opts); err == nil {
@@ -139,11 +156,36 @@ func handleInput(input []byte){
 			}
 
 			if bytes.Equal(inpArgs[0], []byte("comp")) {
-				res, err := compiler.Compile(string(inpArgs[2]), opts)
+				res, err := compiler.Compile(string(inpArgs[2]), opts, compType)
 				if err != nil {
 					send(inpArgs[1], []byte("error"), []byte(err.Error()))
 				}else{
-					send(inpArgs[1], []byte("res"), res)
+					/* b := goutil.ToType[[]interface{}](res).([]interface{})
+					if r, err := goutil.StringifyJSON(b); err == nil {
+						// res = r
+						send(inpArgs[1], []byte("res"), r)
+					}else{
+						r, err = goutil.Compress(res)
+						if err != nil {
+							send(inpArgs[1], []byte("error"), []byte(err.Error()))
+						}else{
+							// res = r
+							send(inpArgs[1], []byte("res"), r)
+						}
+					} */
+					if compType != 0 {
+						base64.StdEncoding.EncodeToString(res)
+						send(inpArgs[1], []byte("res"), []byte(base64.StdEncoding.EncodeToString(res)))
+					}else {
+						r, err := goutil.Compress(res)
+						if err != nil {
+							send(inpArgs[1], []byte("error"), []byte(err.Error()))
+						}else{
+							send(inpArgs[1], []byte("res"), r)
+						}
+					}
+
+					// send(inpArgs[1], []byte("res"), res)
 				}
 			} else {
 				err := compiler.PreCompile(string(inpArgs[2]), opts)

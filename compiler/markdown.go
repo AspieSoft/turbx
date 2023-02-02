@@ -7,7 +7,7 @@ import (
 	"reflect"
 
 	"github.com/AspieSoft/go-regex/v4"
-	"github.com/AspieSoft/goutil/v3"
+	"github.com/AspieSoft/goutil/v4"
 )
 
 var leyoutHead = regex.Compile(`\n\s+`).RepStr(bytes.TrimSpace([]byte(`
@@ -31,7 +31,7 @@ func addLayoutHead(opts *map[string]interface{}) []byte {
 		if public["css"] != nil && reflect.TypeOf(public["css"]) == goutil.VarType["map"] {
 			publicOpts = append(publicOpts, []byte("<style>:root{")...)
 			for key, val := range public["css"].(map[string]interface{}) {
-				publicOpts = append(publicOpts, regex.JoinBytes([]byte("--"), key, ':', bytes.ReplaceAll(goutil.ToByteArray(val), []byte(";"), []byte{}), ';')...)
+				publicOpts = append(publicOpts, regex.JoinBytes([]byte("--"), key, ':', bytes.ReplaceAll(goutil.ToString[[]byte](val), []byte(";"), []byte{}), ';')...)
 			}
 			publicOpts = append(publicOpts, []byte("}</style>")...)
 		}

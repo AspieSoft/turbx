@@ -8,7 +8,7 @@ import (
 	"strconv"
 
 	"github.com/AspieSoft/go-regex/v4"
-	"github.com/AspieSoft/goutil/v3"
+	"github.com/AspieSoft/goutil/v4"
 	lorem "github.com/drhodes/golorem"
 )
 
@@ -233,7 +233,7 @@ func (t *compFN) If(args *[][]byte, cont *[]byte, opts *map[string]interface{}, 
 			arg2ok := false
 
 			if sign == 6 {
-				arg2Val = goutil.ToString(arg2)
+				arg2Val = goutil.ToString[string](arg2)
 				arg2ok = true
 			}else{
 				arg2Val, arg2ok = GetOpt(arg2, opts, pre, addVars)
@@ -292,25 +292,25 @@ func (t *compFN) If(args *[][]byte, cont *[]byte, opts *map[string]interface{}, 
 
 			if sign == 6 {
 				// regex
-				arg1Val = goutil.ToByteArray(arg1Val)
-				arg2Val = goutil.ToString(arg2Val)
+				arg1Val = goutil.ToString[[]byte](arg1Val)
+				arg2Val = goutil.ToString[string](arg2Val)
 				t = 6
 			}else if reflect.TypeOf(arg1Val) != reflect.TypeOf(arg2Val) {
 				if reflect.TypeOf(arg1Val) == goutil.VarType["string"] {
-					arg2Val = goutil.ToString(arg2Val)
+					arg2Val = goutil.ToString[string](arg2Val)
 					t = 1
 				}else if reflect.TypeOf(arg1Val) == goutil.VarType["bool"] {
-					if v, err := strconv.ParseBool(goutil.ToString(arg2Val)); err == nil {
+					if v, err := strconv.ParseBool(goutil.ToString[string](arg2Val)); err == nil {
 						arg2Val = v
 						t = 2
 					}
 				}else if reflect.TypeOf(arg1Val) == goutil.VarType["int"] {
-					if v, err := strconv.Atoi(goutil.ToString(arg2Val)); err == nil {
+					if v, err := strconv.Atoi(goutil.ToString[string](arg2Val)); err == nil {
 						arg2Val = v
 						t = 3
 					}
 				}else if reflect.TypeOf(arg1Val) == goutil.VarType["float"] {
-					if v, err := strconv.ParseFloat(goutil.ToString(arg2Val), 64); err == nil {
+					if v, err := strconv.ParseFloat(goutil.ToString[string](arg2Val), 64); err == nil {
 						arg2Val = v
 						t = 4
 					}
@@ -747,7 +747,7 @@ func getOptObj(arg []byte, opts *map[string]interface{}, pre *bool, addVars *[]K
 			if !ok {
 				return v, false
 			}
-			arg = goutil.ToByteArray(v)
+			arg = goutil.ToString[[]byte](v)
 			if arg == nil || len(arg) == 0 {
 				if *pre {
 					return true, false
