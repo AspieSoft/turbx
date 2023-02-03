@@ -14,7 +14,7 @@ A Fast and Easy To Use View Engine, Compiled In Go.
 
 ## Whats New
 
-- Rebuilt the compiler in go from the ground up
+- Compiler will auto compress to gzip or brotli if the browser supports it
 
 ## Installation
 

@@ -411,7 +411,7 @@ async function runCompile(method, path, opts){
   }
 
   // handle before functions
-  if(method === 'comp' && typeof OPTS.before === 'function'){
+  if((method === 'comp' || method.startsWith('comp:')) && typeof OPTS.before === 'function'){
     OPTS.before(opts);
   }
   if (typeof opts.before === 'function') {
@@ -457,7 +457,7 @@ async function runCompile(method, path, opts){
       data = newData;
     }
   }
-  if(method === 'comp' && typeof OPTS.after === 'function'){
+  if((method === 'comp' || method.startsWith('comp:')) && typeof OPTS.after === 'function'){
     let newData = OPTS.after(opts);
     if (newData !== undefined) {
       data = newData;

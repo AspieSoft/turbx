@@ -3,6 +3,7 @@ package compiler
 import (
 	"bufio"
 	"bytes"
+	"compress/gzip"
 	"errors"
 	"fmt"
 	"io"
@@ -18,6 +19,7 @@ import (
 	"github.com/AspieSoft/go-regex/v4"
 	"github.com/AspieSoft/goutil/v4"
 	"github.com/alphadose/haxmap"
+	"github.com/andybalholm/brotli"
 )
 
 var rootPath string
@@ -106,6 +108,8 @@ var singleHtmlTags [][]byte = [][]byte{
 	[]byte("track"),
 }
 
+// @tag: tag to detect
+// @attr: required attr to consider
 var emptyContentTags []tagData = []tagData{
 	{[]byte("script"), []byte("src")},
 	{[]byte("iframe"), nil},
@@ -1943,7 +1947,19 @@ func Compile(path string, opts map[string]interface{}, compressOutput uint8) ([]
 	eachArgs := []KeyVal{}
 	fnCont := []fnData{}
 
-	res := []byte{}
+	var res bytes.Buffer
+	var writer0 *bufio.Writer
+	var writer1 *gzip.Writer
+	var writer2 *brotli.Writer
+	if compressOutput == 1 {
+		writer1 = gzip.NewWriter(&res)
+	}else if compressOutput == 2 {
+		writer2 = brotli.NewWriter(&res)
+		brotli.NewWriterLevel(writer2, 5)
+	}else{
+		writer0 = bufio.NewWriter(&res)
+	}
+
 	write := func(b []byte){
 		if len(fnCont) != 0 {
 			if fnCont[len(fnCont)-1].cont != nil {
@@ -1963,7 +1979,17 @@ func Compile(path string, opts map[string]interface{}, compressOutput uint8) ([]
 				}
 			}
 		}
-		res = append(res, b...)
+
+		//todo: replace with compressed writer
+		// res = append(res, b...)
+
+		if writer0 != nil {
+			writer0.Write(b)
+		}else if writer1 != nil {
+			writer1.Write(b)
+		}else if writer2 != nil {
+			writer2.Write(b)
+		}
 	}
 
 	b, err := reader.Peek(1)
@@ -2422,23 +2448,53 @@ func Compile(path string, opts map[string]interface{}, compressOutput uint8) ([]
 
 	// fmt.Println("debug:", "-----\n"+string(res[len(res)-8:]))
 
+	if writer0 != nil {
+		if err := writer0.Flush(); err != nil {
+			compilingCount--
+			*compData.inUse--
+			return []byte{}, *compData.Err
+		}
+	}else if writer1 != nil {
+		if err := writer1.Flush(); err != nil {
+			compilingCount--
+			*compData.inUse--
+			return []byte{}, *compData.Err
+		}
+		if err := writer1.Close(); err != nil {
+			compilingCount--
+			*compData.inUse--
+			return []byte{}, *compData.Err
+		}
+	}else if writer2 != nil {
+		if err := writer2.Flush(); err != nil {
+			compilingCount--
+			*compData.inUse--
+			return []byte{}, *compData.Err
+		}
+		if err := writer2.Close(); err != nil {
+			compilingCount--
+			*compData.inUse--
+			return []byte{}, *compData.Err
+		}
+	}
+
 	if *compData.Err != nil {
 		compilingCount--
 		*compData.inUse--
-		return res, *compData.Err
+		return res.Bytes(), *compData.Err
 	}
 
 	compilingCount--
 	*compData.inUse--
 
 	// compress result
-	if compressOutput == 1 {
+	/* if compressOutput == 1 {
 		return goutil.Gzip(res)
 	}else if compressOutput == 2 {
 		return goutil.BrotliCompress(res, 5)
-	}
+	} */
 
-	return res, nil
+	return res.Bytes(), nil
 }
 
 
