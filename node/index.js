@@ -59,7 +59,8 @@ function initCompiler(){
   if(DebugMode){
     Compiler = spawn('go', ['run', '.', ...args], {cwd: join(__dirname, '../')});
   }else{
-    Compiler = spawn('../turbx', [...args], { cwd: __dirname });
+    console.log('test')
+    Compiler = spawn('./turbx', [...args], { cwd: __dirname });
   }
 
   async function onExit(){

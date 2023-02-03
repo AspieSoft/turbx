@@ -15,6 +15,8 @@ jobs:
         working-directory: node
       - run: npm ci
         working-directory: node
+      - run: cp ../turbx .
+        working-directory: node
       - run: node test/run.js --github
         working-directory: node
 
@@ -29,6 +31,8 @@ jobs:
           registry-url: https://registry.npmjs.org/
           scope: aspiesoft
       - run: npm install -g npm
+        working-directory: node
+      - run: cp ../turbx .
         working-directory: node
       - run: npm publish --access public
         env:
@@ -46,6 +50,8 @@ jobs:
           registry-url: https://npm.pkg.github.com/
           scope: aspiesoft
       - run: npm install -g npm
+        working-directory: node
+      - run: cp ../turbx .
         working-directory: node
       - run: npm publish
         env:
@@ -69,6 +75,8 @@ jobs:
           sed -i 's/"name":\s"@aspiesoft\//"name":"/g' package-lock.json
         working-directory: node
       - run: npm install -g npm
+        working-directory: node
+      - run: cp ../turbx .
         working-directory: node
       - run: npm publish
         env:
