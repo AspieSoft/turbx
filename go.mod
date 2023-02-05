@@ -11,6 +11,7 @@ require (
 )
 
 require (
+	github.com/AspieSoft/go-liveread v1.0.0 // indirect
 	github.com/AspieSoft/go-syncterval v1.0.3 // indirect
 	github.com/AspieSoft/go-ttlcache v1.2.0 // indirect
 	github.com/GRbit/go-pcre v1.0.0 // indirect
