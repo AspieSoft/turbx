@@ -2,10 +2,12 @@ package compiler
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/AspieSoft/go-liveread"
 	"github.com/AspieSoft/go-regex/v4"
@@ -78,6 +80,39 @@ func Close(){
 	// time.Sleep(3 * time.Second)
 }
 
+
+type tagData struct {
+	tag []byte
+	attr []byte
+}
+
+// list of self naturally closing html tags
+var singleHtmlTags [][]byte = [][]byte{
+	[]byte("br"),
+	[]byte("hr"),
+	[]byte("wbr"),
+	[]byte("meta"),
+	[]byte("link"),
+	[]byte("param"),
+	[]byte("base"),
+	[]byte("input"),
+	[]byte("img"),
+	[]byte("area"),
+	[]byte("col"),
+	[]byte("command"),
+	[]byte("embed"),
+	[]byte("keygen"),
+	[]byte("source"),
+	[]byte("track"),
+}
+
+// @tag: tag to detect
+// @attr: required attr to consider
+var emptyContentTags []tagData = []tagData{
+	{[]byte("script"), []byte("src")},
+	{[]byte("iframe"), nil},
+}
+
 type htmlArgs struct {
 	args map[string][]byte
 	ind []string
@@ -91,24 +126,26 @@ func PreCompile(path string, opts map[string]interface{}) error {
 		return err
 	}
 
-	html := []byte{}
-	done := uint8(0)
-	preCompile(path, &opts, &htmlArgs{}, &html, &done)
+	html := []byte{0}
+	preCompile(path, &opts, &htmlArgs{}, &html, &err)
+
+	fmt.Println(string(html[1:]))
 
 	return nil
 }
 
 
-func preCompile(path string, options *map[string]interface{}, arguments *htmlArgs, html *[]byte, done *uint8){
+func preCompile(path string, options *map[string]interface{}, arguments *htmlArgs, html *[]byte, compileError *error){
 	reader, err := liveread.Read(path)
 	if err != nil {
-		*html = []byte(err.Error())
-		*done = 2
+		*compileError = err
+		(*html)[0] = 2
 		return
 	}
 
-	htmlTags := [][]byte{}
-	htmlTagsInd := uint(0)
+	htmlRes := []byte{}
+	htmlTags := []*[]byte{}
+	htmlTagsErr := []*error{}
 
 	var buf byte
 	for err == nil {
@@ -117,6 +154,7 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 			break
 		}
 
+		// handle html tags
 		if buf == '<' {
 			args := htmlArgs{
 				args: map[string][]byte{},
@@ -136,7 +174,8 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 			if regex.Comp(`[\w_]`).MatchRef(&[]byte{b}) {
 				args.tag = []byte{b}
 				ind++
-
+				
+				// get tag
 				for e == nil {
 					b, e = reader.PeekByte(ind)
 					ind++
@@ -162,224 +201,277 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 					args.tag = append(args.tag, b)
 				}
 
-				_ = htmlTags
-				_ = htmlTagsInd
+				if len(args.tag) > 0 {
 
-				for e == nil && args.close == 0 {
-					b, e = reader.PeekByte(ind)
-					ind++
-					if b == 0 {
-						break
-					}
-
-					if b == '/' {
-						if b2, e2 := reader.PeekByte(ind); e2 == nil && b2 == '>' {
-							ind++
-							args.close = 2
-							break
-						}
-					}else if b == '>' {
-						if args.close == 0 {
-							args.close = 3
-						}
-						break
-					}else if regex.Comp(`[\s\r\n]`).MatchRef(&[]byte{b}) {
-						continue
-					}
-					
-					var q byte
-					if b == '"' || b == '\'' || b == '`' {
-						q = b
-						b, e = reader.PeekByte(ind)
-						ind++
-					}
-
-					key := []byte{}
-					for e == nil && ((q == 0 && regex.Comp(`[^\s\r\n=/>]`).MatchRef(&[]byte{b})) || (q != 0 && b != q)) {
-						if q != 0 && b == '\\' {
-							b, e = reader.PeekByte(ind)
-							ind++
-							if b != q && b != '\\' {
-								key = append(key, '\\')
-							}
-						}
-						
-						key = append(key, b)
-						b, e = reader.PeekByte(ind)
-						ind++
-					}
-
-					if b == '>' || b == '/' {
-						ind--
-					}
-
-					if b != '=' {
-						//todo: handle {{key}} var tags
-						isVar := uint8(0)
-						if bytes.HasPrefix(key, []byte("{{")) && bytes.HasSuffix(key, []byte("}}")) {
-							key = key[2:len(key)-2]
-							isVar++
-
-							if bytes.HasPrefix(key, []byte("{")) && bytes.HasSuffix(key, []byte("}")) {
-								key = key[1:len(key)-1]
-								isVar++
-							}else if bytes.HasPrefix(key, []byte("{")) {
-								key = key[1:]
-							}else if bytes.HasSuffix(key, []byte("}")) {
-								key = key[:len(key)-1]
-							}
-						}
-
-						i := strconv.Itoa(argInd)
-						args.args[i] = append([]byte{isVar}, key...)
-						args.ind = append(args.ind, i)
-						argInd++
-						continue
-					}
-
-					b, e = reader.PeekByte(ind)
-					ind++
-
-					q = 0
-					if b == '"' || b == '\'' || b == '`' {
-						q = b
-						b, e = reader.PeekByte(ind)
-						ind++
-					}
-
-					val := []byte{}
-					for e == nil && ((q == 0 && regex.Comp(`[^\s\r\n=/>]`).MatchRef(&[]byte{b})) || (q != 0 && b != q)) {
-						if q != 0 && b == '\\' {
-							b, e = reader.PeekByte(ind)
-							ind++
-							if b != q && b != '\\' {
-								val = append(val, '\\')
-							}
-						}
-						
-						val = append(val, b)
-						b, e = reader.PeekByte(ind)
-						ind++
-					}
-
-					if b == '>' || b == '/' {
-						ind--
-					}
-
-					isVar := uint8(0)
-					if len(key) >= 2 && key[0] == '{' && key[1] == '{' {
-						key = key[2:]
-						isVar++
-
-						if len(key) >= 1 && key[0] == '{' {
-							key = key[1:]
-							isVar++
-						}
-
-						if b2, e2 := reader.Get(ind, 3); e2 == nil && b2[0] == '}' && b2[1] == '}' {
-							ind += 2
-							if b2[2] == '}' {
-								ind++
-							}else{
-								isVar = 1
-							}
-						}else if len(val) >= 2 && val[len(val)-2] == '}' && val[len(val)-1] == '}' {
-							val = val[:len(val)-2]
-							if len(val) >= 1 && val[len(val)-1] == '}' {
-								val = val[:len(val)-1]
-							}else{
-								isVar = 1
-							}
-						}else if isVar == 2 {
-							key = append([]byte("{{{"), key...)
-							isVar = 0
-						} else {
-							key = append([]byte("{{"), key...)
-							isVar = 0
-						}
-					}
-
-					k := string(regex.Comp(`^([\w_-]+).*$`).RepStrCompRef(&key, []byte("$1")))
-					if k == "" {
-						k = string(regex.Comp(`^([\w_-]+).*$`).RepStrCompRef(&val, []byte("$1")))
-					}
-
-					if args.args[k] != nil {
-						i := 1
-						for args.args[k+":"+strconv.Itoa(i)] != nil {
-							i++
-						}
-						args.args[k+":"+strconv.Itoa(i)] = append([]byte{isVar}, val...)
-						args.ind = append(args.ind, k+":"+strconv.Itoa(i))
-					}else{
-						args.args[k] = append([]byte{isVar}, val...)
-						args.ind = append(args.ind, k)
-					}
-				}
-
-				fmt.Println(args.args)
-	
-				/* runNext := true
-				if b == '>' {
-					if args["@CLOSE"] == nil {
-						args["@CLOSE"] = []byte{0}
-					}
-
-					htmlTags = append(htmlTags, []byte{})
-					handleHtmlTag(&htmlTags[htmlTagsInd], options, &args)
-					htmlTagsInd++
-					*html = append(*html, 0)
-
-					reader.Discard(ind)
-					continue
-				}else if b == '/' {
-					if c, ce := reader.PeekByte(ind); ce == nil && c == '>' {
-						args["@CLOSE"] = []byte{2}
-						
-						htmlTags = append(htmlTags, []byte{})
-						handleHtmlTag(&htmlTags[htmlTagsInd], options, &args)
-						htmlTagsInd++
-						*html = append(*html, 0)
-
-						reader.Discard(ind+1)
-						continue
-					}else{
-						runNext = false
-					}
-				}
-
-				if runNext {
-					for e == nil {
+					// get args
+					for e == nil && args.close == 0 {
 						b, e = reader.PeekByte(ind)
 						ind++
 						if b == 0 {
 							break
 						}
-
-						if b == '>' {
-							if args["@CLOSE"] == nil {
-								args["@CLOSE"] = []byte{0}
-							}
-							break
-						}else if b == '/' {
-							if c, ce := reader.PeekByte(ind); ce == nil && c == '>' {
-								args["@CLOSE"] = []byte{2}
+	
+						if b == '/' {
+							if b2, e2 := reader.PeekByte(ind); e2 == nil && b2 == '>' {
+								ind++
+								args.close = 2
 								break
 							}
+						}else if b == '>' {
+							if args.close == 0 {
+								args.close = 3
+							}
+							break
+						}else if regex.Comp(`[\s\r\n]`).MatchRef(&[]byte{b}) {
+							continue
+						}
+						
+						var q byte
+						if b == '"' || b == '\'' || b == '`' {
+							q = b
+							b, e = reader.PeekByte(ind)
+							ind++
+						}
+	
+						key := []byte{}
+						for e == nil && ((q == 0 && regex.Comp(`[^\s\r\n=/>]`).MatchRef(&[]byte{b})) || (q != 0 && b != q)) {
+							if q != 0 && b == '\\' {
+								b, e = reader.PeekByte(ind)
+								ind++
+								if b != q && b != '\\' {
+									key = append(key, '\\')
+								}
+							}
+							
+							key = append(key, b)
+							b, e = reader.PeekByte(ind)
+							ind++
+						}
+	
+						if b == '>' || b == '/' {
+							ind--
+						}
+	
+						if b != '=' {
+							isVar := uint8(0)
+							if bytes.HasPrefix(key, []byte("{{")) && bytes.HasSuffix(key, []byte("}}")) {
+								key = key[2:len(key)-2]
+								isVar++
+	
+								if bytes.HasPrefix(key, []byte("{")) && bytes.HasSuffix(key, []byte("}")) {
+									key = key[1:len(key)-1]
+									isVar++
+								}else if bytes.HasPrefix(key, []byte("{")) {
+									key = key[1:]
+								}else if bytes.HasSuffix(key, []byte("}")) {
+									key = key[:len(key)-1]
+								}
+							}
+	
+							i := strconv.Itoa(argInd)
+							args.args[i] = append([]byte{isVar}, key...)
+							args.ind = append(args.ind, i)
+							argInd++
+							continue
+						}
+	
+						b, e = reader.PeekByte(ind)
+						ind++
+	
+						q = 0
+						if b == '"' || b == '\'' || b == '`' {
+							q = b
+							b, e = reader.PeekByte(ind)
+							ind++
+						}
+	
+						val := []byte{}
+						for e == nil && ((q == 0 && regex.Comp(`[^\s\r\n=/>]`).MatchRef(&[]byte{b})) || (q != 0 && b != q)) {
+							if q != 0 && b == '\\' {
+								b, e = reader.PeekByte(ind)
+								ind++
+								if b != q && b != '\\' {
+									val = append(val, '\\')
+								}
+							}
+							
+							val = append(val, b)
+							b, e = reader.PeekByte(ind)
+							ind++
+						}
+	
+						if b == '>' || b == '/' {
+							ind--
+						}
+	
+						isVar := uint8(0)
+						if len(key) >= 2 && key[0] == '{' && key[1] == '{' {
+							key = key[2:]
+							isVar++
+	
+							if len(key) >= 1 && key[0] == '{' {
+								key = key[1:]
+								isVar++
+							}
+	
+							if b2, e2 := reader.Get(ind, 3); e2 == nil && b2[0] == '}' && b2[1] == '}' {
+								ind += 2
+								if b2[2] == '}' {
+									ind++
+								}else{
+									isVar = 1
+								}
+							}else if len(val) >= 2 && val[len(val)-2] == '}' && val[len(val)-1] == '}' {
+								val = val[:len(val)-2]
+								if len(val) >= 1 && val[len(val)-1] == '}' {
+									val = val[:len(val)-1]
+								}else{
+									isVar = 1
+								}
+							}else if isVar == 2 {
+								key = append([]byte("{{{"), key...)
+								isVar = 0
+							} else {
+								key = append([]byte("{{"), key...)
+								isVar = 0
+							}
+						}
+	
+						k := string(regex.Comp(`^([\w_-]+).*$`).RepStrCompRef(&key, []byte("$1")))
+						if k == "" {
+							k = string(regex.Comp(`^([\w_-]+).*$`).RepStrCompRef(&val, []byte("$1")))
+						}
+	
+						if args.args[k] != nil {
+							i := 1
+							for args.args[k+":"+strconv.Itoa(i)] != nil {
+								i++
+							}
+							args.args[k+":"+strconv.Itoa(i)] = append([]byte{isVar}, val...)
+							args.ind = append(args.ind, k+":"+strconv.Itoa(i))
+						}else{
+							args.args[k] = append([]byte{isVar}, val...)
+							args.ind = append(args.ind, k)
 						}
 					}
-				} */
 
+					// handle html tags
+					if e == nil && args.close != 0 {
+						reader.Discard(ind)
+
+						// args.close:
+						// 0 = failed to close (<tag)
+						// 1 = </tag>
+						// 2 = <tag/> (</tag/>)
+						// 3 = <tag>
+
+						if args.tag[0] == '_' {
+							//todo: handle function tags (<_myFunc>)
+
+							if args.close == 3 {
+								//todo: get content
+
+							}
+
+						}else if args.tag[0] == bytes.ToUpper([]byte{args.tag[0]})[0] {
+							//todo: handle component tags (<MyComponent>)
+
+							if args.close == 3 {
+								//todo: get content
+
+							}
+							
+						}else{
+							// handle normal tags
+							if args.close == 3 && goutil.Contains(singleHtmlTags, bytes.ToLower(args.tag)) {
+								args.close = 2
+							}
+
+							htmlCont := []byte{0}
+							var compErr error
+							htmlTags = append(htmlTags, &htmlCont)
+							htmlTagsErr = append(htmlTagsErr, &compErr)
+							go handleHtmlTag(&htmlCont, options, &args, &compErr)
+							htmlRes = append(htmlRes, 0)
+						}
+						
+						continue
+					}
+				}
 			}
 
 		}
 
-		*html = append(*html, buf)
+		htmlRes = append(htmlRes, buf)
 		reader.Discard(1)
 	}
+
+	// merge html tags when done
+	htmlTagsInd := uint(0)
+	i := bytes.IndexByte(htmlRes, 0)
+	for i != -1 {
+		*html = append(*html, htmlRes[:i]...)
+		htmlRes = htmlRes[i+1:]
+
+		htmlCont := htmlTags[htmlTagsInd]
+		for (*htmlCont)[0] == 0 {
+			time.Sleep(10 * time.Nanosecond)
+		}
+
+		if (*htmlCont)[0] == 2 {
+			*compileError = *htmlTagsErr[htmlTagsInd]
+			(*html)[0] = 2
+			return
+		}
+
+		*html = append(*html, (*htmlCont)[1:]...)
+		htmlTagsInd++
+
+		i = bytes.IndexByte(htmlRes, 0)
+	}
+
+	*html = append(*html, htmlRes...)
+	(*html)[0] = 1
 }
 
-func handleHtmlTag(html *[]byte, options *map[string]interface{}, arguments *map[string][]byte){
-	//todo: handle html tag
-	fmt.Println(arguments)
+func handleHtmlTag(html *[]byte, options *map[string]interface{}, arguments *htmlArgs, compileError *error){
+	//todo: handle normal html tag
+	// fmt.Println(arguments)
+
+	if arguments.close == 1 {
+		(*html) = append((*html), regex.JoinBytes([]byte{'<', '/'}, arguments.tag, '>')...)
+		(*html)[0] = 1
+		return
+	}
+
+	/* args := []byte{}
+	for _, v := range arguments.ind {
+		
+	} */
+
+	*html = append(*html, []byte("test")...)
+
+	// set first index to 1 to mark as ready
+	// set to 2 for an error
+	(*html)[0] = 1
+}
+
+func handleHtmlFunc(html *[]byte, options *map[string]interface{}, arguments *htmlArgs, compileError *error){
+	//todo: handle function html tag
+	// fmt.Println(arguments)
+
+	// set first index to 1 to mark as ready
+	// set to 2 for an error
+	*compileError = errors.New("this method has not been setup yet")
+	(*html)[0] = 2
+}
+
+func handleHtmlComponent(html *[]byte, options *map[string]interface{}, arguments *htmlArgs, compileError *error){
+	//todo: handle component html tag
+	// fmt.Println(arguments)
+
+	// set first index to 1 to mark as ready
+	// set to 2 for an error
+	*compileError = errors.New("this method has not been setup yet")
+	(*html)[0] = 2
 }
