@@ -1980,9 +1980,6 @@ func Compile(path string, opts map[string]interface{}, compressOutput uint8) ([]
 			}
 		}
 
-		//todo: replace with compressed writer
-		// res = append(res, b...)
-
 		if writer0 != nil {
 			writer0.Write(b)
 		}else if writer1 != nil {

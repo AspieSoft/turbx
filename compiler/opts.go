@@ -38,7 +38,7 @@ func GetOpt(name []byte, opts *map[string]interface{}, escape uint8, precomp boo
 	}else if escape == 2 {
 		return goutil.EscapeHTML(goutil.ToString[[]byte](val))
 	}else if escape == 3 {
-		//todo: sanitize arg from xss attacks (example, remove 'data:' from val)
+		//todo: sanitize arg from xss attacks (example: remove 'data:' from val)
 		return goutil.EscapeHTMLArgs(goutil.ToString[[]byte](val))
 	}else if escape == 4 {
 		return regex.Comp(`[^\w_-]+`).RepStr(goutil.ToString[[]byte](val), []byte{})
