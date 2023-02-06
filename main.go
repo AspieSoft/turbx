@@ -17,6 +17,6 @@ func main(){
 	})
 
 	compiler.PreCompile("index", map[string]interface{}{
-
+		
 	})
 }

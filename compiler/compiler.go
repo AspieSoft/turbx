@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -202,7 +203,6 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 				}
 
 				if len(args.tag) > 0 {
-
 					// get args
 					for e == nil && args.close == 0 {
 						b, e = reader.PeekByte(ind)
@@ -435,24 +435,109 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 }
 
 func handleHtmlTag(html *[]byte, options *map[string]interface{}, arguments *htmlArgs, compileError *error){
-	//todo: handle normal html tag
-	// fmt.Println(arguments)
-
 	if arguments.close == 1 {
 		(*html) = append((*html), regex.JoinBytes([]byte{'<', '/'}, arguments.tag, '>')...)
 		(*html)[0] = 1
 		return
 	}
 
-	/* args := []byte{}
+	sort.Strings(arguments.ind)
+
 	for _, v := range arguments.ind {
+		if arguments.args[v][0] == 0 {
+			arguments.args[v] = arguments.args[v][1:]
+		}else if arguments.args[v][0] == 1 {
+			esc := uint8(3)
+			if _, err := strconv.Atoi(v); err == nil {
+				esc = 4
+			}
+
+			arg := GetOpt(arguments.args[v][1:], options, esc, true)
+			if goutil.IsZeroOfUnderlyingType(arg) {
+				delete(arguments.args, v)
+				continue
+			}else{
+				arguments.args[v] = goutil.ToString[[]byte](arg)
+			}
+		}else if arguments.args[v][0] == 2 {
+			arg := GetOpt(arguments.args[v][1:], options, 1, true)
+			if goutil.IsZeroOfUnderlyingType(arg) {
+				delete(arguments.args, v)
+				continue
+			}else{
+				arguments.args[v] = goutil.ToString[[]byte](arg)
+			}
+		}
+
+		if regex.Comp(`:([0-9]+)$`).Match([]byte(v)) {
+			k := string(regex.Comp(`:([0-9]+)$`).RepStr([]byte(v), []byte{}))
+			if arguments.args[k] == nil {
+				arguments.args[k] = []byte{}
+			}
+			arguments.args[k] = append(append(arguments.args[k], ' '), arguments.args[v]...)
+			delete(arguments.args, v)
+		}
+	}
+
+	args := [][]byte{}
+	for _, v := range arguments.ind {
+		if arguments.args[v] != nil {
+			if _, err := strconv.Atoi(v); err == nil {
+				args = append(args, arguments.args[v])
+			}else{
+				if bytes.HasPrefix(arguments.args[v], []byte{0, '{', '{'}) && bytes.HasSuffix(arguments.args[v], []byte("}}")) {
+					arguments.args[v] = arguments.args[v][1:]
+
+					size := 2
+					if arguments.args[v][2] == '{' && arguments.args[v][len(arguments.args[v])-3] == '}' {
+						size = 3
+					}
+
+					if arguments.args[v][size] == '=' {
+						args = append(args, regex.JoinBytes(bytes.Repeat([]byte("{"), size), v, arguments.args[v][size:len(arguments.args[v])-size], bytes.Repeat([]byte("}"), size)))
+					}
+				}else{
+					arguments.args[v] = regex.Comp(`({{+|}}+)`).RepFunc(arguments.args[v], func(data func(int) []byte) []byte {
+						return bytes.Join(bytes.Split(data(1), []byte{}), []byte{'\\'})
+					})
+
+					//todo: check local js and css link args for .min files
+
+					args = append(args, regex.JoinBytes(v, []byte{'=', '"'}, goutil.EscapeHTMLArgs(arguments.args[v], '"'), '"'))
+				}
+
+			}
+		}
+	}
+
+	sort.Slice(args, func(i, j int) bool {
+		a := bytes.Split(args[i], []byte{'='})[0]
+		b := bytes.Split(args[j], []byte{'='})[0]
+
+		if a[0] == 0 {
+			a = a[1:]
+		}
+		if b[0] == 0 {
+			b = b[1:]
+		}
+
+		a = bytes.Trim(a, "{}")
+		b = bytes.Trim(b, "{}")
 		
-	} */
+		if a[0] != ':' && b[0] == ':' {
+			return true
+		}
 
-	*html = append(*html, []byte("test")...)
+		return bytes.Compare(a, b) == -1
+	})
 
-	// set first index to 1 to mark as ready
-	// set to 2 for an error
+	(*html) = append((*html), regex.JoinBytes('<', arguments.tag, ' ', bytes.Join(args, []byte{' '}))...)
+	if arguments.close == 2 {
+		(*html) = append((*html), '/', '>')
+	}else{
+		(*html) = append((*html), '>')
+	}
+
 	(*html)[0] = 1
 }
 
