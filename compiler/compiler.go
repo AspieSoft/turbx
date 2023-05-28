@@ -413,7 +413,7 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 						}else if args.tag[0] == bytes.ToUpper([]byte{args.tag[0]})[0] {
 							//todo: handle component tags (<MyComponent>)
 
-							fmt.Println(args)
+							// fmt.Println(args)
 
 							if args.close == 3 {
 								//todo: get content
@@ -422,7 +422,7 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 
 							//todo: handle components with a channel in place of a goroutine (like a queue) (just like how normal tags are handled)
 							// compChan <- handleHtmlData{&htmlCont, options, &args, &compErr, false}
-							
+
 						}else{
 							// handle normal tags
 							if args.close == 3 && goutil.Contains(singleHtmlTags, bytes.ToLower(args.tag)) {
