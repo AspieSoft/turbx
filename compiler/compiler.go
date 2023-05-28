@@ -440,7 +440,7 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 
 							htmlRes = append(htmlRes, 0)
 						}
-						
+
 						continue
 					}
 				}
