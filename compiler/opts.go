@@ -11,10 +11,6 @@ import (
 func GetOpt(name []byte, opts *map[string]interface{}, escape uint8, precomp bool, stringsOnly bool) interface{} {
 	// escape: 0 = raw, 1 = raw arg, 2 = html, 3 = arg, 4 = html arg key
 
-	//todo: handle & | operators and .obj[key] objects
-	// fmt.Println(escape)
-	// fmt.Println(string(name))
-
 	regWord := `(?:[\w_\-$]+|'(?:\\[\\']|[^'])*'|"(?:\\[\\"]|[^"])*"|\'(?:\\[\\\']|[^\'])*\')+`
 	nameVars := regex.Comp(`((?:`+regWord+`|\.`+regWord+`|\[`+regWord+`\])+)`).SplitRef(&name)
 
@@ -67,12 +63,6 @@ func GetOpt(name []byte, opts *map[string]interface{}, escape uint8, precomp boo
 			continue
 		}
 
-		//todo: handle complex var objects
-		// example: .obj[key]
-		// No recursive function needed ([key] only accepts basic var names and strings)
-		// note: for precomp, if the base var exists, and its key doesn't, it should not be added to the varComp method, otherwise it should be added if the base var does not exist
-		// may also add to varComp if a [key] doesn't exist even when nested
-
 		objNameList := regex.Comp(`(\[`+regWord+`\])|\.(`+regWord+`|)`).SplitRef(&varName)
 
 		objList := [][]byte{}
@@ -124,7 +114,6 @@ func GetOpt(name []byte, opts *map[string]interface{}, escape uint8, precomp boo
 				break
 			}
 
-			
 			if t == goutil.VarType["map[string]interface{}"] {
 				if v, ok := val.(map[string]interface{})[string(n)]; ok {
 					val = v
