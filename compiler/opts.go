@@ -74,6 +74,20 @@ func GetOpt(name []byte, opts *map[string]interface{}, escape uint8, precomp boo
 		// may also add to varComp if a [key] doesn't exist even when nested
 
 		fmt.Println(string(varName))
+
+		objNameList := regex.Comp(`(\[`+regWord+`\])|\.(`+regWord+`|)`).SplitRef(&varName)
+
+		objList := [][]byte{}
+		for _, v := range objNameList {
+			if len(v) != 0 {
+				objList = append(objList, v)
+			}
+		}
+
+		for i, v := range objList {
+			fmt.Println(i, ":", string(v))
+		}
+		fmt.Println("")
 	}
 
 	if precomp && len(varComp) != 0 {
