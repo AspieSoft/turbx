@@ -126,6 +126,8 @@ type handleHtmlData struct {
 	options *map[string]interface{}
 	arguments *htmlArgs
 	compileError *error
+
+	stopChan bool
 }
 
 func PreCompile(path string, opts map[string]interface{}) error {
@@ -135,9 +137,32 @@ func PreCompile(path string, opts map[string]interface{}) error {
 	}
 
 	tagChan := make(chan handleHtmlData)
+	compChan := make(chan handleHtmlData)
+
+	go func(){
+		for {
+			handleHtml := <-tagChan
+			if handleHtml.stopChan {
+				break
+			}
+			
+			handleHtmlTag(handleHtml.html, handleHtml.options, handleHtml.arguments, handleHtml.compileError)
+		}
+	}()
+
+	go func(){
+		for {
+			handleHtml := <-compChan
+			if handleHtml.stopChan {
+				break
+			}
+			
+			handleHtmlComponent(handleHtml.html, handleHtml.options, handleHtml.arguments, handleHtml.compileError)
+		}
+	}()
 
 	html := []byte{0}
-	preCompile(path, &opts, &htmlArgs{}, &html, &err, tagChan)
+	preCompile(path, &opts, &htmlArgs{}, &html, &err, tagChan, compChan)
 
 	fmt.Println("----------\n", string(html[1:]))
 
@@ -145,7 +170,7 @@ func PreCompile(path string, opts map[string]interface{}) error {
 }
 
 
-func preCompile(path string, options *map[string]interface{}, arguments *htmlArgs, html *[]byte, compileError *error, tagChan chan handleHtmlData){
+func preCompile(path string, options *map[string]interface{}, arguments *htmlArgs, html *[]byte, compileError *error, tagChan chan handleHtmlData, compChan chan handleHtmlData){
 	reader, err := liveread.Read(path)
 	if err != nil {
 		*compileError = err
@@ -382,6 +407,9 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 
 							}
 
+							//todo: handle "if" and "each" functions in sync, instead of using concurrent goroutines
+							// may think about using a concurrent channel for other functions
+
 						}else if args.tag[0] == bytes.ToUpper([]byte{args.tag[0]})[0] {
 							//todo: handle component tags (<MyComponent>)
 
@@ -391,6 +419,9 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 								//todo: get content
 
 							}
+
+							//todo: handle components with a channel in place of a goroutine (like a queue) (just like how normal tags are handled)
+							// compChan <- handleHtmlData{&htmlCont, options, &args, &compErr, false}
 							
 						}else{
 							// handle normal tags
@@ -402,8 +433,11 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 							var compErr error
 							htmlTags = append(htmlTags, &htmlCont)
 							htmlTagsErr = append(htmlTagsErr, &compErr)
-							//todo: replace "go" concurrance with a single "chan" channel as a queue to avoid having to many go routines
-							go handleHtmlTag(&htmlCont, options, &args, &compErr)
+
+							// pass through channel instead of a goroutine (like a queue)
+							// go handleHtmlTag(&htmlCont, options, &args, &compErr)
+							tagChan <- handleHtmlData{&htmlCont, options, &args, &compErr, false}
+
 							htmlRes = append(htmlRes, 0)
 						}
 						
@@ -417,6 +451,10 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 		htmlRes = append(htmlRes, buf)
 		reader.Discard(1)
 	}
+
+	// stop concurrent channels from running
+	tagChan <- handleHtmlData{stopChan: true}
+	compChan <- handleHtmlData{stopChan: true}
 
 	// merge html tags when done
 	htmlTagsInd := uint(0)
@@ -569,6 +607,8 @@ func handleHtmlFunc(html *[]byte, options *map[string]interface{}, arguments *ht
 }
 
 func handleHtmlComponent(html *[]byte, options *map[string]interface{}, arguments *htmlArgs, compileError *error){
+	// note: components cannot wait in the same channel without possibly getting stuck (ie: waiting for a parent that is also waiting for itself)
+
 	//todo: handle component html tag
 	// fmt.Println(arguments)
 
