@@ -17,11 +17,6 @@ func main(){
 	})
 
 	compiler.PreCompile("index", map[string]interface{}{
-		"$test": map[string]interface{}{
-			"obj": map[string]interface{}{
-				"string": "this-is-a-test",
-			},
-		},
-		"$key": "test",
+		
 	})
 }

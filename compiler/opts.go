@@ -2,7 +2,7 @@ package compiler
 
 import (
 	"bytes"
-	"fmt"
+	"reflect"
 
 	"github.com/AspieSoft/go-regex/v4"
 	"github.com/AspieSoft/goutil/v5"
@@ -56,10 +56,10 @@ func GetOpt(name []byte, opts *map[string]interface{}, escape uint8, precomp boo
 				}
 
 				if stringsOnly && val != nil {
-					return goutil.Conv.ToBytes(val)
+					return escapeVarVal(goutil.Conv.ToBytes(val), escape)
 				}
 
-				return val
+				return escapeVarVal(val, escape)
 			}
 			if precomp {
 				varComp = append(varComp, varName)
@@ -73,8 +73,6 @@ func GetOpt(name []byte, opts *map[string]interface{}, escape uint8, precomp boo
 		// note: for precomp, if the base var exists, and its key doesn't, it should not be added to the varComp method, otherwise it should be added if the base var does not exist
 		// may also add to varComp if a [key] doesn't exist even when nested
 
-		fmt.Println(string(varName))
-
 		objNameList := regex.Comp(`(\[`+regWord+`\])|\.(`+regWord+`|)`).SplitRef(&varName)
 
 		objList := [][]byte{}
@@ -84,10 +82,81 @@ func GetOpt(name []byte, opts *map[string]interface{}, escape uint8, precomp boo
 			}
 		}
 
-		for i, v := range objList {
-			fmt.Println(i, ":", string(v))
+		if len(objList) == 0 {
+			continue
 		}
-		fmt.Println("")
+
+		var val interface{}
+		if !hasVarOpt(objList[0], opts, escape, precomp) {
+			if precomp {
+				varComp = append(varComp, varName)
+			}
+			continue
+		}
+
+		val = getVarOpt(objList[0], opts, escape, precomp)
+		
+		endLoop := false
+		for i := 1; i < len(objList); i++ {
+			t := reflect.TypeOf(val)
+			if t != goutil.VarType["map[string]interface{}"] && t != goutil.VarType["[]interface{}"] {
+				endLoop = true
+				break
+			}
+
+			n := objList[i]
+			if len(n) >= 2 && n[0] == '[' && n[len(n)-1] == ']' {
+				n = n[1:len(n)-1]
+				if len(n) >= 2 && ((n[0] == '\'' && n[len(n)-1] == '\'') || (n[0] == '"' && n[len(n)-1] == '"') || (n[0] == '`' && n[len(n)-1] == '`')) {
+					n = regex.Comp(`\\([\\'"\'])`).RepStrComp(n[1:len(n)-1], []byte("$1"))
+				}else{
+					if !hasVarOpt(n, opts, escape, precomp) {
+						varComp = append(varComp, varName)
+						endLoop = true
+						break
+					}
+					n = goutil.Conv.ToBytes(escapeVarVal(getVarOpt(n, opts, escape, precomp), escape))
+				}
+			}
+
+			if len(n) == 0 {
+				endLoop = true
+				break
+			}
+
+			
+			if t == goutil.VarType["map[string]interface{}"] {
+				if v, ok := val.(map[string]interface{})[string(n)]; ok {
+					val = v
+				}else if v, ok := val.(map[string]interface{})["$"+string(n)]; ok && n[0] != '$' {
+					val = v
+				}else{
+					endLoop = true
+					break
+				}
+			}else if t == goutil.VarType["[]interface{}"] {
+				nI := goutil.Conv.ToInt(n)
+				if len(val.([]interface{})) > nI {
+					val = val.([]interface{})[nI]
+				}else{
+					endLoop = true
+					break
+				}
+			}
+		}
+		if endLoop {
+			continue
+		}
+
+		if goutil.IsZeroOfUnderlyingType(val) {
+			return nil
+		}
+
+		if stringsOnly && val != nil {
+			return escapeVarVal(goutil.Conv.ToBytes(val), escape)
+		}
+
+		return escapeVarVal(val, escape)
 	}
 
 	if precomp && len(varComp) != 0 {
@@ -132,18 +201,8 @@ func getVarOpt(name []byte, opts *map[string]interface{}, escape uint8, precomp 
 	}
 
 	val := goutil.Clean.JSON((*opts)[string(checkName)])
-	if escape == 0 || escape == 1 {
-		return val
-	}else if escape == 2 {
-		return goutil.HTML.Escape(goutil.Conv.ToBytes(val))
-	}else if escape == 3 {
-		//todo: sanitize arg from xss attacks (example: remove 'data:' from val)
-		return goutil.HTML.EscapeArgs(goutil.Conv.ToBytes(val))
-	}else if escape == 4 {
-		return regex.Comp(`[^\w_-]+`).RepStr(goutil.Conv.ToBytes(val), []byte{})
-	}
 
-	return nil
+	return val
 }
 
 func getVarStr(name []byte, escape uint8) []byte {
@@ -160,6 +219,21 @@ func getVarStr(name []byte, escape uint8) []byte {
 		return regex.JoinBytes([]byte{0}, []byte("{{="), name, []byte("}}"))
 	}else if escape == 4 {
 		return regex.JoinBytes([]byte{0}, []byte("{{:"), name, []byte("}}"))
+	}
+
+	return nil
+}
+
+func escapeVarVal(val interface{}, escape uint8) interface{} {
+	if escape == 0 || escape == 1 {
+		return val
+	}else if escape == 2 {
+		return goutil.HTML.Escape(goutil.Conv.ToBytes(val))
+	}else if escape == 3 {
+		//todo: sanitize arg from xss attacks (example: remove 'data:' from val)
+		return goutil.HTML.EscapeArgs(goutil.Conv.ToBytes(val))
+	}else if escape == 4 {
+		return regex.Comp(`[^\w_-]+`).RepStr(goutil.Conv.ToBytes(val), []byte{})
 	}
 
 	return nil

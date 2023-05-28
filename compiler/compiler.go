@@ -121,14 +121,23 @@ type htmlArgs struct {
 	close uint8
 }
 
+type handleHtmlData struct {
+	html *[]byte
+	options *map[string]interface{}
+	arguments *htmlArgs
+	compileError *error
+}
+
 func PreCompile(path string, opts map[string]interface{}) error {
 	path, err := goutil.FS.JoinPath(compilerConfig.Root, path + "." + compilerConfig.Ext)
 	if err != nil {
 		return err
 	}
 
+	tagChan := make(chan handleHtmlData)
+
 	html := []byte{0}
-	preCompile(path, &opts, &htmlArgs{}, &html, &err)
+	preCompile(path, &opts, &htmlArgs{}, &html, &err, tagChan)
 
 	fmt.Println("----------\n", string(html[1:]))
 
@@ -136,7 +145,7 @@ func PreCompile(path string, opts map[string]interface{}) error {
 }
 
 
-func preCompile(path string, options *map[string]interface{}, arguments *htmlArgs, html *[]byte, compileError *error){
+func preCompile(path string, options *map[string]interface{}, arguments *htmlArgs, html *[]byte, compileError *error, tagChan chan handleHtmlData){
 	reader, err := liveread.Read(path)
 	if err != nil {
 		*compileError = err
@@ -376,6 +385,8 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 						}else if args.tag[0] == bytes.ToUpper([]byte{args.tag[0]})[0] {
 							//todo: handle component tags (<MyComponent>)
 
+							fmt.Println(args)
+
 							if args.close == 3 {
 								//todo: get content
 
@@ -391,6 +402,7 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 							var compErr error
 							htmlTags = append(htmlTags, &htmlCont)
 							htmlTagsErr = append(htmlTagsErr, &compErr)
+							//todo: replace "go" concurrance with a single "chan" channel as a queue to avoid having to many go routines
 							go handleHtmlTag(&htmlCont, options, &args, &compErr)
 							htmlRes = append(htmlRes, 0)
 						}
@@ -531,7 +543,12 @@ func handleHtmlTag(html *[]byte, options *map[string]interface{}, arguments *htm
 		return bytes.Compare(a, b) == -1
 	})
 
-	(*html) = append((*html), regex.JoinBytes('<', arguments.tag, ' ', bytes.Join(args, []byte{' '}))...)
+	if len(args) == 0 {
+		(*html) = append((*html), regex.JoinBytes('<', arguments.tag)...)
+	}else{
+		(*html) = append((*html), regex.JoinBytes('<', arguments.tag, ' ', bytes.Join(args, []byte{' '}))...)
+	}
+
 	if arguments.close == 2 {
 		(*html) = append((*html), '/', '>')
 	}else{
