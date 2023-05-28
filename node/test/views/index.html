@@ -1,5 +1,5 @@
 start
-<div {{test="1"}} {{test}} class="2" a="3" b="4" class="another class">
+<div {{test="1"}} {{test|a|'string'}} {{test.obj[key]|test.obj['string']}} class="2" a="3" b="4" class="another class">
 middle
 </div>
 end

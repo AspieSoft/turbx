@@ -12,7 +12,7 @@ import (
 
 	"github.com/AspieSoft/go-liveread"
 	"github.com/AspieSoft/go-regex/v4"
-	"github.com/AspieSoft/goutil/v4"
+	"github.com/AspieSoft/goutil/v5"
 )
 
 type Config struct {
@@ -122,7 +122,7 @@ type htmlArgs struct {
 }
 
 func PreCompile(path string, opts map[string]interface{}) error {
-	path, err := goutil.JoinPath(compilerConfig.Root, path + "." + compilerConfig.Ext)
+	path, err := goutil.FS.JoinPath(compilerConfig.Root, path + "." + compilerConfig.Ext)
 	if err != nil {
 		return err
 	}
@@ -130,7 +130,7 @@ func PreCompile(path string, opts map[string]interface{}) error {
 	html := []byte{0}
 	preCompile(path, &opts, &htmlArgs{}, &html, &err)
 
-	fmt.Println(string(html[1:]))
+	fmt.Println("----------\n", string(html[1:]))
 
 	return nil
 }
@@ -452,20 +452,20 @@ func handleHtmlTag(html *[]byte, options *map[string]interface{}, arguments *htm
 				esc = 4
 			}
 
-			arg := GetOpt(arguments.args[v][1:], options, esc, true)
+			arg := GetOpt(arguments.args[v][1:], options, esc, true, true)
 			if goutil.IsZeroOfUnderlyingType(arg) {
 				delete(arguments.args, v)
 				continue
 			}else{
-				arguments.args[v] = goutil.ToString[[]byte](arg)
+				arguments.args[v] = goutil.Conv.ToBytes(arg)
 			}
 		}else if arguments.args[v][0] == 2 {
-			arg := GetOpt(arguments.args[v][1:], options, 1, true)
+			arg := GetOpt(arguments.args[v][1:], options, 1, true, true)
 			if goutil.IsZeroOfUnderlyingType(arg) {
 				delete(arguments.args, v)
 				continue
 			}else{
-				arguments.args[v] = goutil.ToString[[]byte](arg)
+				arguments.args[v] = goutil.Conv.ToBytes(arg)
 			}
 		}
 
@@ -481,7 +481,7 @@ func handleHtmlTag(html *[]byte, options *map[string]interface{}, arguments *htm
 
 	args := [][]byte{}
 	for _, v := range arguments.ind {
-		if arguments.args[v] != nil {
+		if arguments.args[v] != nil && len(arguments.args[v]) != 0 {
 			if _, err := strconv.Atoi(v); err == nil {
 				args = append(args, arguments.args[v])
 			}else{
@@ -503,7 +503,7 @@ func handleHtmlTag(html *[]byte, options *map[string]interface{}, arguments *htm
 
 					//todo: check local js and css link args for .min files
 
-					args = append(args, regex.JoinBytes(v, []byte{'=', '"'}, goutil.EscapeHTMLArgs(arguments.args[v], '"'), '"'))
+					args = append(args, regex.JoinBytes(v, []byte{'=', '"'}, goutil.HTML.EscapeArgs(arguments.args[v], '"'), '"'))
 				}
 
 			}
