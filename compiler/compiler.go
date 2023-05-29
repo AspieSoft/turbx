@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -20,6 +21,7 @@ type Config struct {
 	Ext string
 	Static string
 	StaticUrl string
+	DebugMode bool
 }
 
 var compilerConfig Config
@@ -55,6 +57,8 @@ func SetConfig(config Config) error {
 		compilerConfig.StaticUrl = config.StaticUrl
 	}
 
+	compilerConfig.DebugMode = config.DebugMode
+
 	return nil
 }
 
@@ -74,6 +78,7 @@ func init(){
 		Ext: "html",
 		Static: static,
 		StaticUrl: "",
+		DebugMode: false,
 	}
 }
 
@@ -121,6 +126,11 @@ type htmlArgs struct {
 	close uint8
 }
 
+type htmlChanList struct {
+	tag chan handleHtmlData
+	comp chan handleHtmlData
+}
+
 type handleHtmlData struct {
 	html *[]byte
 	options *map[string]interface{}
@@ -133,44 +143,42 @@ type handleHtmlData struct {
 func PreCompile(path string, opts map[string]interface{}) error {
 	path, err := goutil.FS.JoinPath(compilerConfig.Root, path + "." + compilerConfig.Ext)
 	if err != nil {
+		if compilerConfig.DebugMode {
+			fmt.Println(err)
+		}
 		return err
 	}
 
-	tagChan := make(chan handleHtmlData)
-	compChan := make(chan handleHtmlData)
-
-	go func(){
-		for {
-			handleHtml := <-tagChan
-			if handleHtml.stopChan {
-				break
-			}
-			
-			handleHtmlTag(handleHtml.html, handleHtml.options, handleHtml.arguments, handleHtml.compileError)
+	if stat, err := os.Stat(path); err != nil || stat.IsDir() {
+		if compilerConfig.DebugMode {
+			fmt.Println(err)
 		}
-	}()
+		return err
+	}
 
-	go func(){
-		for {
-			handleHtml := <-compChan
-			if handleHtml.stopChan {
-				break
-			}
-			
-			handleHtmlComponent(handleHtml.html, handleHtml.options, handleHtml.arguments, handleHtml.compileError)
-		}
-	}()
+	htmlChan := newPreCompileChan()
 
 	html := []byte{0}
-	preCompile(path, &opts, &htmlArgs{}, &html, &err, tagChan, compChan)
+	preCompile(path, &opts, &htmlArgs{}, &html, &err, &htmlChan)
+	if err != nil {
+		if compilerConfig.DebugMode {
+			fmt.Println(err)
+			html = append(html, regex.JoinBytes([]byte("<!--{{#error: "), regex.Comp(`%1`, compilerConfig.Root).RepStr([]byte(err.Error()), []byte{}), []byte("}}-->"))...)
+		}else{
+			return err
+		}
+	}
 
+	//todo: add precompiled file to temp cache
 	fmt.Println("----------\n", string(html[1:]))
 
+	if err != nil {
+		return err
+	}
 	return nil
 }
 
-
-func preCompile(path string, options *map[string]interface{}, arguments *htmlArgs, html *[]byte, compileError *error, tagChan chan handleHtmlData, compChan chan handleHtmlData){
+func preCompile(path string, options *map[string]interface{}, arguments *htmlArgs, html *[]byte, compileError *error, htmlChan *htmlChanList){
 	reader, err := liveread.Read(path)
 	if err != nil {
 		*compileError = err
@@ -181,6 +189,16 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 	htmlRes := []byte{}
 	htmlTags := []*[]byte{}
 	htmlTagsErr := []*error{}
+
+	htmlContTemp := [][]byte{}
+	htmlContTempTag := []htmlArgs{}
+	write := func(b []byte){
+		if len(htmlContTempTag) != 0 {
+			htmlContTemp[len(htmlContTempTag)-1] = append(htmlContTemp[len(htmlContTempTag)-1], b...)
+		}else{
+			htmlRes = append(htmlRes, b...)
+		}
+	}
 
 	var buf byte
 	for err == nil {
@@ -402,30 +420,48 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 						if args.tag[0] == '_' {
 							//todo: handle function tags (<_myFunc>)
 
-							if args.close == 3 {
-								//todo: get content
-
-							}
-
 							//todo: handle "if" and "each" functions in sync, instead of using concurrent goroutines
 							// may think about using a concurrent channel for other functions
 
-						}else if args.tag[0] == bytes.ToUpper([]byte{args.tag[0]})[0] {
-							//todo: handle component tags (<MyComponent>)
-
-							// fmt.Println(args)
-
 							if args.close == 3 {
 								//todo: get content
 
 							}
 
-							//todo: handle components with a channel in place of a goroutine (like a queue) (just like how normal tags are handled)
-							// compChan <- handleHtmlData{&htmlCont, options, &args, &compErr, false}
+							// don't forget to change the return value for the "handleHtmlFunc" method when debugging
+							// "handleHtmlFunc" currently reports an error of "unfinished method"
+						}else if args.tag[0] == bytes.ToUpper([]byte{args.tag[0]})[0] {
+							if args.close == 3 {
+								htmlContTempTag = append(htmlContTempTag, args)
+								htmlContTemp = append(htmlContTemp, []byte{})
+							}else if args.close == 1 && bytes.Equal(args.tag, htmlContTempTag[len(htmlContTemp)-1].tag) {
+								for k, v := range htmlContTempTag[len(htmlContTemp)-1].args {
+									args.args[k] = v
+								}
+								args.args["body"] = htmlContTemp[len(htmlContTempTag)-1]
 
+								htmlContTemp = htmlContTemp[:len(htmlContTempTag)-1]
+								htmlContTempTag = htmlContTempTag[:len(htmlContTempTag)-1]
+
+								htmlCont := []byte{0}
+								var compErr error
+								htmlTags = append(htmlTags, &htmlCont)
+								htmlTagsErr = append(htmlTagsErr, &compErr)
+
+								htmlChan.comp <- handleHtmlData{html: &htmlCont, options: options, arguments: &args, compileError: &compErr}
+								write([]byte{0})
+							}else if args.close == 2 {
+								htmlCont := []byte{0}
+								var compErr error
+								htmlTags = append(htmlTags, &htmlCont)
+								htmlTagsErr = append(htmlTagsErr, &compErr)
+
+								htmlChan.comp <- handleHtmlData{html: &htmlCont, options: options, arguments: &args, compileError: &compErr}
+								write([]byte{0})
+							}
 						}else{
 							// handle normal tags
-							if args.close == 3 && goutil.Contains(singleHtmlTags, bytes.ToLower(args.tag)) {
+							if (args.close == 3 || args.close == 1) && goutil.Contains(singleHtmlTags, bytes.ToLower(args.tag)) {
 								args.close = 2
 							}
 
@@ -436,9 +472,8 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 
 							// pass through channel instead of a goroutine (like a queue)
 							// go handleHtmlTag(&htmlCont, options, &args, &compErr)
-							tagChan <- handleHtmlData{&htmlCont, options, &args, &compErr, false}
-
-							htmlRes = append(htmlRes, 0)
+							htmlChan.tag <- handleHtmlData{html: &htmlCont, options: options, arguments: &args, compileError: &compErr}
+							write([]byte{0})
 						}
 
 						continue
@@ -448,13 +483,13 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 
 		}
 
-		htmlRes = append(htmlRes, buf)
+		write([]byte{buf})
 		reader.Discard(1)
 	}
 
 	// stop concurrent channels from running
-	tagChan <- handleHtmlData{stopChan: true}
-	compChan <- handleHtmlData{stopChan: true}
+	htmlChan.tag <- handleHtmlData{stopChan: true}
+	htmlChan.comp <- handleHtmlData{stopChan: true}
 
 	// merge html tags when done
 	htmlTagsInd := uint(0)
@@ -581,6 +616,8 @@ func handleHtmlTag(html *[]byte, options *map[string]interface{}, arguments *htm
 		return bytes.Compare(a, b) == -1
 	})
 
+	//todo: auto fix "emptyContentTags" to closing (ie: <script/> <iframe/>)
+
 	if len(args) == 0 {
 		(*html) = append((*html), regex.JoinBytes('<', arguments.tag)...)
 	}else{
@@ -606,14 +643,73 @@ func handleHtmlFunc(html *[]byte, options *map[string]interface{}, arguments *ht
 	(*html)[0] = 2
 }
 
-func handleHtmlComponent(html *[]byte, options *map[string]interface{}, arguments *htmlArgs, compileError *error){
+func handleHtmlComponent(htmlData handleHtmlData){
 	// note: components cannot wait in the same channel without possibly getting stuck (ie: waiting for a parent that is also waiting for itself)
 
-	//todo: handle component html tag
-	// fmt.Println(arguments)
+	// get component filepath
+	path := string(regex.Comp(`\.`).RepStr(regex.Comp(`[^\w_\-\.]`).RepStrRef(&htmlData.arguments.tag, []byte{}), []byte{'/'}))
+
+	path, err := goutil.FS.JoinPath(compilerConfig.Root, path + "." + compilerConfig.Ext)
+	if err != nil {
+		*htmlData.compileError = err
+		(*htmlData.html)[0] = 2
+		return
+	}
+
+	if stat, err := os.Stat(path); err != nil || stat.IsDir() {
+		*htmlData.compileError = err
+		(*htmlData.html)[0] = 2
+		return
+	}
+
+	// merge options with html args
+	opts, err := goutil.JSON.DeepCopy(*htmlData.options)
+	if err != nil {
+		opts = map[string]interface{}{}
+	}
+
+	for k, v := range htmlData.arguments.args {
+		opts[k] = v
+	}
+
+	// precompile component
+	htmlChan := newPreCompileChan()
+
+	preCompile(path, &opts, htmlData.arguments, htmlData.html, htmlData.compileError, &htmlChan)
+	if *htmlData.compileError != nil {
+		(*htmlData.html)[0] = 2
+		return
+	}
 
 	// set first index to 1 to mark as ready
-	// set to 2 for an error
-	*compileError = errors.New("this method has not been setup yet")
-	(*html)[0] = 2
+	(*htmlData.html)[0] = 1
+}
+
+func newPreCompileChan() htmlChanList {
+	tagChan := make(chan handleHtmlData)
+	compChan := make(chan handleHtmlData)
+
+	go func(){
+		for {
+			handleHtml := <-tagChan
+			if handleHtml.stopChan {
+				break
+			}
+			
+			handleHtmlTag(handleHtml.html, handleHtml.options, handleHtml.arguments, handleHtml.compileError)
+		}
+	}()
+
+	go func(){
+		for {
+			handleHtml := <-compChan
+			if handleHtml.stopChan {
+				break
+			}
+
+			handleHtmlComponent(handleHtml)
+		}
+	}()
+
+	return htmlChanList{tag: tagChan, comp: compChan}
 }

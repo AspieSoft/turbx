@@ -14,6 +14,7 @@ func main(){
 	compiler.SetConfig(compiler.Config{
 		Root: "node/test/views",
 		Static: "node/test/public",
+		DebugMode: true,
 	})
 
 	compiler.PreCompile("index", map[string]interface{}{
