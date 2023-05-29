@@ -480,8 +480,11 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 					}
 				}
 			}
-
 		}
+
+		//todo: add optional shortcode handler (ie: {{#plugin:shortcode}} {{#:priorityShortcode}})
+		// may add in a "#shortcode" option to options, and pass in a list of functions that return html/markdown
+		// may also add a mothod for shortcodes to run other shortcodes (apart from themselves)
 
 		write([]byte{buf})
 		reader.Discard(1)
@@ -644,6 +647,8 @@ func handleHtmlFunc(html *[]byte, options *map[string]interface{}, arguments *ht
 }
 
 func handleHtmlComponent(htmlData handleHtmlData){
+	//todo: add a method for preventing component recursion
+
 	// note: components cannot wait in the same channel without possibly getting stuck (ie: waiting for a parent that is also waiting for itself)
 
 	// get component filepath
