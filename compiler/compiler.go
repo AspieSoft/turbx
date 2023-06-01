@@ -136,6 +136,7 @@ type handleHtmlData struct {
 	options *map[string]interface{}
 	arguments *htmlArgs
 	compileError *error
+	componentList [][]byte
 
 	stopChan bool
 }
@@ -159,7 +160,7 @@ func PreCompile(path string, opts map[string]interface{}) error {
 	htmlChan := newPreCompileChan()
 
 	html := []byte{0}
-	preCompile(path, &opts, &htmlArgs{}, &html, &err, &htmlChan)
+	preCompile(path, &opts, &htmlArgs{}, &html, &err, &htmlChan, nil)
 	if err != nil {
 		if compilerConfig.DebugMode {
 			fmt.Println(err)
@@ -178,12 +179,16 @@ func PreCompile(path string, opts map[string]interface{}) error {
 	return nil
 }
 
-func preCompile(path string, options *map[string]interface{}, arguments *htmlArgs, html *[]byte, compileError *error, htmlChan *htmlChanList){
+func preCompile(path string, options *map[string]interface{}, arguments *htmlArgs, html *[]byte, compileError *error, htmlChan *htmlChanList, componentList [][]byte){
 	reader, err := liveread.Read(path)
 	if err != nil {
 		*compileError = err
 		(*html)[0] = 2
 		return
+	}
+
+	if componentList == nil {
+		componentList = [][]byte{}
 	}
 
 
@@ -473,9 +478,9 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 								htmlTagsErr = append(htmlTagsErr, &compErr)
 
 								if htmlChan != nil {
-									htmlChan.comp <- handleHtmlData{html: &htmlCont, options: options, arguments: &args, compileError: &compErr}
+									htmlChan.comp <- handleHtmlData{html: &htmlCont, options: options, arguments: &args, compileError: &compErr, componentList: componentList}
 								}else{
-									handleHtmlComponent(handleHtmlData{html: &htmlCont, options: options, arguments: &args, compileError: &compErr})
+									handleHtmlComponent(handleHtmlData{html: &htmlCont, options: options, arguments: &args, compileError: &compErr, componentList: componentList})
 								}
 								write([]byte{0})
 							}else if args.close == 2 {
@@ -485,9 +490,9 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 								htmlTagsErr = append(htmlTagsErr, &compErr)
 
 								if htmlChan != nil {
-									htmlChan.comp <- handleHtmlData{html: &htmlCont, options: options, arguments: &args, compileError: &compErr}
+									htmlChan.comp <- handleHtmlData{html: &htmlCont, options: options, arguments: &args, compileError: &compErr, componentList: componentList}
 								}else{
-									handleHtmlComponent(handleHtmlData{html: &htmlCont, options: options, arguments: &args, compileError: &compErr})
+									handleHtmlComponent(handleHtmlData{html: &htmlCont, options: options, arguments: &args, compileError: &compErr, componentList: componentList})
 								}
 								write([]byte{0})
 							}
@@ -688,11 +693,17 @@ func handleHtmlFunc(htmlData handleHtmlData){
 }
 
 func handleHtmlComponent(htmlData handleHtmlData){
-	//htmlData: html *[]byte, options *map[string]interface{}, arguments *htmlArgs, compileError *error
-
-	//todo: add a method for preventing component recursion
+	//htmlData: html *[]byte, options *map[string]interface{}, arguments *htmlArgs, compileError *error, componentList [][]byte
 
 	// note: components cannot wait in the same channel without possibly getting stuck (ie: waiting for a parent that is also waiting for itself)
+
+	for _, tag := range htmlData.componentList {
+		if bytes.Equal(htmlData.arguments.tag, tag) {
+			*htmlData.compileError = errors.New("recursion detected in component:\n  in: '"+string(htmlData.componentList[len(htmlData.componentList)-1])+"'\n  with: '"+string(htmlData.arguments.tag)+"'\n  contains:\n    '"+string(bytes.Join(htmlData.componentList, []byte("'\n    '")))+"'\n")
+			(*htmlData.html)[0] = 2
+			return
+		}
+	}
 
 	// get component filepath
 	path := string(regex.Comp(`\.`).RepStr(regex.Comp(`[^\w_\-\.]`).RepStrRef(&htmlData.arguments.tag, []byte{}), []byte{'/'}))
@@ -705,7 +716,7 @@ func handleHtmlComponent(htmlData handleHtmlData){
 	}
 
 	if stat, err := os.Stat(path); err != nil || stat.IsDir() {
-		*htmlData.compileError = err
+		*htmlData.compileError = errors.New("component not found: '"+string(htmlData.arguments.tag)+"'")
 		(*htmlData.html)[0] = 2
 		return
 	}
@@ -716,14 +727,14 @@ func handleHtmlComponent(htmlData handleHtmlData){
 		opts = map[string]interface{}{}
 	}
 
-	fmt.Println(string(htmlData.arguments.tag))
+	htmlData.componentList = append(htmlData.componentList, htmlData.arguments.tag)
 
 	/* for k, v := range htmlData.arguments.args {
 		opts[k] = v
 	} */
 
 	// precompile component
-	preCompile(path, &opts, htmlData.arguments, htmlData.html, htmlData.compileError, nil)
+	preCompile(path, &opts, htmlData.arguments, htmlData.html, htmlData.compileError, nil, htmlData.componentList)
 	if *htmlData.compileError != nil {
 		(*htmlData.html)[0] = 2
 		return
