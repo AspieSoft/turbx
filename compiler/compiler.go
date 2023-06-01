@@ -186,6 +186,12 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 		return
 	}
 
+
+	//todo: merge html args with options (and compile options as needed)
+	// arguments should be passed by components (or will likely be blank if root)
+	fmt.Println(arguments)
+
+
 	htmlRes := []byte{}
 	htmlTags := []*[]byte{}
 	htmlTagsErr := []*error{}
@@ -274,6 +280,12 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 								args.close = 3
 							}
 							break
+						}else if b == '&' || b == '|' || b == '(' || b == ')' {
+							i := strconv.Itoa(argInd)
+							args.args[i] = []byte{5, b}
+							args.ind = append(args.ind, i)
+							argInd++
+							continue
 						}else if regex.Comp(`[\s\r\n]`).MatchRef(&[]byte{b}) {
 							continue
 						}
@@ -388,12 +400,16 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 								isVar = 0
 							}
 						}
-	
+
+						if len(key) != 0 && key[len(key)-1] == '!' {
+							key = key[:len(key)-1]
+							val = append([]byte{'!'}, val...)
+						}
 						k := string(regex.Comp(`^([\w_-]+).*$`).RepStrCompRef(&key, []byte("$1")))
 						if k == "" {
 							k = string(regex.Comp(`^([\w_-]+).*$`).RepStrCompRef(&val, []byte("$1")))
 						}
-	
+
 						if args.args[k] != nil {
 							i := 1
 							for args.args[k+":"+strconv.Itoa(i)] != nil {
@@ -418,10 +434,18 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 						// 3 = <tag>
 
 						if args.tag[0] == '_' {
+							args.tag = bytes.ToLower(args.tag)
 							//todo: handle function tags (<_myFunc>)
 
 							//todo: handle "if" and "each" functions in sync, instead of using concurrent goroutines
 							// may think about using a concurrent channel for other functions
+
+							if bytes.Equal(args.tag, []byte("_if")) || bytes.Equal(args.tag, []byte("else")) || bytes.Equal(args.tag, []byte("elif")) {
+								if args.close == 3 { // open tag
+									fmt.Println(args.ind)
+									fmt.Println(args.args)
+								}
+							}
 
 							if args.close == 3 {
 								//todo: get content
@@ -692,9 +716,11 @@ func handleHtmlComponent(htmlData handleHtmlData){
 		opts = map[string]interface{}{}
 	}
 
-	for k, v := range htmlData.arguments.args {
+	fmt.Println(string(htmlData.arguments.tag))
+
+	/* for k, v := range htmlData.arguments.args {
 		opts[k] = v
-	}
+	} */
 
 	// precompile component
 	preCompile(path, &opts, htmlData.arguments, htmlData.html, htmlData.compileError, nil)
