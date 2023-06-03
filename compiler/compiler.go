@@ -194,7 +194,7 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 
 	//todo: merge html args with options (and compile options as needed)
 	// arguments should be passed by components (or will likely be blank if root)
-	fmt.Println(arguments)
+	// fmt.Println(arguments)
 
 
 	htmlRes := []byte{}
@@ -210,6 +210,8 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 			htmlRes = append(htmlRes, b...)
 		}
 	}
+
+	ifTagLevel := []uint8{}
 
 	var buf byte
 	for err == nil {
@@ -438,23 +440,194 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 						// 2 = <tag/> (</tag/>)
 						// 3 = <tag>
 
-						if args.tag[0] == '_' {
+						if regex.Comp(`(?i)^_?(el(?:se|if)|if|else_?if)$`).MatchRef(&args.tag) {
+							args.tag = bytes.ToLower(args.tag)
+
+							if args.close == 3 && (bytes.Equal(args.tag, []byte("_if")) || bytes.Equal(args.tag, []byte("if"))) { // open tag
+								if precompStr, ok := TagFuncs.If(options, &args, true); ok {
+									if precompStr == nil {
+										// grab if content and skip else content
+										ifTagLevel = append(ifTagLevel, 0)
+									}else{
+										// add string for compiler result and check else content
+										write(regex.JoinBytes([]byte("{{#:if "), precompStr, []byte("}}")))
+										ifTagLevel = append(ifTagLevel, 2)
+									}
+								}else{
+									// skip if content and move on to next else tag
+									ifTagLevel = append(ifTagLevel, 3)
+									ib, ie := reader.PeekByte(0)
+									ifLevel := 0
+									for ie == nil {
+										if ib == '"' || ib == '\'' || ib == '`' {
+											q := ib
+											reader.Discard(1)
+											ib, ie = reader.PeekByte(0)
+											for ie == nil && ib != q {
+												reader.Discard(1)
+												ib, ie = reader.PeekByte(0)
+											}
+										}else if ib == '<' {
+											ibTag, ie := reader.Peek(8)
+											if ie == nil && ifLevel == 0 && regex.Comp(`^</?_?(el(?:se|if)|else_?if)[\s/>:]`).MatchRef(&ibTag) {
+												break
+											}else if ie == nil && regex.Comp(`^</?_?(if)[\s/>:]`).MatchRef(&ibTag) {
+												if ibTag[1] == '/' {
+													ifLevel--
+													if ifLevel < 0 {
+														break
+													}
+												}else{
+													ifLevel++
+												}
+											}
+										}
+
+										reader.Discard(1)
+										ib, ie = reader.PeekByte(0)
+									}
+								}
+							}else if args.close == 1 && len(ifTagLevel) != 0 && (bytes.Equal(args.tag, []byte("_if")) || bytes.Equal(args.tag, []byte("if"))) {
+								if ifTagLevel[len(ifTagLevel)-1] == 1 || ifTagLevel[len(ifTagLevel)-1] == 2 {
+									write([]byte("{{/:if}}"))
+								}
+								ifTagLevel = ifTagLevel[:len(ifTagLevel)-1]
+							}else if len(ifTagLevel) != 0 && regex.Comp(`(?i)^_?(el(?:se|if)|else_?if)$`).MatchRef(&args.tag) {
+								if ifTagLevel[len(ifTagLevel)-1] == 0 || ifTagLevel[len(ifTagLevel)-1] == 1 { // true if statement
+									// skip content to closing if tag
+									ib, ie := reader.PeekByte(0)
+									ifLevel := 0
+									for ie == nil {
+										if ib == '"' || ib == '\'' || ib == '`' {
+											q := ib
+											reader.Discard(1)
+											ib, ie = reader.PeekByte(0)
+											for ie == nil && ib != q {
+												reader.Discard(1)
+												ib, ie = reader.PeekByte(0)
+											}
+										}else if ib == '<' {
+											ibTag, ie := reader.Peek(8)
+											if ie == nil && ifLevel == 0 && regex.Comp(`^</_?(if)[\s/>:]`).MatchRef(&ibTag) {
+												break
+											}else if ie == nil && regex.Comp(`^</?_?(if)[\s/>:]`).MatchRef(&ibTag) {
+												if ibTag[1] == '/' {
+													ifLevel--
+													if ifLevel < 0 {
+														ifLevel = 0
+													}
+												}else{
+													ifLevel++
+												}
+											}
+										}
+
+										reader.Discard(1)
+										ib, ie = reader.PeekByte(0)
+									}
+								}else if ifTagLevel[len(ifTagLevel)-1] == 2 { // string if statement
+									if precompStr, ok := TagFuncs.If(options, &args, true); ok {
+										if precompStr == nil {
+											// grab content and skip next else content
+											ifTagLevel[len(ifTagLevel)-1] = 1
+											write([]byte("{{#:else}}"))
+										}else{
+											// add string for compiler result and check else content
+											// ifTagLevel[len(ifTagLevel)-1] = 2
+											write(regex.JoinBytes([]byte("{{#:else "), precompStr, []byte("}}")))
+										}
+									}else{
+										// skip if content and move on to next else tag
+										ib, ie := reader.PeekByte(0)
+										ifLevel := 0
+										for ie == nil {
+											if ib == '"' || ib == '\'' || ib == '`' {
+												q := ib
+												reader.Discard(1)
+												ib, ie = reader.PeekByte(0)
+												for ie == nil && ib != q {
+													reader.Discard(1)
+													ib, ie = reader.PeekByte(0)
+												}
+											}else if ib == '<' {
+												ibTag, ie := reader.Peek(8)
+												if ie == nil && ifLevel == 0 && regex.Comp(`^</?_?(el(?:se|if)|else_?if)[\s/>:]`).MatchRef(&ibTag) {
+													break
+												}else if ie == nil && regex.Comp(`^</?_?(if)[\s/>:]`).MatchRef(&ibTag) {
+													if ibTag[1] == '/' {
+														ifLevel--
+														if ifLevel < 0 {
+															break
+														}
+													}else{
+														ifLevel++
+													}
+												}
+											}
+
+											reader.Discard(1)
+											ib, ie = reader.PeekByte(0)
+										}
+									}
+								}else if ifTagLevel[len(ifTagLevel)-1] == 3 { // false if statement
+									if precompStr, ok := TagFuncs.If(options, &args, true); ok {
+										if precompStr == nil {
+											// grab if content and skip else content
+											ifTagLevel[len(ifTagLevel)-1] = 0
+										}else{
+											fmt.Println("test 2")
+											// add string for compiler result and check else content
+											write(regex.JoinBytes([]byte("{{#:if "), precompStr, []byte("}}")))
+											ifTagLevel[len(ifTagLevel)-1] = 2
+										}
+									}else{
+										// skip if content and move on to next else tag
+										ifTagLevel[len(ifTagLevel)-1] = 3
+										ib, ie := reader.PeekByte(0)
+										ifLevel := 0
+										for ie == nil {
+											if ib == '"' || ib == '\'' || ib == '`' {
+												q := ib
+												reader.Discard(1)
+												ib, ie = reader.PeekByte(0)
+												for ie == nil && ib != q {
+													reader.Discard(1)
+													ib, ie = reader.PeekByte(0)
+												}
+											}else if ib == '<' {
+												ibTag, ie := reader.Peek(8)
+												if ie == nil && ifLevel == 0 && regex.Comp(`^</?_?(el(?:se|if)|else_?if)[\s/>:]`).MatchRef(&ibTag) {
+													break
+												}else if ie == nil && regex.Comp(`^</?_?(if)[\s/>:]`).MatchRef(&ibTag) {
+													if ibTag[1] == '/' {
+														ifLevel--
+														if ifLevel < 0 {
+															break
+														}
+													}else{
+														ifLevel++
+													}
+												}
+											}
+	
+											reader.Discard(1)
+											ib, ie = reader.PeekByte(0)
+										}
+									}
+								}
+							}
+						}else if args.tag[0] == '_' {
 							args.tag = bytes.ToLower(args.tag)
 							//todo: handle function tags (<_myFunc>)
 
-							//todo: handle "if" and "each" functions in sync, instead of using concurrent goroutines
+							//todo: may handle "each" functions in sync, instead of using concurrent goroutines
+							// (or might just let if statements be different)
 							// may think about using a concurrent channel for other functions
-
-							if bytes.Equal(args.tag, []byte("_if")) || bytes.Equal(args.tag, []byte("else")) || bytes.Equal(args.tag, []byte("elif")) {
-								if args.close == 3 { // open tag
-									fmt.Println(args.ind)
-									fmt.Println(args.args)
-								}
-							}
 
 							if args.close == 3 {
 								//todo: get content
-
+								// will also need to pass the args and allow content to compile like normal
+								// may use "htmlContTemp" and "htmlContTempTag" like with components (could probably share the same var)
 							}
 
 							// don't forget to change the return value for the "handleHtmlFunc" method when debugging
