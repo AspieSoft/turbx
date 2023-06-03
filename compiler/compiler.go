@@ -621,8 +621,10 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 							//todo: handle function tags (<_myFunc>)
 
 							//todo: may handle "each" functions in sync, instead of using concurrent goroutines
-							// (or might just let if statements be different)
 							// may think about using a concurrent channel for other functions
+							// (or might just let if statements be different, and handle each statements like other vars)
+							// each statements will need to handle its vars in its content (may need to add them to a list of vars for the compiler to temporarily ignore)
+							// will also need to handle inner each statements before outer ones (same may work for other functions)
 
 							if args.close == 3 {
 								//todo: get content
@@ -696,6 +698,7 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 		}
 
 		//todo: add optional shortcode handler (ie: {{#plugin:shortcode}} {{#:priorityShortcode}})
+		// (or may use {{#shortcode@plugin}} || {{#priorityShortcode}} with "@plugin" optional)
 		// may add in a "#shortcode" option to options, and pass in a list of functions that return html/markdown
 		// may also add a mothod for shortcodes to run other shortcodes (apart from themselves)
 
