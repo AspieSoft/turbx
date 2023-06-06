@@ -76,6 +76,7 @@ function clean(input, allowControlChars = false) {
 
   function cleanArr(input) {
     let output = [];
+    // deepcode ignore ArrayMethodOnNonArray: input var has already been verified as an array
     input.forEach(value => {
       output.push(cleanType(value));
     });
