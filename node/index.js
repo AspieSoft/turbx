@@ -16,7 +16,6 @@ const ROOT = (function () {
     return clean(process.cwd());
   }
   if (require.main.filename) {
-    // file deepcode ignore StringMethodOnNonString: the clean method always returns the same type it receives, file deepcode ignore ExpectsArray: common.clean does not expect an array, and will except any var type, file deepcode ignore ExpectsObjectDislikesPrimitive: common.clean does not expect an object, and will except any var type
     return clean(require.main.filename.toString()).replace(/[\\\/][^\\\/]+[\\\/]?$/, '');
   }
   if (require.main.path) {
@@ -111,7 +110,6 @@ function initCompiler(){
       return;
     }
 
-    // deepcode ignore StringMethodOnNonString: var was already set to a string
     data = data.split(':', 3);
 
     CompilerOutput[data[0]] = {res: data[1], data: data[2]};
@@ -290,7 +288,7 @@ function setupExpress(app){
         options.cacheID = data[1];
       }
 
-      // deepcode ignore GlobalReplacementRegex: replace function is not global on purpose
+      // file deepcode ignore GlobalReplacementRegex: non global replace functions are used on purpose in js
       let ext = (view.includes('.') ? view.substring(view.lastIndexOf('.')).replace('.', '') : undefined);
       if(ext && !options.ext){
         options.ext = ext
@@ -484,7 +482,6 @@ async function engine(path, opts, cb){
   }
 
   if (!OPTS.ext) {
-    // deepcode ignore GlobalReplacementRegex: replace function is not global on purpose
     setOpt('ext', (opts.settings['view engine'] || (path.includes('.') ? path.substring(path.lastIndexOf('.')).replace('.', '') : 'md')).toString())
   }
 
