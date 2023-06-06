@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strconv"
 	"strings"
@@ -124,11 +125,15 @@ type htmlArgs struct {
 	ind []string
 	tag []byte
 	close uint8
+
+	passToComp bool
+	fnContArgs *[][][]byte
 }
 
 type htmlChanList struct {
 	tag chan handleHtmlData
 	comp chan handleHtmlData
+	fn chan handleHtmlData
 }
 
 type handleHtmlData struct {
@@ -137,6 +142,9 @@ type handleHtmlData struct {
 	arguments *htmlArgs
 	compileError *error
 	componentList [][]byte
+
+	fn *func(opts *map[string]interface{}, args *htmlArgs, precomp bool) []byte
+	preComp bool
 
 	stopChan bool
 }
@@ -200,6 +208,9 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 	htmlRes := []byte{}
 	htmlTags := []*[]byte{}
 	htmlTagsErr := []*error{}
+	fnContArgs := [][][]byte{}
+
+	hasRerunIfTags := false
 
 	htmlContTemp := [][]byte{}
 	htmlContTempTag := []htmlArgs{}
@@ -442,6 +453,7 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 
 						if regex.Comp(`(?i)^_?(el(?:se|if)|if|else_?if)$`).MatchRef(&args.tag) {
 							args.tag = bytes.ToLower(args.tag)
+							args.fnContArgs = &fnContArgs
 
 							if args.close == 3 && (bytes.Equal(args.tag, []byte("_if")) || bytes.Equal(args.tag, []byte("if"))) { // open tag
 								if precompStr, ok := TagFuncs.If(options, &args, true); ok {
@@ -450,7 +462,13 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 										ifTagLevel = append(ifTagLevel, 0)
 									}else{
 										// add string for compiler result and check else content
-										write(regex.JoinBytes([]byte("{{#:if "), precompStr, []byte("}}")))
+										rerunPreComp := []byte{}
+										if len(precompStr) != 0 && precompStr[0] == 0 {
+											rerunPreComp = []byte{'&'}
+											hasRerunIfTags = true
+											precompStr = precompStr[1:]
+										}
+										write(regex.JoinBytes([]byte("{{%"), rerunPreComp, []byte("if "), precompStr, []byte("}}")))
 										ifTagLevel = append(ifTagLevel, 2)
 									}
 								}else{
@@ -489,7 +507,7 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 								}
 							}else if args.close == 1 && len(ifTagLevel) != 0 && (bytes.Equal(args.tag, []byte("_if")) || bytes.Equal(args.tag, []byte("if"))) {
 								if ifTagLevel[len(ifTagLevel)-1] == 1 || ifTagLevel[len(ifTagLevel)-1] == 2 {
-									write([]byte("{{/:if}}"))
+									write([]byte("{{%/if}}"))
 								}
 								ifTagLevel = ifTagLevel[:len(ifTagLevel)-1]
 							}else if len(ifTagLevel) != 0 && regex.Comp(`(?i)^_?(el(?:se|if)|else_?if)$`).MatchRef(&args.tag) {
@@ -530,11 +548,16 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 										if precompStr == nil {
 											// grab content and skip next else content
 											ifTagLevel[len(ifTagLevel)-1] = 1
-											write([]byte("{{#:else}}"))
+											write([]byte("{{%else}}"))
 										}else{
 											// add string for compiler result and check else content
-											// ifTagLevel[len(ifTagLevel)-1] = 2
-											write(regex.JoinBytes([]byte("{{#:else "), precompStr, []byte("}}")))
+											rerunPreComp := []byte{}
+											if len(precompStr) != 0 && precompStr[0] == 0 {
+												rerunPreComp = []byte{'&'}
+												hasRerunIfTags = true
+												precompStr = precompStr[1:]
+											}
+											write(regex.JoinBytes([]byte("{{%"), rerunPreComp, []byte("else "), precompStr, []byte("}}")))
 										}
 									}else{
 										// skip if content and move on to next else tag
@@ -575,14 +598,18 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 											// grab if content and skip else content
 											ifTagLevel[len(ifTagLevel)-1] = 0
 										}else{
-											fmt.Println("test 2")
 											// add string for compiler result and check else content
-											write(regex.JoinBytes([]byte("{{#:if "), precompStr, []byte("}}")))
+											rerunPreComp := []byte{}
+											if len(precompStr) != 0 && precompStr[0] == 0 {
+												rerunPreComp = []byte{'&'}
+												hasRerunIfTags = true
+												precompStr = precompStr[1:]
+											}
 											ifTagLevel[len(ifTagLevel)-1] = 2
+											write(regex.JoinBytes([]byte("{{%"), rerunPreComp, []byte("if "), precompStr, []byte("}}")))
 										}
 									}else{
 										// skip if content and move on to next else tag
-										ifTagLevel[len(ifTagLevel)-1] = 3
 										ib, ie := reader.PeekByte(0)
 										ifLevel := 0
 										for ie == nil {
@@ -616,24 +643,83 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 									}
 								}
 							}
-						}else if args.tag[0] == '_' {
+						}else if args.tag[0] == '_' && len(args.tag) > 1 {
 							args.tag = bytes.ToLower(args.tag)
-							//todo: handle function tags (<_myFunc>)
-
-							//todo: may handle "each" functions in sync, instead of using concurrent goroutines
-							// may think about using a concurrent channel for other functions
-							// (or might just let if statements be different, and handle each statements like other vars)
-							// each statements will need to handle its vars in its content (may need to add them to a list of vars for the compiler to temporarily ignore)
-							// will also need to handle inner each statements before outer ones (same may work for other functions)
+							args.tag[1] = bytes.ToUpper([]byte{args.tag[1]})[0]
 
 							if args.close == 3 {
-								//todo: get content
-								// will also need to pass the args and allow content to compile like normal
-								// may use "htmlContTemp" and "htmlContTempTag" like with components (could probably share the same var)
-							}
+								var contArgs [][]byte
+								if fn, _, fnErr := getTagFunc[[][]byte](args.tag); fnErr == nil {
+									contArgs = fn(options, &args, true)
+								}
 
-							// don't forget to change the return value for the "handleHtmlFunc" method when debugging
-							// "handleHtmlFunc" currently reports an error of "unfinished method"
+								if contArgs != nil && len(contArgs) != 0 && contArgs[0] != nil && len(contArgs[0]) != 0 && contArgs[0][0] == 0 {
+									fnContArgs = append(fnContArgs, contArgs[1:])
+									args.passToComp = true
+									write(regex.JoinBytes([]byte("{{%"), args.tag[1:], ' ', contArgs[0][1:], []byte("}}")))
+								}else{
+									fnContArgs = append(fnContArgs, contArgs)
+								}
+
+								htmlContTempTag = append(htmlContTempTag, args)
+								htmlContTemp = append(htmlContTemp, []byte{})
+							}else if args.close == 1 && bytes.Equal(args.tag, htmlContTempTag[len(htmlContTemp)-1].tag) {
+								if args.passToComp {
+									write(htmlContTemp[len(htmlContTempTag)-1])
+									write(regex.JoinBytes([]byte("{{%/"), args.tag[1:], []byte("}}")))
+
+									htmlContTemp = htmlContTemp[:len(htmlContTemp)-1]
+									htmlContTempTag = htmlContTempTag[:len(htmlContTempTag)-1]
+									fnContArgs = fnContArgs[:len(fnContArgs)-1]
+								}else{
+									for k, v := range htmlContTempTag[len(htmlContTemp)-1].args {
+										args.args[k] = v
+									}
+									args.args["body"] = htmlContTemp[len(htmlContTempTag)-1]
+
+									htmlContTemp = htmlContTemp[:len(htmlContTempTag)-1]
+									htmlContTempTag = htmlContTempTag[:len(htmlContTempTag)-1]
+									fnContArgs = fnContArgs[:len(fnContArgs)-1]
+
+									fn, isSync, fnErr := getTagFunc[[]byte](args.tag)
+									if fnErr != nil {
+										*compileError = fnErr
+										(*html)[0] = 2
+										return
+									}
+
+									htmlCont := []byte{0}
+									var compErr error
+									htmlTags = append(htmlTags, &htmlCont)
+									htmlTagsErr = append(htmlTagsErr, &compErr)
+
+									if !isSync && htmlChan != nil {
+										htmlChan.fn <- handleHtmlData{fn: &fn, preComp: true, html: &htmlCont, options: options, arguments: &args, compileError: &compErr, componentList: componentList}
+									}else{
+										handleHtmlFunc(handleHtmlData{fn: &fn, preComp: true, html: &htmlCont, options: options, arguments: &args, compileError: &compErr, componentList: componentList})
+									}
+									write([]byte{0})
+								}
+							}else if args.close == 2 {
+								fn, isSync, fnErr := getTagFunc[[]byte](args.tag)
+								if fnErr != nil {
+									*compileError = fnErr
+									(*html)[0] = 2
+									return
+								}
+
+								htmlCont := []byte{0}
+								var compErr error
+								htmlTags = append(htmlTags, &htmlCont)
+								htmlTagsErr = append(htmlTagsErr, &compErr)
+
+								if !isSync && htmlChan != nil {
+									htmlChan.fn <- handleHtmlData{fn: &fn, preComp: true, html: &htmlCont, options: options, arguments: &args, compileError: &compErr, componentList: componentList}
+								}else{
+									handleHtmlFunc(handleHtmlData{fn: &fn, preComp: true, html: &htmlCont, options: options, arguments: &args, compileError: &compErr, componentList: componentList})
+								}
+								write([]byte{0})
+							}
 						}else if args.tag[0] == bytes.ToUpper([]byte{args.tag[0]})[0] {
 							if args.close == 3 {
 								htmlContTempTag = append(htmlContTempTag, args)
@@ -697,8 +783,7 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 			}
 		}
 
-		//todo: add optional shortcode handler (ie: {{#plugin:shortcode}} {{#:priorityShortcode}})
-		// (or may use {{#shortcode@plugin}} || {{#priorityShortcode}} with "@plugin" optional)
+		//todo: add optional shortcode handler (ie: {{#shortcode@plugin}} {{#priorityShortcode}}) ("@plugin" should be optional)
 		// may add in a "#shortcode" option to options, and pass in a list of functions that return html/markdown
 		// may also add a mothod for shortcodes to run other shortcodes (apart from themselves)
 
@@ -710,6 +795,7 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 	if htmlChan != nil {
 		htmlChan.tag <- handleHtmlData{stopChan: true}
 		htmlChan.comp <- handleHtmlData{stopChan: true}
+		htmlChan.fn <- handleHtmlData{stopChan: true}
 	}
 
 	// merge html tags when done
@@ -734,6 +820,15 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 		htmlTagsInd++
 
 		i = bytes.IndexByte(htmlRes, 0)
+	}
+
+	if hasRerunIfTags {
+		//todo: run {{%&if}} tags (not {{%if}} tags)
+		// may also need to handle {{%&else}} tags that are nested in normal {{%if}} tags
+		// may also rerun "if" funcs just for fn content
+		// may make a new func handler for "each" funcs (and others) and pass different args and values with them
+		//todo: may need to seperate "each" loops from other functions
+		// may also need to generare rerun functions for {{%&each}} funcs, and handle them more like "if" funcs
 	}
 
 	*html = append(*html, htmlRes...)
@@ -857,15 +952,23 @@ func handleHtmlTag(htmlData handleHtmlData){
 }
 
 func handleHtmlFunc(htmlData handleHtmlData){
-	//htmlData: html *[]byte, options *map[string]interface{}, arguments *htmlArgs, compileError *error
+	//htmlData: fn *func(/*tag function args*/)[]byte, preComp bool, html *[]byte, options *map[string]interface{}, arguments *htmlArgs, compileError *error
 
-	//todo: handle function html tag
-	// fmt.Println(arguments)
+	res := (*htmlData.fn)(htmlData.options, htmlData.arguments, htmlData.preComp)
+	if res != nil && len(res) != 0 {
+		if res[0] == 0 {
+			*htmlData.html = append(*htmlData.html, regex.JoinBytes([]byte("{{%"), htmlData.arguments.tag[1:], ' ', res[1:], []byte("/}}"))...)
+		}else if res[0] == 1 {
+			*htmlData.compileError = errors.New(string(res[1:]))
+			(*htmlData.html)[0] = 2
+			return
+		}else{
+			*htmlData.html = append(*htmlData.html, res...)
+		}
+	}
 
 	// set first index to 1 to mark as ready
-	// set to 2 for an error
-	*htmlData.compileError = errors.New("this method has not been setup yet")
-	(*htmlData.html)[0] = 2
+	(*htmlData.html)[0] = 1
 }
 
 func handleHtmlComponent(htmlData handleHtmlData){
@@ -923,6 +1026,7 @@ func handleHtmlComponent(htmlData handleHtmlData){
 func newPreCompileChan() htmlChanList {
 	tagChan := make(chan handleHtmlData)
 	compChan := make(chan handleHtmlData)
+	fnChan := make(chan handleHtmlData)
 
 	go func(){
 		for {
@@ -946,5 +1050,65 @@ func newPreCompileChan() htmlChanList {
 		}
 	}()
 
-	return htmlChanList{tag: tagChan, comp: compChan}
+	go func(){
+		for {
+			handleHtml := <-fnChan
+			if handleHtml.stopChan {
+				break
+			}
+
+			handleHtmlFunc(handleHtml)
+		}
+	}()
+
+	return htmlChanList{tag: tagChan, comp: compChan, fn: fnChan}
+}
+
+// getTagFunc returns a tag function based on the name
+// 
+// @type: []byte = return a normal func, [][]byte = return an init func
+//
+// @bool: isSync
+func getTagFunc[T interface{[]byte | [][]byte}](name []byte) (func(opts *map[string]interface{}, args *htmlArgs, precomp bool)T, bool, error) {
+	if name[0] == '_' {
+		name = name[1:]
+	}
+	nameStr := string(regex.Compile(`[^\w_]`).RepStrRef(&name, []byte{}))
+
+	init := false
+	var t interface{} = [][]byte{}
+	if _, ok := t.(T); ok {
+		init = true
+	}
+
+	if init {
+		nameStr += "_INIT"
+	}
+	
+	isSync := false
+
+	found := true
+	m := reflect.ValueOf(&TagFuncs).MethodByName(nameStr)
+	if goutil.IsZeroOfUnderlyingType(m) {
+		if !init {
+			m = reflect.ValueOf(&TagFuncs).MethodByName(nameStr+"_SYNC")
+			if goutil.IsZeroOfUnderlyingType(m) {
+				found = false
+			}else{
+				isSync = true
+			}
+		}else{
+			found = false
+		}
+	}
+
+	if !found {
+		return nil, false, errors.New("method '"+nameStr+"' does not exist in Compiled Functions")
+	}
+
+	if fn, ok := m.Interface().(func(opts *map[string]interface{}, args *htmlArgs, precomp bool)T); ok {
+		return fn, isSync, nil
+	}
+
+	return nil, false, errors.New("method '"+nameStr+"' does not return the expected args")
 }
