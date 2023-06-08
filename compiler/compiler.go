@@ -127,7 +127,13 @@ type htmlArgs struct {
 	close uint8
 
 	passToComp bool
-	fnContArgs *[][][]byte
+}
+
+type EachArgs struct {
+	listMap map[string]interface{}
+	listArr []interface{}
+	key []byte
+	val []byte
 }
 
 type htmlChanList struct {
@@ -208,9 +214,6 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 	htmlRes := []byte{}
 	htmlTags := []*[]byte{}
 	htmlTagsErr := []*error{}
-	fnContArgs := [][][]byte{}
-
-	hasRerunIfTags := false
 
 	htmlContTemp := [][]byte{}
 	htmlContTempTag := []htmlArgs{}
@@ -453,22 +456,25 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 
 						if regex.Comp(`(?i)^_?(el(?:se|if)|if|else_?if)$`).MatchRef(&args.tag) {
 							args.tag = bytes.ToLower(args.tag)
-							args.fnContArgs = &fnContArgs
 
 							if args.close == 3 && (bytes.Equal(args.tag, []byte("_if")) || bytes.Equal(args.tag, []byte("if"))) { // open tag
 								if precompStr, ok := TagFuncs.If(options, &args, true); ok {
 									if precompStr == nil {
 										// grab if content and skip else content
 										ifTagLevel = append(ifTagLevel, 0)
+										if ib, ie := reader.PeekByte(0); ie == nil {
+											if ib == '\r' {
+												reader.Discard(1)
+												if ib, ie := reader.PeekByte(0); ie == nil && ib == '\n' {
+													reader.Discard(1)
+												}
+											}else if ib == '\n' {
+												reader.Discard(1)
+											}
+										}
 									}else{
 										// add string for compiler result and check else content
-										rerunPreComp := []byte{}
-										if len(precompStr) != 0 && precompStr[0] == 0 {
-											rerunPreComp = []byte{'&'}
-											hasRerunIfTags = true
-											precompStr = precompStr[1:]
-										}
-										write(regex.JoinBytes([]byte("{{%"), rerunPreComp, []byte("if "), precompStr, []byte("}}")))
+										write(regex.JoinBytes([]byte("{{%if "), precompStr, []byte("}}")))
 										ifTagLevel = append(ifTagLevel, 2)
 									}
 								}else{
@@ -508,6 +514,15 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 							}else if args.close == 1 && len(ifTagLevel) != 0 && (bytes.Equal(args.tag, []byte("_if")) || bytes.Equal(args.tag, []byte("if"))) {
 								if ifTagLevel[len(ifTagLevel)-1] == 1 || ifTagLevel[len(ifTagLevel)-1] == 2 {
 									write([]byte("{{%/if}}"))
+								}else if ib, ie := reader.PeekByte(0); ie == nil {
+									if ib == '\r' {
+										reader.Discard(1)
+										if ib, ie := reader.PeekByte(0); ie == nil && ib == '\n' {
+											reader.Discard(1)
+										}
+									}else if ib == '\n' {
+										reader.Discard(1)
+									}
 								}
 								ifTagLevel = ifTagLevel[:len(ifTagLevel)-1]
 							}else if len(ifTagLevel) != 0 && regex.Comp(`(?i)^_?(el(?:se|if)|else_?if)$`).MatchRef(&args.tag) {
@@ -551,13 +566,7 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 											write([]byte("{{%else}}"))
 										}else{
 											// add string for compiler result and check else content
-											rerunPreComp := []byte{}
-											if len(precompStr) != 0 && precompStr[0] == 0 {
-												rerunPreComp = []byte{'&'}
-												hasRerunIfTags = true
-												precompStr = precompStr[1:]
-											}
-											write(regex.JoinBytes([]byte("{{%"), rerunPreComp, []byte("else "), precompStr, []byte("}}")))
+											write(regex.JoinBytes([]byte("{{%else "), precompStr, []byte("}}")))
 										}
 									}else{
 										// skip if content and move on to next else tag
@@ -597,16 +606,20 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 										if precompStr == nil {
 											// grab if content and skip else content
 											ifTagLevel[len(ifTagLevel)-1] = 0
+											if ib, ie := reader.PeekByte(0); ie == nil {
+												if ib == '\r' {
+													reader.Discard(1)
+													if ib, ie := reader.PeekByte(0); ie == nil && ib == '\n' {
+														reader.Discard(1)
+													}
+												}else if ib == '\n' {
+													reader.Discard(1)
+												}
+											}
 										}else{
 											// add string for compiler result and check else content
-											rerunPreComp := []byte{}
-											if len(precompStr) != 0 && precompStr[0] == 0 {
-												rerunPreComp = []byte{'&'}
-												hasRerunIfTags = true
-												precompStr = precompStr[1:]
-											}
 											ifTagLevel[len(ifTagLevel)-1] = 2
-											write(regex.JoinBytes([]byte("{{%"), rerunPreComp, []byte("if "), precompStr, []byte("}}")))
+											write(regex.JoinBytes([]byte("{{%if "), precompStr, []byte("}}")))
 										}
 									}else{
 										// skip if content and move on to next else tag
@@ -643,11 +656,118 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 									}
 								}
 							}
+						}else if regex.Comp(`(?i)^_?(each|for|for_?each)$`).MatchRef(&args.tag) {
+							args.tag = bytes.ToLower(args.tag)
+							
+							if args.close == 3 {
+								if args.args["0"] != nil && len(args.args["0"]) != 0 && args.args["0"][0] == 0 {
+									if hasVarOpt(args.args["0"][1:], options, 0, true) {
+										listArg := GetOpt(args.args["0"][1:], options, 0, true, false)
+										if t := reflect.TypeOf(listArg); t == goutil.VarType["map[string]interface{}"] || t == goutil.VarType["[]interface{}"] {
+											var eachArgs EachArgs
+											if t == goutil.VarType["map[string]interface{}"] && len(listArg.(map[string]interface{})) != 0 {
+												eachArgs.listMap = listArg.(map[string]interface{})
+											}else if t == goutil.VarType["[]interface{}"] && len(listArg.([]interface{})) != 0 {
+												eachArgs.listArr = listArg.([]interface{})
+											}else{
+												// skip each content and move on to closing each tag
+												ifTagLevel = append(ifTagLevel, 3)
+												ib, ie := reader.PeekByte(0)
+												ifLevel := 0
+												for ie == nil {
+													if ib == '"' || ib == '\'' || ib == '`' {
+														q := ib
+														reader.Discard(1)
+														ib, ie = reader.PeekByte(0)
+														for ie == nil && ib != q {
+															reader.Discard(1)
+															ib, ie = reader.PeekByte(0)
+														}
+													}else if ib == '<' {
+														ibTag, ie := reader.Peek(8)
+														if ie == nil && ifLevel == 0 && regex.Comp(`^</?_?(each|for|for_?each)[\s/>:]`).MatchRef(&ibTag) {
+															break
+														}else if ie == nil && regex.Comp(`^</?_?(each|for|for_?each)[\s/>:]`).MatchRef(&ibTag) {
+															if ibTag[1] == '/' {
+																ifLevel--
+																if ifLevel < 0 {
+																	break
+																}
+															}else{
+																ifLevel++
+															}
+														}
+													}
+
+													reader.Discard(1)
+													ib, ie = reader.PeekByte(0)
+												}
+												continue
+											}
+
+											if args.args["key"] != nil && len(args.args["key"]) != 0 && args.args["0"][0] == 0 {
+												eachArgs.key = args.args["key"][1:]
+											}else if args.args["of"] != nil && len(args.args["of"]) != 0 && args.args["0"][0] == 0 {
+												eachArgs.key = args.args["of"][1:]
+											}
+		
+											if args.args["value"] != nil && len(args.args["value"]) != 0 && args.args["0"][0] == 0 {
+												eachArgs.val = args.args["value"][1:]
+											}else if args.args["as"] != nil && len(args.args["as"]) != 0 && args.args["0"][0] == 0 {
+												eachArgs.val = args.args["as"][1:]
+											}
+		
+											fmt.Println(eachArgs)
+											//todo: add args to ignore in vars and if statements
+											// or may change up discard method to keep good output in each loops to rerun
+
+											continue
+										}
+									}else{
+										//todo: return new each function to run in compiler
+
+										continue
+									}
+								}
+
+								// skip each content and move on to closing each tag
+								ifTagLevel = append(ifTagLevel, 3)
+								ib, ie := reader.PeekByte(0)
+								ifLevel := 0
+								for ie == nil {
+									if ib == '"' || ib == '\'' || ib == '`' {
+										q := ib
+										reader.Discard(1)
+										ib, ie = reader.PeekByte(0)
+										for ie == nil && ib != q {
+											reader.Discard(1)
+											ib, ie = reader.PeekByte(0)
+										}
+									}else if ib == '<' {
+										ibTag, ie := reader.Peek(8)
+										if ie == nil && ifLevel == 0 && regex.Comp(`^</?_?(each|for|for_?each)[\s/>:]`).MatchRef(&ibTag) {
+											break
+										}else if ie == nil && regex.Comp(`^</?_?(each|for|for_?each)[\s/>:]`).MatchRef(&ibTag) {
+											if ibTag[1] == '/' {
+												ifLevel--
+												if ifLevel < 0 {
+													break
+												}
+											}else{
+												ifLevel++
+											}
+										}
+									}
+
+									reader.Discard(1)
+									ib, ie = reader.PeekByte(0)
+								}
+							}
 						}else if args.tag[0] == '_' && len(args.tag) > 1 {
 							args.tag = bytes.ToLower(args.tag)
 							args.tag[1] = bytes.ToUpper([]byte{args.tag[1]})[0]
 
-							if args.close == 3 {
+							/* if args.close == 3 {
 								var contArgs [][]byte
 								if fn, _, fnErr := getTagFunc[[][]byte](args.tag); fnErr == nil {
 									contArgs = fn(options, &args, true)
@@ -719,7 +839,7 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 									handleHtmlFunc(handleHtmlData{fn: &fn, preComp: true, html: &htmlCont, options: options, arguments: &args, compileError: &compErr, componentList: componentList})
 								}
 								write([]byte{0})
-							}
+							} */
 						}else if args.tag[0] == bytes.ToUpper([]byte{args.tag[0]})[0] {
 							if args.close == 3 {
 								htmlContTempTag = append(htmlContTempTag, args)
@@ -822,14 +942,14 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 		i = bytes.IndexByte(htmlRes, 0)
 	}
 
-	if hasRerunIfTags {
+	// if hasRerunIfTags {
 		//todo: run {{%&if}} tags (not {{%if}} tags)
 		// may also need to handle {{%&else}} tags that are nested in normal {{%if}} tags
 		// may also rerun "if" funcs just for fn content
 		// may make a new func handler for "each" funcs (and others) and pass different args and values with them
 		//todo: may need to seperate "each" loops from other functions
 		// may also need to generare rerun functions for {{%&each}} funcs, and handle them more like "if" funcs
-	}
+	// }
 
 	*html = append(*html, htmlRes...)
 	(*html)[0] = 1
