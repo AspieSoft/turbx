@@ -3,7 +3,7 @@ module github.com/AspieSoft/turbx
 go 1.19
 
 require (
-	github.com/AspieSoft/go-liveread v1.0.1
+	github.com/AspieSoft/go-liveread v1.2.0
 	github.com/AspieSoft/go-regex/v4 v4.1.2
 	github.com/AspieSoft/goutil/v4 v4.1.0
 	github.com/AspieSoft/goutil/v5 v5.0.3

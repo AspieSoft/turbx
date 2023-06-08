@@ -194,7 +194,7 @@ func PreCompile(path string, opts map[string]interface{}) error {
 }
 
 func preCompile(path string, options *map[string]interface{}, arguments *htmlArgs, html *[]byte, compileError *error, htmlChan *htmlChanList, componentList [][]byte){
-	reader, err := liveread.Read(path)
+	reader, err := liveread.Read[uint8](path)
 	if err != nil {
 		*compileError = err
 		(*html)[0] = 2
@@ -254,7 +254,7 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 			if regex.Comp(`[\w_]`).MatchRef(&[]byte{b}) {
 				args.tag = []byte{b}
 				ind++
-				
+
 				// get tag
 				for e == nil {
 					b, e = reader.PeekByte(ind)
@@ -720,6 +720,7 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 											fmt.Println(eachArgs)
 											//todo: add args to ignore in vars and if statements
 											// or may change up discard method to keep good output in each loops to rerun
+											//* may use new reader.Save() and reader.Restore() methods
 
 											continue
 										}
@@ -766,6 +767,8 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 						}else if args.tag[0] == '_' && len(args.tag) > 1 {
 							args.tag = bytes.ToLower(args.tag)
 							args.tag[1] = bytes.ToUpper([]byte{args.tag[1]})[0]
+
+							//todo: rebuild this function in a simpler way
 
 							/* if args.close == 3 {
 								var contArgs [][]byte
