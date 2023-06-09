@@ -182,7 +182,7 @@ func PreCompile(path string, opts map[string]interface{}) error {
 	htmlChan := newPreCompileChan()
 
 	html := []byte{0}
-	preCompile(path, &opts, &htmlArgs{}, &html, &err, &htmlChan, nil)
+	preCompile(path, &opts, &htmlArgs{}, &html, &err, &htmlChan, nil, nil)
 	if err != nil {
 		if compilerConfig.DebugMode {
 			fmt.Println(err)
@@ -201,7 +201,7 @@ func PreCompile(path string, opts map[string]interface{}) error {
 	return nil
 }
 
-func preCompile(path string, options *map[string]interface{}, arguments *htmlArgs, html *[]byte, compileError *error, htmlChan *htmlChanList, componentList [][]byte){
+func preCompile(path string, options *map[string]interface{}, arguments *htmlArgs, html *[]byte, compileError *error, htmlChan *htmlChanList, eachArgsList []EachArgs, componentList [][]byte){
 	reader, err := liveread.Read[uint8](path)
 	if err != nil {
 		*compileError = err
@@ -213,10 +213,71 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 		componentList = [][]byte{}
 	}
 
+	if eachArgsList == nil {
+		eachArgsList = []EachArgs{}
+	}
 
-	//todo: merge html args with options (and compile options as needed)
-	// arguments should be passed by components (or will likely be blank if root)
-	// fmt.Println(arguments)
+
+	// merge html args with options (and compile options as needed)
+	if arguments.args != nil && len(arguments.args) != 0 {
+		if opts, err := goutil.JSON.DeepCopy(*options); err == nil {
+			for k, v := range arguments.args {
+				if !strings.HasPrefix(k, "$") {
+					k = "$"+k
+				}
+				
+				if k == "$body" {
+					opts[k] = v
+					continue
+				}
+
+				if v != nil && len(v) != 0 && v[0] == 0 {
+					v = v[1:]
+
+					if len(v) != 0 && bytes.HasPrefix(v, []byte("{{")) && bytes.HasSuffix(v, []byte("}}")) {
+						v = v[2:len(v)-2]
+	
+						if len(v) == 0 {
+							continue
+						}
+	
+						esc := uint8(2)
+	
+						if len(v) >= 2 && v[0] == '{' && v[1] == '}' {
+							esc = 0
+							v = v[1:len(v)-1]
+						}else if v[0] == '{' {
+							v = v[1:]
+						}else if v[len(v)-1] == '}' {
+							v = v[:len(v)-1]
+						}
+	
+						if val := GetOpt(v, options, &eachArgsList, esc, true, false); val != nil {
+							opts[k] = val
+						}
+					}else{
+						opts[k] = v
+					}
+
+					continue
+				}
+
+				if v != nil && len(v) != 0 {
+					if v[0] == 0 {
+						v = v[1:]
+
+						if len(v) == 0 {
+							continue
+						}
+					}
+
+					opts[k] = v
+				}
+			}
+
+			options = &opts
+		}
+	}
 
 
 	htmlRes := []byte{}
@@ -234,7 +295,6 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 	}
 
 	ifTagLevel := []uint8{}
-	eachArgsList := []EachArgs{}
 
 	var buf byte
 	for err == nil {
@@ -243,8 +303,7 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 			break
 		}
 
-		// handle html tags
-		if buf == '<' {
+		if buf == '<' { // handle html tags
 			args := htmlArgs{
 				args: map[string][]byte{},
 				ind: []string{},
@@ -645,8 +704,8 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 
 							if args.close == 3 {
 								if args.args["0"] != nil && len(args.args["0"]) != 0 && args.args["0"][0] == 0 {
-									if hasVarOpt(args.args["0"][1:], options, 0, true) {
-										listArg := GetOpt(args.args["0"][1:], options, 0, true, false)
+									if hasVarOpt(args.args["0"][1:], options, &eachArgsList, 0, true) {
+										listArg := GetOpt(args.args["0"][1:], options, &eachArgsList, 0, true, false)
 										if t := reflect.TypeOf(listArg); t == goutil.VarType["map[string]interface{}"] || t == goutil.VarType["[]interface{}"] {
 											eachArgs := EachArgs{}
 											if t == goutil.VarType["map[string]interface{}"] && len(listArg.(map[string]interface{})) != 0 {
@@ -856,6 +915,28 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 										break
 									}
 								}
+							}else if args.close == 2 {
+								fn, isSync, fnErr := getCoreTagFunc(args.tag)
+								if fnErr != nil {
+									if newFn, ok := TagFuncs.list[string(args.tag)]; ok {
+										fn = newFn
+										fnErr = nil
+									}
+								}
+
+								if fnErr == nil {
+									htmlCont := []byte{0}
+									var compErr error
+									htmlTags = append(htmlTags, &htmlCont)
+									htmlTagsErr = append(htmlTagsErr, &compErr)
+
+									if htmlChan != nil && !isSync {
+										htmlChan.fn <- handleHtmlData{fn: &fn, preComp: true, html: &htmlCont, options: options, arguments: &args, eachArgs: &eachArgsList, compileError: &compErr, componentList: componentList}
+									}else{
+										handleHtmlFunc(handleHtmlData{fn: &fn, preComp: true, html: &htmlCont, options: options, arguments: &args, eachArgs: &eachArgsList, compileError: &compErr, componentList: componentList})
+									}
+									write([]byte{0})
+								}
 							}
 						}else if args.tag[0] == bytes.ToUpper([]byte{args.tag[0]})[0] {
 							if args.close == 3 {
@@ -876,9 +957,9 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 								htmlTagsErr = append(htmlTagsErr, &compErr)
 
 								if htmlChan != nil {
-									htmlChan.comp <- handleHtmlData{html: &htmlCont, options: options, arguments: &args, compileError: &compErr, componentList: componentList}
+									htmlChan.comp <- handleHtmlData{html: &htmlCont, options: options, arguments: &args, compileError: &compErr, eachArgs: &eachArgsList, componentList: componentList}
 								}else{
-									handleHtmlComponent(handleHtmlData{html: &htmlCont, options: options, arguments: &args, compileError: &compErr, componentList: componentList})
+									handleHtmlComponent(handleHtmlData{html: &htmlCont, options: options, arguments: &args, compileError: &compErr, eachArgs: &eachArgsList, componentList: componentList})
 								}
 								write([]byte{0})
 							}else if args.close == 2 {
@@ -888,9 +969,9 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 								htmlTagsErr = append(htmlTagsErr, &compErr)
 
 								if htmlChan != nil {
-									htmlChan.comp <- handleHtmlData{html: &htmlCont, options: options, arguments: &args, compileError: &compErr, componentList: componentList}
+									htmlChan.comp <- handleHtmlData{html: &htmlCont, options: options, arguments: &args, compileError: &compErr, eachArgs: &eachArgsList, componentList: componentList}
 								}else{
-									handleHtmlComponent(handleHtmlData{html: &htmlCont, options: options, arguments: &args, compileError: &compErr, componentList: componentList})
+									handleHtmlComponent(handleHtmlData{html: &htmlCont, options: options, arguments: &args, compileError: &compErr, eachArgs: &eachArgsList, componentList: componentList})
 								}
 								write([]byte{0})
 							}
@@ -907,9 +988,9 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 
 							// pass through channel instead of a goroutine (like a queue)
 							if htmlChan != nil {
-								htmlChan.tag <- handleHtmlData{html: &htmlCont, options: options, arguments: &args, compileError: &compErr}
+								htmlChan.tag <- handleHtmlData{html: &htmlCont, options: options, arguments: &args, eachArgs: &eachArgsList, compileError: &compErr}
 							}else{
-								handleHtmlTag(handleHtmlData{html: &htmlCont, options: options, arguments: &args, compileError: &compErr})
+								handleHtmlTag(handleHtmlData{html: &htmlCont, options: options, arguments: &args, eachArgs: &eachArgsList, compileError: &compErr})
 							}
 							write([]byte{0})
 						}
@@ -918,49 +999,64 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 					}
 				}
 			}
-		}else if buf == '%' {
-			//todo: may be able to use regular {{var}} syntax for eachArgs if merged with the `GetOpt` method
-			i := uint(3)
-			b, e := reader.Peek(i)
-			if b[1] != '%' {
-				for e == nil && b[i-1] != '%' && ((b[i-1] >= '0' && b[i-1] <= '9') || (b[i-1] >= 'a' && b[i-1] <= 'z') || (b[i-1] >= 'A' && b[i-1] <= 'Z') || b[i-1] == '_' || b[i-1] == '-') {
-					i++
-					b, e = reader.Peek(i)
-				}
-
-				if e == nil && regex.Comp(`^%[\w_-]+%$`).MatchRef(&b) {
-					reader.Discard(i)
-					b = b[1:len(b)-1]
-					bc := append([]byte{'$'}, b...)
-
-					if len(eachArgsList) != 0 {
-						for i := len(eachArgsList)-1; i >= 0; i-- {
-							if bytes.Equal(b, eachArgsList[i].key) || bytes.Equal(bc, eachArgsList[i].key) {
-								if eachArgsList[i].passToComp {
-									write(regex.JoinBytes('%', b, '%'))
-								}else if eachArgsList[i].listMap != nil {
-									write(goutil.Conv.ToBytes(eachArgsList[i].listArr[eachArgsList[i].ind]))
-								}else{
-									write(goutil.Conv.ToBytes(eachArgsList[i].ind))
-								}
-
-								continue
-							}else if bytes.Equal(b, eachArgsList[i].val) || bytes.Equal(bc, eachArgsList[i].val) {
-								if eachArgsList[i].passToComp {
-									write(regex.JoinBytes('%', b, '%'))
-								}else if eachArgsList[i].listMap != nil {
-									key := goutil.Conv.ToString(eachArgsList[i].listArr[eachArgsList[i].ind])
-									write(toBytesOrJson(eachArgsList[i].listMap[key]))
-								}else{
-									write(toBytesOrJson(eachArgsList[i].listArr[eachArgsList[i].ind]))
-								}
-
-								continue
-							}
-						}
+		}else if buf == '{' { // handle html vars
+			ind := uint(3)
+			if b, e := reader.Peek(3); e == nil {
+				if b[0] == '{' && b[1] == '{' {
+					esc := uint8(2)
+					if b[2] == '{' {
+						esc = 0
+					}else{
+						ind--
 					}
 
-					continue
+					b, e = reader.Get(ind, 2)
+					for e == nil && !(b[0] == '}' && b[1] == '}') && b[0] != '\r' && b[0] != '\n' {
+						if b[0] == '"' || b[0] == '\'' || b[0] == '`' {
+							q := b[0]
+							ind++
+							b, e = reader.Get(ind, 2)
+							for e == nil && b[0] != q {
+								ind++
+								b, e = reader.Get(ind, 2)
+							}
+						}
+						ind++
+						b, e = reader.Get(ind, 2)
+					}
+
+					if e == nil && b[0] == '}' && b[1] == '}' {
+						if esc == 0 {
+							reader.Discard(3)
+						}else{
+							reader.Discard(2)
+						}
+
+						if esc == 0 {
+							b, e = reader.Peek(ind-3)
+							reader.Discard(ind-1)
+						}else{
+							b, e = reader.Peek(ind-2)
+							reader.Discard(ind)
+						}
+
+						if p, e := reader.PeekByte(0); e == nil {
+							if p == '}' {
+								reader.Discard(1)
+							}else{
+								esc = 2
+							}
+						}else{
+							esc = 2
+						}
+
+						val := GetOpt(b, options, &eachArgsList, esc, true, true)
+						if !goutil.IsZeroOfUnderlyingType(val) {
+							write(goutil.Conv.ToBytes(val))
+						}
+
+						continue
+					}
 				}
 			}
 		}
@@ -971,6 +1067,8 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 		// may have shortcodes run in elixir or another lightweight programming language (may also add subfolder for shortcodes)
 
 		//todo: consider using 'AspieSoft/go-memshare' module if a funcs.go file is detected in the $PWD directory and link it to the TagFuncs.AddFN method
+
+		//todo: handle markdown
 
 		write([]byte{buf})
 		reader.Discard(1)
@@ -1019,7 +1117,7 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 }
 
 func handleHtmlTag(htmlData handleHtmlData){
-	//htmlData: html *[]byte, options *map[string]interface{}, arguments *htmlArgs, compileError *error
+	//htmlData: html *[]byte, options *map[string]interface{}, arguments *htmlArgs, eachArgs *[]EachArgs, compileError *error
 
 	if htmlData.arguments.close == 1 {
 		(*htmlData.html) = append((*htmlData.html), regex.JoinBytes([]byte{'<', '/'}, htmlData.arguments.tag, '>')...)
@@ -1038,7 +1136,7 @@ func handleHtmlTag(htmlData handleHtmlData){
 				esc = 4
 			}
 
-			arg := GetOpt(htmlData.arguments.args[v][1:], htmlData.options, esc, true, true)
+			arg := GetOpt(htmlData.arguments.args[v][1:], htmlData.options, htmlData.eachArgs, esc, true, true)
 			if goutil.IsZeroOfUnderlyingType(arg) {
 				delete(htmlData.arguments.args, v)
 				continue
@@ -1046,7 +1144,7 @@ func handleHtmlTag(htmlData handleHtmlData){
 				htmlData.arguments.args[v] = goutil.Conv.ToBytes(arg)
 			}
 		}else if htmlData.arguments.args[v][0] == 2 {
-			arg := GetOpt(htmlData.arguments.args[v][1:], htmlData.options, 1, true, true)
+			arg := GetOpt(htmlData.arguments.args[v][1:], htmlData.options, htmlData.eachArgs, 1, true, true)
 			if goutil.IsZeroOfUnderlyingType(arg) {
 				delete(htmlData.arguments.args, v)
 				continue
@@ -1161,7 +1259,7 @@ func handleHtmlFunc(htmlData handleHtmlData){
 }
 
 func handleHtmlComponent(htmlData handleHtmlData){
-	//htmlData: html *[]byte, options *map[string]interface{}, arguments *htmlArgs, compileError *error, componentList [][]byte
+	//htmlData: html *[]byte, options *map[string]interface{}, arguments *htmlArgs, eachArgs *[]EachArgs, compileError *error, componentList [][]byte
 
 	// note: components cannot wait in the same channel without possibly getting stuck (ie: waiting for a parent that is also waiting for itself)
 
@@ -1202,7 +1300,8 @@ func handleHtmlComponent(htmlData handleHtmlData){
 	} */
 
 	// precompile component
-	preCompile(path, &opts, htmlData.arguments, htmlData.html, htmlData.compileError, nil, htmlData.componentList)
+	//todo: ensure htmlData.eachArgs is passing a clone, and not a pointer
+	preCompile(path, &opts, htmlData.arguments, htmlData.html, htmlData.compileError, nil, *htmlData.eachArgs, htmlData.componentList)
 	if *htmlData.compileError != nil {
 		(*htmlData.html)[0] = 2
 		return

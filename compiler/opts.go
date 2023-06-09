@@ -8,8 +8,7 @@ import (
 	"github.com/AspieSoft/goutil/v5"
 )
 
-//todo: have GetOpt method handle eachArgs as well
-func GetOpt(name []byte, opts *map[string]interface{}, escape uint8, precomp bool, stringsOnly bool) interface{} {
+func GetOpt(name []byte, opts *map[string]interface{}, eachArgs *[]EachArgs, escape uint8, precomp bool, stringsOnly bool) interface{} {
 	// escape: 0 = raw, 1 = raw arg, 2 = html, 3 = arg, 4 = html arg key
 
 	regWord := `(?:[\w_\-$]+|'(?:\\[\\']|[^'])*'|"(?:\\[\\"]|[^"])*"|\'(?:\\[\\\']|[^\'])*\')+`
@@ -45,8 +44,8 @@ func GetOpt(name []byte, opts *map[string]interface{}, escape uint8, precomp boo
 
 		// handle basic var names
 		if regex.Comp(`^[\w_\-$]+$`).MatchRef(&varName) {
-			if hasVarOpt(varName, opts, escape, precomp) {
-				val := getVarOpt(varName, opts, escape, precomp)
+			if hasVarOpt(varName, opts, eachArgs, escape, precomp) {
+				val := getVarOpt(varName, opts, eachArgs, escape, precomp)
 
 				if goutil.IsZeroOfUnderlyingType(val) {
 					return nil
@@ -78,14 +77,15 @@ func GetOpt(name []byte, opts *map[string]interface{}, escape uint8, precomp boo
 		}
 
 		var val interface{}
-		if !hasVarOpt(objList[0], opts, escape, precomp) {
+
+		if !hasVarOpt(objList[0], opts, eachArgs, escape, precomp) {
 			if precomp {
 				varComp = append(varComp, varName)
 			}
 			continue
 		}
 
-		val = getVarOpt(objList[0], opts, escape, precomp)
+		val = getVarOpt(objList[0], opts, eachArgs, escape, precomp)
 		
 		endLoop := false
 		for i := 1; i < len(objList); i++ {
@@ -101,12 +101,12 @@ func GetOpt(name []byte, opts *map[string]interface{}, escape uint8, precomp boo
 				if len(n) >= 2 && ((n[0] == '\'' && n[len(n)-1] == '\'') || (n[0] == '"' && n[len(n)-1] == '"') || (n[0] == '`' && n[len(n)-1] == '`')) {
 					n = regex.Comp(`\\([\\'"\'])`).RepStrComp(n[1:len(n)-1], []byte("$1"))
 				}else{
-					if !hasVarOpt(n, opts, escape, precomp) {
+					if !hasVarOpt(n, opts, eachArgs, escape, precomp) {
 						varComp = append(varComp, varName)
 						endLoop = true
 						break
 					}
-					n = goutil.Conv.ToBytes(escapeVarVal(getVarOpt(n, opts, escape, precomp), escape))
+					n = goutil.Conv.ToBytes(escapeVarVal(getVarOpt(n, opts, eachArgs, escape, precomp), escape))
 				}
 			}
 
@@ -162,6 +162,16 @@ func GetOpt(name []byte, opts *map[string]interface{}, escape uint8, precomp boo
 //
 // returns []byte{0} if the found arg should be passed to the compiler
 func getEachArg(name []byte, eachArgs *[]EachArgs) interface{} {
+	if len(name) == 0 {
+		return nil
+	}
+	if name[0] == '$' {
+		name = name[1:]
+		if len(name) == 0 {
+			return nil
+		}
+	}
+
 	nameConst := append([]byte{'$'}, name...)
 
 	for i := len(*eachArgs)-1; i >= 0; i-- {
@@ -188,9 +198,13 @@ func getEachArg(name []byte, eachArgs *[]EachArgs) interface{} {
 	return nil
 }
 
-func hasVarOpt(name []byte, opts *map[string]interface{}, escape uint8, precomp bool) bool {
+func hasVarOpt(name []byte, opts *map[string]interface{}, eachArgs *[]EachArgs, escape uint8, precomp bool) bool {
 	if len(name) == 0 {
 		return false
+	}
+
+	if v := getEachArg(name, eachArgs); v != nil {
+		return true
 	}
 
 	if precomp && name[0] != '$' {
@@ -204,9 +218,17 @@ func hasVarOpt(name []byte, opts *map[string]interface{}, escape uint8, precomp 
 	return (*opts)[string(name)] != nil
 }
 
-func getVarOpt(name []byte, opts *map[string]interface{}, escape uint8, precomp bool) interface{} {
+func getVarOpt(name []byte, opts *map[string]interface{}, eachArgs *[]EachArgs, escape uint8, precomp bool) interface{} {
 	if len(name) == 0 {
 		return nil
+	}
+
+	if v := getEachArg(name, eachArgs); v != nil {
+		if reflect.TypeOf(v) == goutil.VarType["[]byte"] && v.([]byte)[0] == 0 {
+			return getVarStr(name, escape)
+		}
+
+		return goutil.Clean.JSON(v)
 	}
 
 	checkName := name
@@ -222,9 +244,7 @@ func getVarOpt(name []byte, opts *map[string]interface{}, escape uint8, precomp 
 		return getVarStr(name, escape)
 	}
 
-	val := goutil.Clean.JSON((*opts)[string(checkName)])
-
-	return val
+	return goutil.Clean.JSON((*opts)[string(checkName)])
 }
 
 func getVarStr(name []byte, escape uint8) []byte {

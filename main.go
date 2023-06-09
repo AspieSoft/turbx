@@ -19,6 +19,7 @@ func main(){
 
 	compiler.PreCompile("index", map[string]interface{}{
 		"$test": 1,
+		"$var": "MyVar",
 		"$list": map[string]interface{}{
 			"key1": "value1",
 			"key2": "value2",
