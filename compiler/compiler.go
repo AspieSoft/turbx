@@ -134,6 +134,10 @@ type EachArgs struct {
 	listArr []interface{}
 	key []byte
 	val []byte
+	ind uint
+	size uint
+
+	passToComp bool
 }
 
 type htmlChanList struct {
@@ -226,6 +230,7 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 	}
 
 	ifTagLevel := []uint8{}
+	eachArgsList := []EachArgs{}
 
 	var buf byte
 	for err == nil {
@@ -658,15 +663,21 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 							}
 						}else if regex.Comp(`(?i)^_?(each|for|for_?each)$`).MatchRef(&args.tag) {
 							args.tag = bytes.ToLower(args.tag)
-							
+
 							if args.close == 3 {
 								if args.args["0"] != nil && len(args.args["0"]) != 0 && args.args["0"][0] == 0 {
 									if hasVarOpt(args.args["0"][1:], options, 0, true) {
 										listArg := GetOpt(args.args["0"][1:], options, 0, true, false)
 										if t := reflect.TypeOf(listArg); t == goutil.VarType["map[string]interface{}"] || t == goutil.VarType["[]interface{}"] {
-											var eachArgs EachArgs
+											eachArgs := EachArgs{}
 											if t == goutil.VarType["map[string]interface{}"] && len(listArg.(map[string]interface{})) != 0 {
 												eachArgs.listMap = listArg.(map[string]interface{})
+												eachArgs.listArr = []interface{}{}
+												for k := range eachArgs.listMap {
+													eachArgs.listArr = append(eachArgs.listArr, k)
+												}
+
+												sortStrings(&eachArgs.listArr)
 											}else if t == goutil.VarType["[]interface{}"] && len(listArg.([]interface{})) != 0 {
 												eachArgs.listArr = listArg.([]interface{})
 											}else{
@@ -705,27 +716,51 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 												continue
 											}
 
+											eachArgs.size = uint(len(eachArgs.listArr))
+
 											if args.args["key"] != nil && len(args.args["key"]) != 0 && args.args["0"][0] == 0 {
 												eachArgs.key = args.args["key"][1:]
 											}else if args.args["of"] != nil && len(args.args["of"]) != 0 && args.args["0"][0] == 0 {
 												eachArgs.key = args.args["of"][1:]
 											}
-		
+
 											if args.args["value"] != nil && len(args.args["value"]) != 0 && args.args["0"][0] == 0 {
 												eachArgs.val = args.args["value"][1:]
 											}else if args.args["as"] != nil && len(args.args["as"]) != 0 && args.args["0"][0] == 0 {
 												eachArgs.val = args.args["as"][1:]
 											}
-		
-											fmt.Println(eachArgs)
-											//todo: add args to ignore in vars and if statements
-											// or may change up discard method to keep good output in each loops to rerun
-											//* may use new reader.Save() and reader.Restore() methods
+
+											eachArgsList = append(eachArgsList, eachArgs)
+											reader.Save()
 
 											continue
 										}
 									}else{
-										//todo: return new each function to run in compiler
+										// return new each function to run in compiler
+										argStr := args.args["0"][1:]
+										eachArgs := EachArgs{passToComp: true}
+
+										if args.args["value"] != nil && len(args.args["value"]) != 0 && args.args["0"][0] == 0 {
+											eachArgs.val = args.args["value"][1:]
+											argStr = regex.JoinBytes(argStr, []byte(" as=\""), eachArgs.val, '"')
+										}else if args.args["val"] != nil && len(args.args["val"]) != 0 && args.args["0"][0] == 0 {
+											eachArgs.val = args.args["val"][1:]
+											argStr = regex.JoinBytes(argStr, []byte(" as=\""), eachArgs.val, '"')
+										}else if args.args["as"] != nil && len(args.args["as"]) != 0 && args.args["0"][0] == 0 {
+											eachArgs.val = args.args["as"][1:]
+											argStr = regex.JoinBytes(argStr, []byte(" as=\""), eachArgs.val, '"')
+										}
+
+										if args.args["key"] != nil && len(args.args["key"]) != 0 && args.args["0"][0] == 0 {
+											eachArgs.key = args.args["key"][1:]
+											argStr = regex.JoinBytes(argStr, []byte(" of=\""), eachArgs.key, '"')
+										}else if args.args["of"] != nil && len(args.args["of"]) != 0 && args.args["0"][0] == 0 {
+											eachArgs.key = args.args["of"][1:]
+											argStr = regex.JoinBytes(argStr, []byte(" of=\""), eachArgs.key, '"')
+										}
+
+										eachArgsList = append(eachArgsList, eachArgs)
+										write(regex.JoinBytes([]byte("{{%each"), ' ', argStr, []byte("}}")))
 
 										continue
 									}
@@ -762,6 +797,23 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 
 									reader.Discard(1)
 									ib, ie = reader.PeekByte(0)
+								}
+							}else if args.close == 1 {
+								if len(eachArgsList) != 0 {
+									if eachArgsList[len(eachArgsList)-1].passToComp {
+										write([]byte("{{%/each}}"))
+										eachArgsList = eachArgsList[:len(eachArgsList)-1]
+									}else if eachArgsList[len(eachArgsList)-1].ind < eachArgsList[len(eachArgsList)-1].size-1 {
+										if eachArgsList[len(eachArgsList)-1].ind == 0 {
+											reader.Restore()
+										}else{
+											reader.RestoreReset()
+										}
+										eachArgsList[len(eachArgsList)-1].ind++
+									}else{
+										reader.DelSave()
+										eachArgsList = eachArgsList[:len(eachArgsList)-1]
+									}
 								}
 							}
 						}else if args.tag[0] == '_' && len(args.tag) > 1 {
@@ -904,11 +956,71 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 					}
 				}
 			}
+		}else if buf == '%' {
+			i := uint(3)
+			b, e := reader.Peek(i)
+			if b[1] != '%' {
+				for e == nil && b[i-1] != '%' && ((b[i-1] >= '0' && b[i-1] <= '9') || (b[i-1] >= 'a' && b[i-1] <= 'z') || (b[i-1] >= 'A' && b[i-1] <= 'Z') || b[i-1] == '_' || b[i-1] == '-') {
+					i++
+					b, e = reader.Peek(i)
+				}
+
+				if e == nil && regex.Comp(`^%[\w_-]+%$`).MatchRef(&b) {
+					reader.Discard(i)
+					b = b[1:len(b)-1]
+					bc := append([]byte{'$'}, b...)
+
+					if len(eachArgsList) != 0 {
+						for i := len(eachArgsList)-1; i >= 0; i-- {
+							if bytes.Equal(b, eachArgsList[i].key) || bytes.Equal(bc, eachArgsList[i].key) {
+								if eachArgsList[i].passToComp {
+									write(regex.JoinBytes('%', b, '%'))
+								}else if eachArgsList[i].listMap != nil {
+									write(goutil.Conv.ToBytes(eachArgsList[i].listArr[eachArgsList[i].ind]))
+								}else{
+									write(goutil.Conv.ToBytes(eachArgsList[i].ind))
+								}
+							}else if bytes.Equal(b, eachArgsList[i].val) || bytes.Equal(bc, eachArgsList[i].val) {
+								if eachArgsList[i].passToComp {
+									write(regex.JoinBytes('%', b, '%'))
+								}else if eachArgsList[i].listMap != nil {
+									key := goutil.Conv.ToString(eachArgsList[i].listArr[eachArgsList[i].ind])
+									val := eachArgsList[i].listMap[key]
+									t := reflect.TypeOf(val)
+									if t == goutil.VarType["map[string]interface{}"] || t == goutil.VarType["[]interface{}"] {
+										if json, err := goutil.JSON.Stringify(val); err == nil {
+											write(json)
+										}
+									}else{
+										write(goutil.Conv.ToBytes(val))
+									}
+								}else{
+									val := eachArgsList[i].listArr[eachArgsList[i].ind]
+									t := reflect.TypeOf(val)
+									if t == goutil.VarType["map[string]interface{}"] || t == goutil.VarType["[]interface{}"] {
+										if json, err := goutil.JSON.Stringify(val); err == nil {
+											write(json)
+										}
+									}else{
+										write(goutil.Conv.ToBytes(val))
+									}
+								}
+							}
+						}
+					}
+					// fmt.Println(string(b))
+
+					continue
+				}
+			}
 		}
 
 		//todo: add optional shortcode handler (ie: {{#shortcode@plugin}} {{#priorityShortcode}}) ("@plugin" should be optional)
 		// may add in a "#shortcode" option to options, and pass in a list of functions that return html/markdown
 		// may also add a mothod for shortcodes to run other shortcodes (apart from themselves)
+		// may have shortcodes run in elixir or another lightweight programming language (may also add subfolder for shortcodes)
+
+		//todo: consider using 'AspieSoft/go-memshare' module if a funcs.go file is detected in the $PWD directory and link it to the TagFuncs.AddFN method
 
 		write([]byte{buf})
 		reader.Discard(1)
@@ -944,15 +1056,6 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 
 		i = bytes.IndexByte(htmlRes, 0)
 	}
-
-	// if hasRerunIfTags {
-		//todo: run {{%&if}} tags (not {{%if}} tags)
-		// may also need to handle {{%&else}} tags that are nested in normal {{%if}} tags
-		// may also rerun "if" funcs just for fn content
-		// may make a new func handler for "each" funcs (and others) and pass different args and values with them
-		//todo: may need to seperate "each" loops from other functions
-		// may also need to generare rerun functions for {{%&each}} funcs, and handle them more like "if" funcs
-	// }
 
 	*html = append(*html, htmlRes...)
 	(*html)[0] = 1
@@ -1077,7 +1180,7 @@ func handleHtmlTag(htmlData handleHtmlData){
 func handleHtmlFunc(htmlData handleHtmlData){
 	//htmlData: fn *func(/*tag function args*/)[]byte, preComp bool, html *[]byte, options *map[string]interface{}, arguments *htmlArgs, compileError *error
 
-	res := (*htmlData.fn)(htmlData.options, htmlData.arguments, htmlData.preComp)
+	/* res := (*htmlData.fn)(htmlData.options, htmlData.arguments, htmlData.preComp)
 	if res != nil && len(res) != 0 {
 		if res[0] == 0 {
 			*htmlData.html = append(*htmlData.html, regex.JoinBytes([]byte("{{%"), htmlData.arguments.tag[1:], ' ', res[1:], []byte("/}}"))...)
@@ -1088,7 +1191,7 @@ func handleHtmlFunc(htmlData handleHtmlData){
 		}else{
 			*htmlData.html = append(*htmlData.html, res...)
 		}
-	}
+	} */
 
 	// set first index to 1 to mark as ready
 	(*htmlData.html)[0] = 1
@@ -1187,41 +1290,27 @@ func newPreCompileChan() htmlChanList {
 	return htmlChanList{tag: tagChan, comp: compChan, fn: fnChan}
 }
 
-// getTagFunc returns a tag function based on the name
+// getCoreTagFunc returns a tag function based on the name
 // 
 // @type: []byte = return a normal func, [][]byte = return an init func
 //
 // @bool: isSync
-func getTagFunc[T interface{[]byte | [][]byte}](name []byte) (func(opts *map[string]interface{}, args *htmlArgs, precomp bool)T, bool, error) {
+func getCoreTagFunc(name []byte) (func(opts *map[string]interface{}, args *htmlArgs, precomp bool)[]byte, bool, error) {
 	if name[0] == '_' {
 		name = name[1:]
 	}
 	nameStr := string(regex.Compile(`[^\w_]`).RepStrRef(&name, []byte{}))
-
-	init := false
-	var t interface{} = [][]byte{}
-	if _, ok := t.(T); ok {
-		init = true
-	}
-
-	if init {
-		nameStr += "_INIT"
-	}
 	
 	isSync := false
 
 	found := true
 	m := reflect.ValueOf(&TagFuncs).MethodByName(nameStr)
 	if goutil.IsZeroOfUnderlyingType(m) {
-		if !init {
-			m = reflect.ValueOf(&TagFuncs).MethodByName(nameStr+"_SYNC")
-			if goutil.IsZeroOfUnderlyingType(m) {
-				found = false
-			}else{
-				isSync = true
-			}
-		}else{
+		m = reflect.ValueOf(&TagFuncs).MethodByName(nameStr+"_SYNC")
+		if goutil.IsZeroOfUnderlyingType(m) {
 			found = false
+		}else{
+			isSync = true
 		}
 	}
 
@@ -1229,9 +1318,86 @@ func getTagFunc[T interface{[]byte | [][]byte}](name []byte) (func(opts *map[str
 		return nil, false, errors.New("method '"+nameStr+"' does not exist in Compiled Functions")
 	}
 
-	if fn, ok := m.Interface().(func(opts *map[string]interface{}, args *htmlArgs, precomp bool)T); ok {
+	if fn, ok := m.Interface().(func(opts *map[string]interface{}, args *htmlArgs, precomp bool)[]byte); ok {
 		return fn, isSync, nil
 	}
 
 	return nil, false, errors.New("method '"+nameStr+"' does not return the expected args")
+}
+
+
+// sortStrings will sort a list of strings
+//
+// this method will also split numbers and return `10 > 2`, rather than seeing `[1,0] < [2,_]`
+func sortStrings[T any](list *[]T){
+	sort.Slice(*list, func(i, j int) bool {
+		l1 := regex.Comp(`([0-9]+)`).Split(goutil.Conv.ToBytes((*list)[i]))
+		l2 := regex.Comp(`([0-9]+)`).Split(goutil.Conv.ToBytes((*list)[j]))
+
+		for i := len(l1)-1; i >= 0; i-- {
+			if len(l1[i]) == 0 {
+				l1 = append(l1[:i], l1[i+1:]...)
+			}
+		}
+
+		for i := len(l2)-1; i >= 0; i-- {
+			if len(l2[i]) == 0 {
+				l2 = append(l2[:i], l2[i+1:]...)
+			}
+		}
+
+		var smaller uint8 = 2
+		l := len(l2)
+		if n := len(l1); n <= l {
+			if n == l {
+				smaller--
+			}
+			l = n
+			smaller--
+		}
+
+		for i := 0; i < l; i++ {
+			n1 := l1[i][0] >= '0' && l1[i][0] <= '9'
+			n2 := l2[i][0] >= '0' && l2[i][0] <= '9'
+			if n1 && n2 {
+				i1, _ := strconv.Atoi(string(l1[i]))
+				i2, _ := strconv.Atoi(string(l2[i]))
+				if i1 < i2 {
+					return true
+				}else if i1 > i2 {
+					return false
+				}
+			}else if n1 {
+				return true
+			}else if n2 {
+				return false
+			}else{
+				var small uint8 = 2
+				ln := len(l2[i])
+				if n := len(l1[i]); n <= ln {
+					if n == ln {
+						small--
+					}
+					ln = n
+					small--
+				}
+
+				for j := 0; j < ln; j++ {
+					if l1[i][j] < l2[i][j] {
+						return true
+					}else if l1[i][j] > l2[i][j] {
+						return false
+					}
+				}
+
+				if small == 1 {
+					return true
+				}else if small == 2 {
+					return false
+				}
+			}
+		}
+
+		return smaller == 1
+	})
 }

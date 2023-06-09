@@ -1,7 +1,44 @@
 package compiler
 
-type tagFuncs struct {}
+import "errors"
+
+type tagFuncs struct {
+	list map[string]func(opts *map[string]interface{}, args *htmlArgs, precomp bool)[]byte
+}
 var TagFuncs tagFuncs = tagFuncs{}
+
+// AddFN adds a new function to the compiler
+//
+// @name: the name of your function
+//
+// @cb: a callback function where you can return a []byte with html to be added to the file
+//
+// cb - @opts: contains the list of options that were passed into the compiler (recommended: use `turbx.GetOpt` when retrieving an option)
+//
+// cb - @args: arguments that the template passed into the function (you may want to pass some of these into the `@name` arg for `turbx.GetOpt`)
+//
+// cb - @precompile: returns true if the function was called by the precompiler, false if called by the final compiler
+//
+// @useSync (optional): by default all functions run concurrently, if you need the compiler to wait for your function to finish, you can set this to `true`
+func (funcs *tagFuncs) AddFN(name string, cb func(opts *map[string]interface{}, args *htmlArgs, precomp bool)[]byte, useSync ...bool) error {
+	if _, _, err := getCoreTagFunc([]byte(name)); err != nil {
+		return errors.New("the method '"+name+"' is already in use by the core system")
+	}
+
+	if _, ok := funcs.list[name]; ok {
+		return errors.New("the method '"+name+"' is already in use")
+	}else if _, ok := funcs.list[name+"_SYNC"]; ok {
+		return errors.New("the method '"+name+"' is already in use")
+	}
+
+	if len(useSync) != 0 && useSync[0] {
+		name += "_SYNC"
+	}
+
+	funcs.list[name] = cb
+
+	return nil
+}
 
 // note: If is a unique tag func, with different args and return values
 func (funcs *tagFuncs) If(opts *map[string]interface{}, args *htmlArgs, precomp bool) ([]byte, bool) {
@@ -12,39 +49,18 @@ func (funcs *tagFuncs) If(opts *map[string]interface{}, args *htmlArgs, precomp 
 	// return nil, false (absolute false)
 	// return nil, true (absolute true)
 	// return []byte("args"), true (push to compiler)
-	// return append([]byte{0}, []byte("args")...), true (rerun in pre compiler if args.fnContArgs were found) (uses {{%&if}} instead of {{%if}})
 	// @[]byte: precomp result, @bool: if true
 	return nil, false
 }
 
-func (funcs *tagFuncs) Each_INIT(opts *map[string]interface{}, args *htmlArgs, precomp bool) [][]byte {
-	//todo: return list of vars to ignore within function
 
-
-	
-	//? if preComp and not a constant var
-	// return [][]byte{append([]byte{0}, []byte("myList as valueVar of keyVar")...), []byte("valueVar"), []byte("keyVar")}
-
-	//? if we have the var and can run out func
-	// return [][]byte{[]byte("valueVar"), []byte("keyVar")}
-
-	// return list of args used by this func that should be ignored by the compiler
+func (funcs *tagFuncs) Myfn(opts *map[string]interface{}, args *htmlArgs, precomp bool) []byte {
+	// do stuff concurrently
 	return nil
 }
 
 // add "_SYNC" if this function should run in sync, rather than running async on a seperate channel
-func (funcs *tagFuncs) Each_SYNC(opts *map[string]interface{}, args *htmlArgs, precomp bool) []byte {
-	//todo: run each loop with args.args["body"] as the content
-
-	//todo: find a way to handle if statements inside each loops and with args set by init
-	// may need to add an if statement handler for use inside functions (handling {{%if value}}action1{{%else}}action2{{%/if}} compiler functions)
-
-	//? if preComp and not a constant var
-	// return append([]byte{0}, []byte("myList as valueVar of keyVar")...)
-
-	//? if returning an error and stopping the compiler
-	// return append([]byte{1}, []byte("error message")...)
-
-	// return result content
+func (funcs *tagFuncs) Myfn_SYNC(opts *map[string]interface{}, args *htmlArgs, precomp bool) []byte {
+	// do stuff in sync
 	return nil
 }
