@@ -8,6 +8,7 @@ import (
 	"github.com/AspieSoft/goutil/v5"
 )
 
+//todo: have GetOpt method handle eachArgs as well
 func GetOpt(name []byte, opts *map[string]interface{}, escape uint8, precomp bool, stringsOnly bool) interface{} {
 	// escape: 0 = raw, 1 = raw arg, 2 = html, 3 = arg, 4 = html arg key
 
@@ -155,6 +156,38 @@ func GetOpt(name []byte, opts *map[string]interface{}, escape uint8, precomp boo
 	return nil
 }
 
+// getEachArg returns a value from an eachArg if it exists
+//
+// returns nil, if no matching args are found (this is when you should check the `opts` list for the `name` arg)
+//
+// returns []byte{0} if the found arg should be passed to the compiler
+func getEachArg(name []byte, eachArgs *[]EachArgs) interface{} {
+	nameConst := append([]byte{'$'}, name...)
+
+	for i := len(*eachArgs)-1; i >= 0; i-- {
+		if bytes.Equal(name, (*eachArgs)[i].key) || bytes.Equal(nameConst, (*eachArgs)[i].key) {
+			if (*eachArgs)[i].passToComp {
+				return []byte{0}
+			}else if (*eachArgs)[i].listMap != nil {
+				return (*eachArgs)[i].listArr[(*eachArgs)[i].ind]
+			}else{
+				return (*eachArgs)[i].ind
+			}
+		}else if bytes.Equal(name, (*eachArgs)[i].val) || bytes.Equal(nameConst, (*eachArgs)[i].val) {
+			if (*eachArgs)[i].passToComp {
+				return []byte{0}
+			}else if (*eachArgs)[i].listMap != nil {
+				key := goutil.Conv.ToString((*eachArgs)[i].listArr[(*eachArgs)[i].ind])
+				return (*eachArgs)[i].listMap[key]
+			}else{
+				return (*eachArgs)[i].listArr[(*eachArgs)[i].ind]
+			}
+		}
+	}
+
+	return nil
+}
+
 func hasVarOpt(name []byte, opts *map[string]interface{}, escape uint8, precomp bool) bool {
 	if len(name) == 0 {
 		return false
@@ -217,13 +250,26 @@ func escapeVarVal(val interface{}, escape uint8) interface{} {
 	if escape == 0 || escape == 1 {
 		return val
 	}else if escape == 2 {
-		return goutil.HTML.Escape(goutil.Conv.ToBytes(val))
+		return goutil.HTML.Escape(toBytesOrJson(val))
 	}else if escape == 3 {
 		//todo: sanitize arg from xss attacks (example: remove 'data:' from val)
-		return goutil.HTML.EscapeArgs(goutil.Conv.ToBytes(val))
+		return goutil.HTML.EscapeArgs(toBytesOrJson(val))
 	}else if escape == 4 {
-		return regex.Comp(`[^\w_-]+`).RepStr(goutil.Conv.ToBytes(val), []byte{})
+		return regex.Comp(`[^\w_-]+`).RepStr(toBytesOrJson(val), []byte{})
 	}
 
 	return nil
+}
+
+func toBytesOrJson(val interface{}) []byte {
+	t := reflect.TypeOf(val)
+	if t == goutil.VarType["map[string]interface{}"] || t == goutil.VarType["[]interface{}"] {
+		if json, err := goutil.JSON.Stringify(val, 2); err == nil {
+			return json
+		}
+	}else{
+		return goutil.Conv.ToBytes(val)
+	}
+
+	return []byte{}
 }

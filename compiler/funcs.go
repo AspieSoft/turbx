@@ -1,9 +1,11 @@
 package compiler
 
-import "errors"
+import (
+	"errors"
+)
 
 type tagFuncs struct {
-	list map[string]func(opts *map[string]interface{}, args *htmlArgs, precomp bool)[]byte
+	list map[string]func(opts *map[string]interface{}, args *htmlArgs, eachArgs *[]EachArgs, precomp bool)[]byte
 }
 var TagFuncs tagFuncs = tagFuncs{}
 
@@ -17,10 +19,20 @@ var TagFuncs tagFuncs = tagFuncs{}
 //
 // cb - @args: arguments that the template passed into the function (you may want to pass some of these into the `@name` arg for `turbx.GetOpt`)
 //
+// cb - @eachArgs: a list of arguments that were defined by an each loop (the last eachAre should take priority over the first one)
+//
 // cb - @precompile: returns true if the function was called by the precompiler, false if called by the final compiler
 //
+// cb - @return: nil = no content
+//
+// cb - @return: []byte("html") = html result
+//
+// cb - @return: append([]byte{0}, []byte("args")...) = pass to compiler
+//
+// cb - @return: append([]byte{1}, []byte("error msg")...) = return error
+//
 // @useSync (optional): by default all functions run concurrently, if you need the compiler to wait for your function to finish, you can set this to `true`
-func (funcs *tagFuncs) AddFN(name string, cb func(opts *map[string]interface{}, args *htmlArgs, precomp bool)[]byte, useSync ...bool) error {
+func (funcs *tagFuncs) AddFN(name string, cb func(opts *map[string]interface{}, args *htmlArgs, eachArgs *[]EachArgs, precomp bool)[]byte, useSync ...bool) error {
 	if _, _, err := getCoreTagFunc([]byte(name)); err != nil {
 		return errors.New("the method '"+name+"' is already in use by the core system")
 	}
@@ -41,7 +53,7 @@ func (funcs *tagFuncs) AddFN(name string, cb func(opts *map[string]interface{}, 
 }
 
 // note: If is a unique tag func, with different args and return values
-func (funcs *tagFuncs) If(opts *map[string]interface{}, args *htmlArgs, precomp bool) ([]byte, bool) {
+func (funcs *tagFuncs) If(opts *map[string]interface{}, args *htmlArgs, eachArgs *[]EachArgs, precomp bool) ([]byte, bool) {
 	//todo: handle and reduce if statement args
 	// if precomp == true, return leftover args
 	// if precomp == false, assume leftover args are false
@@ -54,13 +66,23 @@ func (funcs *tagFuncs) If(opts *map[string]interface{}, args *htmlArgs, precomp 
 }
 
 
-func (funcs *tagFuncs) Myfn(opts *map[string]interface{}, args *htmlArgs, precomp bool) []byte {
+func (funcs *tagFuncs) Myfn(opts *map[string]interface{}, args *htmlArgs, eachArgs *[]EachArgs, precomp bool) []byte {
 	// do stuff concurrently
+
+	// return nil = return nothing
+	// []byte("result html") = return basic html
+	// append([]byte{0}, []byte("args")...) = pass function to compiler
+	// append([]byte{1}, []byte("error message")...) = return error
 	return nil
 }
 
 // add "_SYNC" if this function should run in sync, rather than running async on a seperate channel
-func (funcs *tagFuncs) Myfn_SYNC(opts *map[string]interface{}, args *htmlArgs, precomp bool) []byte {
+func (funcs *tagFuncs) Myfn_SYNC(opts *map[string]interface{}, args *htmlArgs, eachArgs *[]EachArgs, precomp bool) []byte {
 	// do stuff in sync
+
+	// return nil = return nothing
+	// []byte("result html") = return basic html
+	// append([]byte{0}, []byte("args")...) = pass function to compiler
+	// append([]byte{1}, []byte("error message")...) = return error
 	return nil
 }

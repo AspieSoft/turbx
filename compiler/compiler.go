@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/AspieSoft/go-liveread"
@@ -144,16 +145,19 @@ type htmlChanList struct {
 	tag chan handleHtmlData
 	comp chan handleHtmlData
 	fn chan handleHtmlData
+
+	running *uint8
 }
 
 type handleHtmlData struct {
 	html *[]byte
 	options *map[string]interface{}
 	arguments *htmlArgs
+	eachArgs *[]EachArgs
 	compileError *error
 	componentList [][]byte
 
-	fn *func(opts *map[string]interface{}, args *htmlArgs, precomp bool) []byte
+	fn *func(opts *map[string]interface{}, args *htmlArgs, eachArgs *[]EachArgs, precomp bool) []byte
 	preComp bool
 
 	stopChan bool
@@ -463,20 +467,11 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 							args.tag = bytes.ToLower(args.tag)
 
 							if args.close == 3 && (bytes.Equal(args.tag, []byte("_if")) || bytes.Equal(args.tag, []byte("if"))) { // open tag
-								if precompStr, ok := TagFuncs.If(options, &args, true); ok {
+								if precompStr, ok := TagFuncs.If(options, &args, &eachArgsList, true); ok {
 									if precompStr == nil {
 										// grab if content and skip else content
 										ifTagLevel = append(ifTagLevel, 0)
-										if ib, ie := reader.PeekByte(0); ie == nil {
-											if ib == '\r' {
-												reader.Discard(1)
-												if ib, ie := reader.PeekByte(0); ie == nil && ib == '\n' {
-													reader.Discard(1)
-												}
-											}else if ib == '\n' {
-												reader.Discard(1)
-											}
-										}
+										removeLineBreak(reader)
 									}else{
 										// add string for compiler result and check else content
 										write(regex.JoinBytes([]byte("{{%if "), precompStr, []byte("}}")))
@@ -519,15 +514,8 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 							}else if args.close == 1 && len(ifTagLevel) != 0 && (bytes.Equal(args.tag, []byte("_if")) || bytes.Equal(args.tag, []byte("if"))) {
 								if ifTagLevel[len(ifTagLevel)-1] == 1 || ifTagLevel[len(ifTagLevel)-1] == 2 {
 									write([]byte("{{%/if}}"))
-								}else if ib, ie := reader.PeekByte(0); ie == nil {
-									if ib == '\r' {
-										reader.Discard(1)
-										if ib, ie := reader.PeekByte(0); ie == nil && ib == '\n' {
-											reader.Discard(1)
-										}
-									}else if ib == '\n' {
-										reader.Discard(1)
-									}
+								}else{
+									removeLineBreak(reader)
 								}
 								ifTagLevel = ifTagLevel[:len(ifTagLevel)-1]
 							}else if len(ifTagLevel) != 0 && regex.Comp(`(?i)^_?(el(?:se|if)|else_?if)$`).MatchRef(&args.tag) {
@@ -564,7 +552,7 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 										ib, ie = reader.PeekByte(0)
 									}
 								}else if ifTagLevel[len(ifTagLevel)-1] == 2 { // string if statement
-									if precompStr, ok := TagFuncs.If(options, &args, true); ok {
+									if precompStr, ok := TagFuncs.If(options, &args, &eachArgsList, true); ok {
 										if precompStr == nil {
 											// grab content and skip next else content
 											ifTagLevel[len(ifTagLevel)-1] = 1
@@ -607,20 +595,11 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 										}
 									}
 								}else if ifTagLevel[len(ifTagLevel)-1] == 3 { // false if statement
-									if precompStr, ok := TagFuncs.If(options, &args, true); ok {
+									if precompStr, ok := TagFuncs.If(options, &args, &eachArgsList, true); ok {
 										if precompStr == nil {
 											// grab if content and skip else content
 											ifTagLevel[len(ifTagLevel)-1] = 0
-											if ib, ie := reader.PeekByte(0); ie == nil {
-												if ib == '\r' {
-													reader.Discard(1)
-													if ib, ie := reader.PeekByte(0); ie == nil && ib == '\n' {
-														reader.Discard(1)
-													}
-												}else if ib == '\n' {
-													reader.Discard(1)
-												}
-											}
+											removeLineBreak(reader)
 										}else{
 											// add string for compiler result and check else content
 											ifTagLevel[len(ifTagLevel)-1] = 2
@@ -733,6 +712,7 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 											eachArgsList = append(eachArgsList, eachArgs)
 											reader.Save()
 
+											removeLineBreak(reader)
 											continue
 										}
 									}else{
@@ -806,12 +786,15 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 									}else if eachArgsList[len(eachArgsList)-1].ind < eachArgsList[len(eachArgsList)-1].size-1 {
 										if eachArgsList[len(eachArgsList)-1].ind == 0 {
 											reader.Restore()
+											removeLineBreak(reader)
 										}else{
 											reader.RestoreReset()
+											removeLineBreak(reader)
 										}
 										eachArgsList[len(eachArgsList)-1].ind++
 									}else{
 										reader.DelSave()
+										removeLineBreak(reader)
 										eachArgsList = eachArgsList[:len(eachArgsList)-1]
 									}
 								}
@@ -820,81 +803,60 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 							args.tag = bytes.ToLower(args.tag)
 							args.tag[1] = bytes.ToUpper([]byte{args.tag[1]})[0]
 
-							//todo: rebuild this function in a simpler way
-
-							/* if args.close == 3 {
-								var contArgs [][]byte
-								if fn, _, fnErr := getTagFunc[[][]byte](args.tag); fnErr == nil {
-									contArgs = fn(options, &args, true)
-								}
-
-								if contArgs != nil && len(contArgs) != 0 && contArgs[0] != nil && len(contArgs[0]) != 0 && contArgs[0][0] == 0 {
-									fnContArgs = append(fnContArgs, contArgs[1:])
-									args.passToComp = true
-									write(regex.JoinBytes([]byte("{{%"), args.tag[1:], ' ', contArgs[0][1:], []byte("}}")))
-								}else{
-									fnContArgs = append(fnContArgs, contArgs)
-								}
-
+							if args.close == 3 {
 								htmlContTempTag = append(htmlContTempTag, args)
 								htmlContTemp = append(htmlContTemp, []byte{})
-							}else if args.close == 1 && bytes.Equal(args.tag, htmlContTempTag[len(htmlContTemp)-1].tag) {
-								if args.passToComp {
-									write(htmlContTemp[len(htmlContTempTag)-1])
-									write(regex.JoinBytes([]byte("{{%/"), args.tag[1:], []byte("}}")))
+							}else if args.close == 1 && len(htmlContTempTag) != 0 {
+								for i := len(htmlContTempTag)-1; i >= 0; i-- {
+									sameTag := bytes.Equal(htmlContTempTag[i].tag, args.tag)
 
-									htmlContTemp = htmlContTemp[:len(htmlContTemp)-1]
-									htmlContTempTag = htmlContTempTag[:len(htmlContTempTag)-1]
-									fnContArgs = fnContArgs[:len(fnContArgs)-1]
-								}else{
-									for k, v := range htmlContTempTag[len(htmlContTemp)-1].args {
-										args.args[k] = v
-									}
-									args.args["body"] = htmlContTemp[len(htmlContTempTag)-1]
-
-									htmlContTemp = htmlContTemp[:len(htmlContTempTag)-1]
-									htmlContTempTag = htmlContTempTag[:len(htmlContTempTag)-1]
-									fnContArgs = fnContArgs[:len(fnContArgs)-1]
-
-									fn, isSync, fnErr := getTagFunc[[]byte](args.tag)
+									fn, isSync, fnErr := getCoreTagFunc(htmlContTempTag[i].tag)
 									if fnErr != nil {
-										*compileError = fnErr
-										(*html)[0] = 2
-										return
+										if newFn, ok := TagFuncs.list[string(htmlContTempTag[i].tag)]; ok {
+											fn = newFn
+											fnErr = nil
+										}
 									}
 
-									htmlCont := []byte{0}
-									var compErr error
-									htmlTags = append(htmlTags, &htmlCont)
-									htmlTagsErr = append(htmlTagsErr, &compErr)
+									if fnErr == nil {
+										for k, v := range htmlContTempTag[i].args {
+											args.args[k] = v
+										}
+										args.args["body"] = htmlContTemp[i]
 
-									if !isSync && htmlChan != nil {
-										htmlChan.fn <- handleHtmlData{fn: &fn, preComp: true, html: &htmlCont, options: options, arguments: &args, compileError: &compErr, componentList: componentList}
+										htmlContTemp = htmlContTemp[:i]
+										htmlContTempTag = htmlContTempTag[:i]
+
+										htmlCont := []byte{0}
+										var compErr error
+										htmlTags = append(htmlTags, &htmlCont)
+										htmlTagsErr = append(htmlTagsErr, &compErr)
+
+										if htmlChan != nil && !isSync {
+											htmlChan.fn <- handleHtmlData{fn: &fn, preComp: true, html: &htmlCont, options: options, arguments: &args, eachArgs: &eachArgsList, compileError: &compErr, componentList: componentList}
+										}else{
+											handleHtmlFunc(handleHtmlData{fn: &fn, preComp: true, html: &htmlCont, options: options, arguments: &args, eachArgs: &eachArgsList, compileError: &compErr, componentList: componentList})
+										}
+										write([]byte{0})
 									}else{
-										handleHtmlFunc(handleHtmlData{fn: &fn, preComp: true, html: &htmlCont, options: options, arguments: &args, compileError: &compErr, componentList: componentList})
+										if i != 0 && !sameTag && len(htmlContTemp[i]) != 0 {
+											if len(htmlContTemp[i]) != 0 && htmlContTemp[i][0] == '\r' {
+												htmlContTemp[i] = htmlContTemp[i][1:]
+											}
+											if len(htmlContTemp[i]) != 0 && htmlContTemp[i][0] == '\n' {
+												htmlContTemp[i] = htmlContTemp[i][1:]
+											}
+											htmlContTemp[i-1] = append(htmlContTemp[i-1], htmlContTemp[i]...)
+										}
+										htmlContTemp = htmlContTemp[:i]
+										htmlContTempTag = htmlContTempTag[:i]
 									}
-									write([]byte{0})
-								}
-							}else if args.close == 2 {
-								fn, isSync, fnErr := getTagFunc[[]byte](args.tag)
-								if fnErr != nil {
-									*compileError = fnErr
-									(*html)[0] = 2
-									return
-								}
 
-								htmlCont := []byte{0}
-								var compErr error
-								htmlTags = append(htmlTags, &htmlCont)
-								htmlTagsErr = append(htmlTagsErr, &compErr)
-
-								if !isSync && htmlChan != nil {
-									htmlChan.fn <- handleHtmlData{fn: &fn, preComp: true, html: &htmlCont, options: options, arguments: &args, compileError: &compErr, componentList: componentList}
-								}else{
-									handleHtmlFunc(handleHtmlData{fn: &fn, preComp: true, html: &htmlCont, options: options, arguments: &args, compileError: &compErr, componentList: componentList})
+									if sameTag {
+										break
+									}
 								}
-								write([]byte{0})
-							} */
+							}
 						}else if args.tag[0] == bytes.ToUpper([]byte{args.tag[0]})[0] {
 							if args.close == 3 {
 								htmlContTempTag = append(htmlContTempTag, args)
@@ -957,6 +919,7 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 				}
 			}
 		}else if buf == '%' {
+			//todo: may be able to use regular {{var}} syntax for eachArgs if merged with the `GetOpt` method
 			i := uint(3)
 			b, e := reader.Peek(i)
 			if b[1] != '%' {
@@ -980,35 +943,22 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 								}else{
 									write(goutil.Conv.ToBytes(eachArgsList[i].ind))
 								}
+
+								continue
 							}else if bytes.Equal(b, eachArgsList[i].val) || bytes.Equal(bc, eachArgsList[i].val) {
 								if eachArgsList[i].passToComp {
 									write(regex.JoinBytes('%', b, '%'))
 								}else if eachArgsList[i].listMap != nil {
 									key := goutil.Conv.ToString(eachArgsList[i].listArr[eachArgsList[i].ind])
-									val := eachArgsList[i].listMap[key]
-									t := reflect.TypeOf(val)
-									if t == goutil.VarType["map[string]interface{}"] || t == goutil.VarType["[]interface{}"] {
-										if json, err := goutil.JSON.Stringify(val); err == nil {
-											write(json)
-										}
-									}else{
-										write(goutil.Conv.ToBytes(val))
-									}
+									write(toBytesOrJson(eachArgsList[i].listMap[key]))
 								}else{
-									val := eachArgsList[i].listArr[eachArgsList[i].ind]
-									t := reflect.TypeOf(val)
-									if t == goutil.VarType["map[string]interface{}"] || t == goutil.VarType["[]interface{}"] {
-										if json, err := goutil.JSON.Stringify(val); err == nil {
-											write(json)
-										}
-									}else{
-										write(goutil.Conv.ToBytes(val))
-									}
+									write(toBytesOrJson(eachArgsList[i].listArr[eachArgsList[i].ind]))
 								}
+
+								continue
 							}
 						}
 					}
-					// fmt.Println(string(b))
 
 					continue
 				}
@@ -1040,8 +990,15 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 		*html = append(*html, htmlRes[:i]...)
 		htmlRes = htmlRes[i+1:]
 
+		if htmlTagsInd >= uint(len(htmlTags)) {
+			break
+		}
+
 		htmlCont := htmlTags[htmlTagsInd]
 		for (*htmlCont)[0] == 0 {
+			if htmlChan != nil && *htmlChan.running == 0 {
+				break
+			}
 			time.Sleep(10 * time.Nanosecond)
 		}
 
@@ -1178,12 +1135,18 @@ func handleHtmlTag(htmlData handleHtmlData){
 }
 
 func handleHtmlFunc(htmlData handleHtmlData){
-	//htmlData: fn *func(/*tag function args*/)[]byte, preComp bool, html *[]byte, options *map[string]interface{}, arguments *htmlArgs, compileError *error
+	//htmlData: fn *func(/*tag function args*/)[]byte, preComp bool, html *[]byte, options *map[string]interface{}, arguments *htmlArgs, eachArgs *[]EachArgs, compileError *error
 
-	/* res := (*htmlData.fn)(htmlData.options, htmlData.arguments, htmlData.preComp)
+	res := (*htmlData.fn)(htmlData.options, htmlData.arguments, htmlData.eachArgs, htmlData.preComp)
 	if res != nil && len(res) != 0 {
 		if res[0] == 0 {
-			*htmlData.html = append(*htmlData.html, regex.JoinBytes([]byte("{{%"), htmlData.arguments.tag[1:], ' ', res[1:], []byte("/}}"))...)
+			if htmlData.preComp {
+				if body, ok := htmlData.arguments.args["body"]; ok {
+					*htmlData.html = append(*htmlData.html, regex.JoinBytes([]byte("{{%"), htmlData.arguments.tag[1:], ' ', res[1:], []byte("}}"), body, []byte("{{%/"), htmlData.arguments.tag[1:], []byte("}}"))...)
+				}else{
+					*htmlData.html = append(*htmlData.html, regex.JoinBytes([]byte("{{%"), htmlData.arguments.tag[1:], ' ', res[1:], []byte("/}}"))...)
+				}
+			}
 		}else if res[0] == 1 {
 			*htmlData.compileError = errors.New(string(res[1:]))
 			(*htmlData.html)[0] = 2
@@ -1191,7 +1154,7 @@ func handleHtmlFunc(htmlData handleHtmlData){
 		}else{
 			*htmlData.html = append(*htmlData.html, res...)
 		}
-	} */
+	}
 
 	// set first index to 1 to mark as ready
 	(*htmlData.html)[0] = 1
@@ -1254,6 +1217,9 @@ func newPreCompileChan() htmlChanList {
 	compChan := make(chan handleHtmlData)
 	fnChan := make(chan handleHtmlData)
 
+	running := uint8(3)
+	mu := sync.Mutex{}
+
 	go func(){
 		for {
 			handleHtml := <-tagChan
@@ -1263,6 +1229,10 @@ func newPreCompileChan() htmlChanList {
 
 			handleHtmlTag(handleHtml)
 		}
+
+		mu.Lock()
+		running--
+		mu.Unlock()
 	}()
 
 	go func(){
@@ -1274,6 +1244,10 @@ func newPreCompileChan() htmlChanList {
 
 			handleHtmlComponent(handleHtml)
 		}
+
+		mu.Lock()
+		running--
+		mu.Unlock()
 	}()
 
 	go func(){
@@ -1285,17 +1259,19 @@ func newPreCompileChan() htmlChanList {
 
 			handleHtmlFunc(handleHtml)
 		}
+
+		mu.Lock()
+		running--
+		mu.Unlock()
 	}()
 
-	return htmlChanList{tag: tagChan, comp: compChan, fn: fnChan}
+	return htmlChanList{tag: tagChan, comp: compChan, fn: fnChan, running: &running}
 }
 
 // getCoreTagFunc returns a tag function based on the name
-// 
-// @type: []byte = return a normal func, [][]byte = return an init func
 //
 // @bool: isSync
-func getCoreTagFunc(name []byte) (func(opts *map[string]interface{}, args *htmlArgs, precomp bool)[]byte, bool, error) {
+func getCoreTagFunc(name []byte) (func(opts *map[string]interface{}, args *htmlArgs, eachArgs *[]EachArgs, precomp bool)[]byte, bool, error) {
 	if name[0] == '_' {
 		name = name[1:]
 	}
@@ -1318,11 +1294,27 @@ func getCoreTagFunc(name []byte) (func(opts *map[string]interface{}, args *htmlA
 		return nil, false, errors.New("method '"+nameStr+"' does not exist in Compiled Functions")
 	}
 
-	if fn, ok := m.Interface().(func(opts *map[string]interface{}, args *htmlArgs, precomp bool)[]byte); ok {
+	if fn, ok := m.Interface().(func(opts *map[string]interface{}, args *htmlArgs, eachArgs *[]EachArgs, precomp bool)[]byte); ok {
 		return fn, isSync, nil
 	}
 
 	return nil, false, errors.New("method '"+nameStr+"' does not return the expected args")
+}
+
+
+// removeLineBreak removes one extra line break from the compiler
+func removeLineBreak[T interface{uint8|uint16}](reader *liveread.Reader[T]) bool {
+	b, e := reader.Peek(2)
+	if e == nil {
+		if b[0] == '\r' && b[1] == '\n' {
+			reader.Discard(2)
+			return true
+		}else if b[0] == '\n' {
+			reader.Discard(1)
+			return true
+		}
+	}
+	return false
 }
 
 

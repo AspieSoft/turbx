@@ -1,15 +1,9 @@
 start
 
-<_each list as="value" of="key">
-  test start
-
-  <_if %key%="key1">
-    first test: %value%
-  <else/>
-    next test: %value%
-  </_if>
-
-  test end
-</_each>
+<if test="1">
+  test 1
+<else/>
+  test 0
+</if>
 
 end
