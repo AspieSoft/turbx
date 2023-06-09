@@ -153,7 +153,7 @@ type handleHtmlData struct {
 	html *[]byte
 	options *map[string]interface{}
 	arguments *htmlArgs
-	eachArgs *[]EachArgs
+	eachArgs []EachArgs
 	compileError *error
 	componentList [][]byte
 
@@ -892,9 +892,9 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 										htmlTagsErr = append(htmlTagsErr, &compErr)
 
 										if htmlChan != nil && !isSync {
-											htmlChan.fn <- handleHtmlData{fn: &fn, preComp: true, html: &htmlCont, options: options, arguments: &args, eachArgs: &eachArgsList, compileError: &compErr, componentList: componentList}
+											htmlChan.fn <- handleHtmlData{fn: &fn, preComp: true, html: &htmlCont, options: options, arguments: &args, eachArgs: cloneArr(eachArgsList), compileError: &compErr, componentList: componentList}
 										}else{
-											handleHtmlFunc(handleHtmlData{fn: &fn, preComp: true, html: &htmlCont, options: options, arguments: &args, eachArgs: &eachArgsList, compileError: &compErr, componentList: componentList})
+											handleHtmlFunc(handleHtmlData{fn: &fn, preComp: true, html: &htmlCont, options: options, arguments: &args, eachArgs: cloneArr(eachArgsList), compileError: &compErr, componentList: componentList})
 										}
 										write([]byte{0})
 									}else{
@@ -931,9 +931,9 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 									htmlTagsErr = append(htmlTagsErr, &compErr)
 
 									if htmlChan != nil && !isSync {
-										htmlChan.fn <- handleHtmlData{fn: &fn, preComp: true, html: &htmlCont, options: options, arguments: &args, eachArgs: &eachArgsList, compileError: &compErr, componentList: componentList}
+										htmlChan.fn <- handleHtmlData{fn: &fn, preComp: true, html: &htmlCont, options: options, arguments: &args, eachArgs: cloneArr(eachArgsList), compileError: &compErr, componentList: componentList}
 									}else{
-										handleHtmlFunc(handleHtmlData{fn: &fn, preComp: true, html: &htmlCont, options: options, arguments: &args, eachArgs: &eachArgsList, compileError: &compErr, componentList: componentList})
+										handleHtmlFunc(handleHtmlData{fn: &fn, preComp: true, html: &htmlCont, options: options, arguments: &args, eachArgs: cloneArr(eachArgsList), compileError: &compErr, componentList: componentList})
 									}
 									write([]byte{0})
 								}
@@ -957,9 +957,9 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 								htmlTagsErr = append(htmlTagsErr, &compErr)
 
 								if htmlChan != nil {
-									htmlChan.comp <- handleHtmlData{html: &htmlCont, options: options, arguments: &args, compileError: &compErr, eachArgs: &eachArgsList, componentList: componentList}
+									htmlChan.comp <- handleHtmlData{html: &htmlCont, options: options, arguments: &args, eachArgs: cloneArr(eachArgsList), compileError: &compErr, componentList: componentList}
 								}else{
-									handleHtmlComponent(handleHtmlData{html: &htmlCont, options: options, arguments: &args, compileError: &compErr, eachArgs: &eachArgsList, componentList: componentList})
+									handleHtmlComponent(handleHtmlData{html: &htmlCont, options: options, arguments: &args, eachArgs: cloneArr(eachArgsList), compileError: &compErr, componentList: componentList})
 								}
 								write([]byte{0})
 							}else if args.close == 2 {
@@ -969,9 +969,9 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 								htmlTagsErr = append(htmlTagsErr, &compErr)
 
 								if htmlChan != nil {
-									htmlChan.comp <- handleHtmlData{html: &htmlCont, options: options, arguments: &args, compileError: &compErr, eachArgs: &eachArgsList, componentList: componentList}
+									htmlChan.comp <- handleHtmlData{html: &htmlCont, options: options, arguments: &args, eachArgs: cloneArr(eachArgsList), compileError: &compErr, componentList: componentList}
 								}else{
-									handleHtmlComponent(handleHtmlData{html: &htmlCont, options: options, arguments: &args, compileError: &compErr, eachArgs: &eachArgsList, componentList: componentList})
+									handleHtmlComponent(handleHtmlData{html: &htmlCont, options: options, arguments: &args, eachArgs: cloneArr(eachArgsList), compileError: &compErr, componentList: componentList})
 								}
 								write([]byte{0})
 							}
@@ -988,9 +988,9 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 
 							// pass through channel instead of a goroutine (like a queue)
 							if htmlChan != nil {
-								htmlChan.tag <- handleHtmlData{html: &htmlCont, options: options, arguments: &args, eachArgs: &eachArgsList, compileError: &compErr}
+								htmlChan.tag <- handleHtmlData{html: &htmlCont, options: options, arguments: &args, eachArgs: cloneArr(eachArgsList), compileError: &compErr}
 							}else{
-								handleHtmlTag(handleHtmlData{html: &htmlCont, options: options, arguments: &args, eachArgs: &eachArgsList, compileError: &compErr})
+								handleHtmlTag(handleHtmlData{html: &htmlCont, options: options, arguments: &args, eachArgs: cloneArr(eachArgsList), compileError: &compErr})
 							}
 							write([]byte{0})
 						}
@@ -1136,7 +1136,7 @@ func handleHtmlTag(htmlData handleHtmlData){
 				esc = 4
 			}
 
-			arg := GetOpt(htmlData.arguments.args[v][1:], htmlData.options, htmlData.eachArgs, esc, true, true)
+			arg := GetOpt(htmlData.arguments.args[v][1:], htmlData.options, &htmlData.eachArgs, esc, true, true)
 			if goutil.IsZeroOfUnderlyingType(arg) {
 				delete(htmlData.arguments.args, v)
 				continue
@@ -1144,7 +1144,7 @@ func handleHtmlTag(htmlData handleHtmlData){
 				htmlData.arguments.args[v] = goutil.Conv.ToBytes(arg)
 			}
 		}else if htmlData.arguments.args[v][0] == 2 {
-			arg := GetOpt(htmlData.arguments.args[v][1:], htmlData.options, htmlData.eachArgs, 1, true, true)
+			arg := GetOpt(htmlData.arguments.args[v][1:], htmlData.options, &htmlData.eachArgs, 1, true, true)
 			if goutil.IsZeroOfUnderlyingType(arg) {
 				delete(htmlData.arguments.args, v)
 				continue
@@ -1235,7 +1235,7 @@ func handleHtmlTag(htmlData handleHtmlData){
 func handleHtmlFunc(htmlData handleHtmlData){
 	//htmlData: fn *func(/*tag function args*/)[]byte, preComp bool, html *[]byte, options *map[string]interface{}, arguments *htmlArgs, eachArgs *[]EachArgs, compileError *error
 
-	res := (*htmlData.fn)(htmlData.options, htmlData.arguments, htmlData.eachArgs, htmlData.preComp)
+	res := (*htmlData.fn)(htmlData.options, htmlData.arguments, &htmlData.eachArgs, htmlData.preComp)
 	if res != nil && len(res) != 0 {
 		if res[0] == 0 {
 			if htmlData.preComp {
@@ -1261,7 +1261,7 @@ func handleHtmlFunc(htmlData handleHtmlData){
 func handleHtmlComponent(htmlData handleHtmlData){
 	//htmlData: html *[]byte, options *map[string]interface{}, arguments *htmlArgs, eachArgs *[]EachArgs, compileError *error, componentList [][]byte
 
-	// note: components cannot wait in the same channel without possibly getting stuck (ie: waiting for a parent that is also waiting for itself)
+	// note: components cannot wait in the same channel as their parents without possibly getting stuck (ie: waiting for a parent that is also waiting for itself)
 
 	for _, tag := range htmlData.componentList {
 		if bytes.Equal(htmlData.arguments.tag, tag) {
@@ -1295,13 +1295,8 @@ func handleHtmlComponent(htmlData handleHtmlData){
 
 	htmlData.componentList = append(htmlData.componentList, htmlData.arguments.tag)
 
-	/* for k, v := range htmlData.arguments.args {
-		opts[k] = v
-	} */
-
 	// precompile component
-	//todo: ensure htmlData.eachArgs is passing a clone, and not a pointer
-	preCompile(path, &opts, htmlData.arguments, htmlData.html, htmlData.compileError, nil, *htmlData.eachArgs, htmlData.componentList)
+	preCompile(path, &opts, htmlData.arguments, htmlData.html, htmlData.compileError, nil, htmlData.eachArgs, htmlData.componentList)
 	if *htmlData.compileError != nil {
 		(*htmlData.html)[0] = 2
 		return
@@ -1491,4 +1486,12 @@ func sortStrings[T any](list *[]T){
 
 		return smaller == 1
 	})
+}
+
+func cloneArr[T any](list []T) []T {
+	clone := make([]T, len(list))
+	for i, v := range list {
+		clone[i] = v
+	}
+	return clone
 }
