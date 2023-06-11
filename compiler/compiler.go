@@ -23,6 +23,7 @@ type Config struct {
 	Ext string
 	Static string
 	StaticUrl string
+	StaticHTML string
 	DebugMode bool
 }
 
@@ -37,12 +38,30 @@ func SetConfig(config Config) error {
 		compilerConfig.Root = path
 	}
 
+	rootDir := string(regex.Comp(`\/[\w_\-\.]+\/?$`).RepStr([]byte(compilerConfig.Root), []byte{}))
+
 	if config.Static != "" {
-		path, err := filepath.Abs(config.Root)
-		if err != nil {
-			return err
+		if path, err := filepath.Abs(config.Static); err == nil {
+			compilerConfig.Static = path
+		}else if path, err := goutil.FS.JoinPath(rootDir, "public"); err == nil {
+			compilerConfig.Static = path
 		}
+	}else if path, err := goutil.FS.JoinPath(rootDir, "public"); err == nil {
 		compilerConfig.Static = path
+	}
+
+	if config.StaticHTML != "" {
+		if path, err := filepath.Abs(config.StaticHTML); err == nil {
+			compilerConfig.StaticHTML = path
+		}else if path, err := goutil.FS.JoinPath(rootDir, "html"); err == nil && path != compilerConfig.Root {
+			compilerConfig.StaticHTML = path
+		}else if path, err := goutil.FS.JoinPath(rootDir, "html.static"); err == nil {
+			compilerConfig.StaticHTML = path
+		}
+	}else if path, err := goutil.FS.JoinPath(rootDir, "html"); err == nil && path != compilerConfig.Root {
+		compilerConfig.StaticHTML = path
+	}else if path, err := goutil.FS.JoinPath(rootDir, "html.static"); err == nil {
+		compilerConfig.StaticHTML = path
 	}
 
 	if config.Ext != "" {
@@ -61,7 +80,17 @@ func SetConfig(config Config) error {
 
 	compilerConfig.DebugMode = config.DebugMode
 
+	// ensure directories exist
+	InitDefault()
+
 	return nil
+}
+
+func InitDefault(){
+	// ensure directories exist
+	os.MkdirAll(compilerConfig.Root, 0775)
+	os.MkdirAll(compilerConfig.Static, 0775)
+	os.MkdirAll(compilerConfig.StaticHTML, 0775)
 }
 
 func init(){
@@ -72,7 +101,12 @@ func init(){
 
 	static, err := filepath.Abs("public")
 	if err != nil {
-		root = "public"
+		static = "public"
+	}
+
+	staticHTML, err := filepath.Abs("html")
+	if err != nil {
+		staticHTML = "html"
 	}
 
 	compilerConfig = Config{
@@ -80,6 +114,7 @@ func init(){
 		Ext: "html",
 		Static: static,
 		StaticUrl: "",
+		StaticHTML: staticHTML,
 		DebugMode: false,
 	}
 }
@@ -160,10 +195,14 @@ type handleHtmlData struct {
 	fn *func(opts *map[string]interface{}, args *htmlArgs, eachArgs *[]EachArgs, precomp bool) []byte
 	preComp bool
 
+	hasUnhandledVars *bool
+
 	stopChan bool
 }
 
 func PreCompile(path string, opts map[string]interface{}) error {
+	origPath := path
+
 	path, err := goutil.FS.JoinPath(compilerConfig.Root, path + "." + compilerConfig.Ext)
 	if err != nil {
 		if compilerConfig.DebugMode {
@@ -183,7 +222,10 @@ func PreCompile(path string, opts map[string]interface{}) error {
 
 	html := []byte{0}
 	preCompile(path, &opts, &htmlArgs{}, &html, &err, &htmlChan, nil, nil)
-	if err != nil {
+	if err != nil || len(html) == 0 || html[0] == 2 {
+		if err == nil {
+			err = errors.New("failed to precompile: '"+path+"'")
+		}
 		if compilerConfig.DebugMode {
 			fmt.Println(err)
 			html = append(html, regex.JoinBytes([]byte("<!--{{#error: "), regex.Comp(`%1`, compilerConfig.Root).RepStr([]byte(err.Error()), []byte{}), []byte("}}-->"))...)
@@ -195,9 +237,30 @@ func PreCompile(path string, opts map[string]interface{}) error {
 	//todo: add precompiled file to temp cache
 	fmt.Println("----------\n", string(html[1:]))
 
-	if err != nil {
-		return err
+	if html[0] == 3 {
+		//todo: compress html[1:] to gzip
+
+		staticPath, err := goutil.FS.JoinPath(compilerConfig.StaticHTML, origPath + "." + compilerConfig.Ext)
+		if err != nil {
+			if compilerConfig.DebugMode {
+				fmt.Println(err)
+				html = append(html, regex.JoinBytes([]byte("<!--{{#error: "), regex.Comp(`%1`, compilerConfig.Root).RepStr([]byte(err.Error()), []byte{}), []byte("}}-->"))...)
+			}
+			return err
+		}
+
+		err = os.WriteFile(staticPath, html[1:], 0775)
+		if err != nil {
+			if compilerConfig.DebugMode {
+				fmt.Println(err)
+				html = append(html, regex.JoinBytes([]byte("<!--{{#error: "), regex.Comp(`%1`, compilerConfig.Root).RepStr([]byte(err.Error()), []byte{}), []byte("}}-->"))...)
+			}
+			return err
+		}
+	}else{
+		//todo: add html[1:] to cache
 	}
+
 	return nil
 }
 
@@ -278,6 +341,9 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 			options = &opts
 		}
 	}
+
+
+	hasUnhandledVars := false
 
 
 	htmlRes := []byte{}
@@ -535,6 +601,7 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 										// add string for compiler result and check else content
 										write(regex.JoinBytes([]byte("{{%if "), precompStr, []byte("}}")))
 										ifTagLevel = append(ifTagLevel, 2)
+										hasUnhandledVars = true
 									}
 								}else{
 									// skip if content and move on to next else tag
@@ -573,6 +640,7 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 							}else if args.close == 1 && len(ifTagLevel) != 0 && (bytes.Equal(args.tag, []byte("_if")) || bytes.Equal(args.tag, []byte("if"))) {
 								if ifTagLevel[len(ifTagLevel)-1] == 1 || ifTagLevel[len(ifTagLevel)-1] == 2 {
 									write([]byte("{{%/if}}"))
+									hasUnhandledVars = true
 								}else{
 									removeLineBreak(reader)
 								}
@@ -620,6 +688,7 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 											// add string for compiler result and check else content
 											write(regex.JoinBytes([]byte("{{%else "), precompStr, []byte("}}")))
 										}
+										hasUnhandledVars = true
 									}else{
 										// skip if content and move on to next else tag
 										ib, ie := reader.PeekByte(0)
@@ -663,6 +732,7 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 											// add string for compiler result and check else content
 											ifTagLevel[len(ifTagLevel)-1] = 2
 											write(regex.JoinBytes([]byte("{{%if "), precompStr, []byte("}}")))
+											hasUnhandledVars = true
 										}
 									}else{
 										// skip if content and move on to next else tag
@@ -800,6 +870,7 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 
 										eachArgsList = append(eachArgsList, eachArgs)
 										write(regex.JoinBytes([]byte("{{%each"), ' ', argStr, []byte("}}")))
+										hasUnhandledVars = true
 
 										continue
 									}
@@ -840,8 +911,9 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 							}else if args.close == 1 {
 								if len(eachArgsList) != 0 {
 									if eachArgsList[len(eachArgsList)-1].passToComp {
-										write([]byte("{{%/each}}"))
 										eachArgsList = eachArgsList[:len(eachArgsList)-1]
+										write([]byte("{{%/each}}"))
+										hasUnhandledVars = true
 									}else if eachArgsList[len(eachArgsList)-1].ind < eachArgsList[len(eachArgsList)-1].size-1 {
 										if eachArgsList[len(eachArgsList)-1].ind == 0 {
 											reader.Restore()
@@ -892,9 +964,9 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 										htmlTagsErr = append(htmlTagsErr, &compErr)
 
 										if htmlChan != nil && !isSync {
-											htmlChan.fn <- handleHtmlData{fn: &fn, preComp: true, html: &htmlCont, options: options, arguments: &args, eachArgs: cloneArr(eachArgsList), compileError: &compErr, componentList: componentList}
+											htmlChan.fn <- handleHtmlData{fn: &fn, preComp: true, html: &htmlCont, options: options, arguments: &args, eachArgs: cloneArr(eachArgsList), compileError: &compErr, componentList: componentList, hasUnhandledVars: &hasUnhandledVars}
 										}else{
-											handleHtmlFunc(handleHtmlData{fn: &fn, preComp: true, html: &htmlCont, options: options, arguments: &args, eachArgs: cloneArr(eachArgsList), compileError: &compErr, componentList: componentList})
+											handleHtmlFunc(handleHtmlData{fn: &fn, preComp: true, html: &htmlCont, options: options, arguments: &args, eachArgs: cloneArr(eachArgsList), compileError: &compErr, componentList: componentList, hasUnhandledVars: &hasUnhandledVars})
 										}
 										write([]byte{0})
 									}else{
@@ -931,9 +1003,9 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 									htmlTagsErr = append(htmlTagsErr, &compErr)
 
 									if htmlChan != nil && !isSync {
-										htmlChan.fn <- handleHtmlData{fn: &fn, preComp: true, html: &htmlCont, options: options, arguments: &args, eachArgs: cloneArr(eachArgsList), compileError: &compErr, componentList: componentList}
+										htmlChan.fn <- handleHtmlData{fn: &fn, preComp: true, html: &htmlCont, options: options, arguments: &args, eachArgs: cloneArr(eachArgsList), compileError: &compErr, componentList: componentList, hasUnhandledVars: &hasUnhandledVars}
 									}else{
-										handleHtmlFunc(handleHtmlData{fn: &fn, preComp: true, html: &htmlCont, options: options, arguments: &args, eachArgs: cloneArr(eachArgsList), compileError: &compErr, componentList: componentList})
+										handleHtmlFunc(handleHtmlData{fn: &fn, preComp: true, html: &htmlCont, options: options, arguments: &args, eachArgs: cloneArr(eachArgsList), compileError: &compErr, componentList: componentList, hasUnhandledVars: &hasUnhandledVars})
 									}
 									write([]byte{0})
 								}
@@ -957,9 +1029,9 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 								htmlTagsErr = append(htmlTagsErr, &compErr)
 
 								if htmlChan != nil {
-									htmlChan.comp <- handleHtmlData{html: &htmlCont, options: options, arguments: &args, eachArgs: cloneArr(eachArgsList), compileError: &compErr, componentList: componentList}
+									htmlChan.comp <- handleHtmlData{html: &htmlCont, options: options, arguments: &args, eachArgs: cloneArr(eachArgsList), compileError: &compErr, componentList: componentList, hasUnhandledVars: &hasUnhandledVars}
 								}else{
-									handleHtmlComponent(handleHtmlData{html: &htmlCont, options: options, arguments: &args, eachArgs: cloneArr(eachArgsList), compileError: &compErr, componentList: componentList})
+									handleHtmlComponent(handleHtmlData{html: &htmlCont, options: options, arguments: &args, eachArgs: cloneArr(eachArgsList), compileError: &compErr, componentList: componentList, hasUnhandledVars: &hasUnhandledVars})
 								}
 								write([]byte{0})
 							}else if args.close == 2 {
@@ -969,9 +1041,9 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 								htmlTagsErr = append(htmlTagsErr, &compErr)
 
 								if htmlChan != nil {
-									htmlChan.comp <- handleHtmlData{html: &htmlCont, options: options, arguments: &args, eachArgs: cloneArr(eachArgsList), compileError: &compErr, componentList: componentList}
+									htmlChan.comp <- handleHtmlData{html: &htmlCont, options: options, arguments: &args, eachArgs: cloneArr(eachArgsList), compileError: &compErr, componentList: componentList, hasUnhandledVars: &hasUnhandledVars}
 								}else{
-									handleHtmlComponent(handleHtmlData{html: &htmlCont, options: options, arguments: &args, eachArgs: cloneArr(eachArgsList), compileError: &compErr, componentList: componentList})
+									handleHtmlComponent(handleHtmlData{html: &htmlCont, options: options, arguments: &args, eachArgs: cloneArr(eachArgsList), compileError: &compErr, componentList: componentList, hasUnhandledVars: &hasUnhandledVars})
 								}
 								write([]byte{0})
 							}
@@ -988,9 +1060,9 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 
 							// pass through channel instead of a goroutine (like a queue)
 							if htmlChan != nil {
-								htmlChan.tag <- handleHtmlData{html: &htmlCont, options: options, arguments: &args, eachArgs: cloneArr(eachArgsList), compileError: &compErr}
+								htmlChan.tag <- handleHtmlData{html: &htmlCont, options: options, arguments: &args, eachArgs: cloneArr(eachArgsList), compileError: &compErr, hasUnhandledVars: &hasUnhandledVars}
 							}else{
-								handleHtmlTag(handleHtmlData{html: &htmlCont, options: options, arguments: &args, eachArgs: cloneArr(eachArgsList), compileError: &compErr})
+								handleHtmlTag(handleHtmlData{html: &htmlCont, options: options, arguments: &args, eachArgs: cloneArr(eachArgsList), compileError: &compErr, hasUnhandledVars: &hasUnhandledVars})
 							}
 							write([]byte{0})
 						}
@@ -1052,7 +1124,17 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 
 						val := GetOpt(b, options, &eachArgsList, esc, true, true)
 						if !goutil.IsZeroOfUnderlyingType(val) {
-							write(goutil.Conv.ToBytes(val))
+							if reflect.TypeOf(val) == goutil.VarType["[]byte"] && len(val.([]byte)) != 0 && val.([]byte)[0] == 0 {
+								v := val.([]byte)[1:]
+								if !regex.Comp(`(?i)^\{\{\{?body\}\}\}?$`).MatchRef(&v) {
+									write(v)
+									hasUnhandledVars = true
+								}else{
+									removeLineBreak(reader)
+								}
+							}else{
+								write(toBytesOrJson(val))
+							}
 						}
 
 						continue
@@ -1113,7 +1195,13 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 	}
 
 	*html = append(*html, htmlRes...)
-	(*html)[0] = 1
+
+	if !hasUnhandledVars {
+		// can be added to static html (and gzipped)
+		(*html)[0] = 3
+	}else{
+		(*html)[0] = 1
+	}
 }
 
 func handleHtmlTag(htmlData handleHtmlData){
@@ -1141,6 +1229,9 @@ func handleHtmlTag(htmlData handleHtmlData){
 				delete(htmlData.arguments.args, v)
 				continue
 			}else{
+				if reflect.TypeOf(arg) == goutil.VarType["[]byte"] && len(arg.([]byte)) != 0 && arg.([]byte)[0] == 0 {
+					*htmlData.hasUnhandledVars = true
+				}
 				htmlData.arguments.args[v] = goutil.Conv.ToBytes(arg)
 			}
 		}else if htmlData.arguments.args[v][0] == 2 {
@@ -1149,6 +1240,9 @@ func handleHtmlTag(htmlData handleHtmlData){
 				delete(htmlData.arguments.args, v)
 				continue
 			}else{
+				if reflect.TypeOf(arg) == goutil.VarType["[]byte"] && len(arg.([]byte)) != 0 && arg.([]byte)[0] == 0 {
+					*htmlData.hasUnhandledVars = true
+				}
 				htmlData.arguments.args[v] = goutil.Conv.ToBytes(arg)
 			}
 		}
