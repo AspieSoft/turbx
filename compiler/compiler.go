@@ -16,6 +16,7 @@ import (
 	"github.com/AspieSoft/go-liveread"
 	"github.com/AspieSoft/go-regex/v4"
 	"github.com/AspieSoft/goutil/v5"
+	"github.com/alphadose/haxmap"
 )
 
 type Config struct {
@@ -24,10 +25,20 @@ type Config struct {
 	Static string
 	StaticUrl string
 	StaticHTML string
+	CacheDir string
+	CompressStatic int
+	CompressCache int
 	DebugMode bool
 }
 
+type cacheObj struct {
+	cachePath []string
+	static bool
+}
+
 var compilerConfig Config
+
+var htmlPreCache *haxmap.Map[string, cacheObj] = haxmap.New[string, cacheObj]()
 
 func SetConfig(config Config) error {
 	if config.Root != "" {
@@ -53,15 +64,21 @@ func SetConfig(config Config) error {
 	if config.StaticHTML != "" {
 		if path, err := filepath.Abs(config.StaticHTML); err == nil {
 			compilerConfig.StaticHTML = path
-		}else if path, err := goutil.FS.JoinPath(rootDir, "html"); err == nil && path != compilerConfig.Root {
-			compilerConfig.StaticHTML = path
 		}else if path, err := goutil.FS.JoinPath(rootDir, "html.static"); err == nil {
 			compilerConfig.StaticHTML = path
 		}
-	}else if path, err := goutil.FS.JoinPath(rootDir, "html"); err == nil && path != compilerConfig.Root {
-		compilerConfig.StaticHTML = path
 	}else if path, err := goutil.FS.JoinPath(rootDir, "html.static"); err == nil {
 		compilerConfig.StaticHTML = path
+	}
+
+	if config.CacheDir != "" {
+		if path, err := filepath.Abs(config.CacheDir); err == nil {
+			compilerConfig.CacheDir = path
+		}else if path, err := goutil.FS.JoinPath(rootDir, "html.cache"); err == nil {
+			compilerConfig.CacheDir = path
+		}
+	}else if path, err := goutil.FS.JoinPath(rootDir, "html.cache"); err == nil {
+		compilerConfig.CacheDir = path
 	}
 
 	if config.Ext != "" {
@@ -78,6 +95,24 @@ func SetConfig(config Config) error {
 		compilerConfig.StaticUrl = config.StaticUrl
 	}
 
+	if config.CompressStatic != 0 {
+		if config.CompressStatic < 0 {
+			config.CompressStatic = 0
+		}else if config.CompressStatic > 11 {
+			config.CompressStatic = 11
+		}
+		compilerConfig.CompressStatic = config.CompressStatic
+	}
+
+	if config.CompressCache != 0 {
+		if config.CompressCache < 0 {
+			config.CompressCache = 0
+		}else if config.CompressCache > 11 {
+			config.CompressCache = 11
+		}
+		compilerConfig.CompressCache = config.CompressCache
+	}
+
 	compilerConfig.DebugMode = config.DebugMode
 
 	// ensure directories exist
@@ -91,6 +126,7 @@ func InitDefault(){
 	os.MkdirAll(compilerConfig.Root, 0775)
 	os.MkdirAll(compilerConfig.Static, 0775)
 	os.MkdirAll(compilerConfig.StaticHTML, 0775)
+	os.MkdirAll(compilerConfig.CacheDir, 0775)
 }
 
 func init(){
@@ -104,9 +140,14 @@ func init(){
 		static = "public"
 	}
 
-	staticHTML, err := filepath.Abs("html")
+	staticHTML, err := filepath.Abs("html.static")
 	if err != nil {
-		staticHTML = "html"
+		staticHTML = "html.static"
+	}
+
+	cacheDir, err := filepath.Abs("html.cache")
+	if err != nil {
+		cacheDir = "html.cache"
 	}
 
 	compilerConfig = Config{
@@ -115,6 +156,9 @@ func init(){
 		Static: static,
 		StaticUrl: "",
 		StaticHTML: staticHTML,
+		CacheDir: cacheDir,
+		CompressStatic: 11,
+		CompressCache: 7,
 		DebugMode: false,
 	}
 }
@@ -234,11 +278,9 @@ func PreCompile(path string, opts map[string]interface{}) error {
 		}
 	}
 
-	//todo: add precompiled file to temp cache
-	fmt.Println("----------\n", string(html[1:]))
-
 	if html[0] == 3 {
-		//todo: compress html[1:] to gzip
+		// create static html file
+		html = html[1:]
 
 		staticPath, err := goutil.FS.JoinPath(compilerConfig.StaticHTML, origPath + "." + compilerConfig.Ext)
 		if err != nil {
@@ -249,7 +291,42 @@ func PreCompile(path string, opts map[string]interface{}) error {
 			return err
 		}
 
-		err = os.WriteFile(staticPath, html[1:], 0775)
+		cachePath := []string{}
+		if br, err := goutil.BROTLI.Zip(html, compilerConfig.CompressStatic); err == nil {
+			if err := os.WriteFile(staticPath+".br", br, 0775); err == nil {
+				cachePath = append(cachePath, staticPath+".br")
+			}
+		}
+
+		if gz, err := goutil.GZIP.Zip(html); err == nil {
+			if err := os.WriteFile(staticPath+".gz", gz, 0775); err == nil {
+				cachePath = append(cachePath, staticPath+".gz")
+			}
+		}
+
+		if len(cachePath) == 0 {
+			if err = os.WriteFile(staticPath+".html", html, 0775); err != nil {
+				if compilerConfig.DebugMode {
+					fmt.Println(err)
+					html = append(html, regex.JoinBytes([]byte("<!--{{#error: "), regex.Comp(`%1`, compilerConfig.Root).RepStr([]byte(err.Error()), []byte{}), []byte("}}-->"))...)
+				}
+				return err
+			}else{
+				cachePath = append(cachePath, staticPath+".html")
+			}
+		}
+
+		if len(cachePath) != 0 {
+			htmlPreCache.Set(path, cacheObj{
+				cachePath: cachePath,
+				static: true,
+			})
+		}
+	}else{
+		// cache dynamic html file
+		html = html[1:]
+
+		staticPath, err := goutil.FS.JoinPath(compilerConfig.CacheDir, origPath + "." + compilerConfig.Ext)
 		if err != nil {
 			if compilerConfig.DebugMode {
 				fmt.Println(err)
@@ -257,8 +334,40 @@ func PreCompile(path string, opts map[string]interface{}) error {
 			}
 			return err
 		}
-	}else{
-		//todo: add html[1:] to cache
+
+		cachePath := []string{}
+		if br, err := goutil.BROTLI.Zip(html, compilerConfig.CompressCache); err == nil {
+			if err := os.WriteFile(staticPath+".br", br, 0775); err == nil {
+				cachePath = append(cachePath, staticPath+".br")
+			}
+		}
+
+		if len(cachePath) == 0 {
+			if gz, err := goutil.BROTLI.Zip(html, 7); err == nil {
+				if err := os.WriteFile(staticPath+".gz", gz, 0775); err == nil {
+					cachePath = append(cachePath, staticPath+".gz")
+				}
+			}
+		}
+
+		if len(cachePath) == 0 {
+			if err = os.WriteFile(staticPath+".html", html, 0775); err != nil {
+				if compilerConfig.DebugMode {
+					fmt.Println(err)
+					html = append(html, regex.JoinBytes([]byte("<!--{{#error: "), regex.Comp(`%1`, compilerConfig.Root).RepStr([]byte(err.Error()), []byte{}), []byte("}}-->"))...)
+				}
+				return err
+			}else{
+				cachePath = append(cachePath, staticPath+".html")
+			}
+		}
+
+		if len(cachePath) != 0 {
+			htmlPreCache.Set(path, cacheObj{
+				cachePath: cachePath,
+				static: false,
+			})
+		}
 	}
 
 	return nil
@@ -352,7 +461,60 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 
 	htmlContTemp := [][]byte{}
 	htmlContTempTag := []htmlArgs{}
+
+	endLineBreak := uint(0)
+	firstWrite := true
 	write := func(b []byte){
+		if len(b) == 0 {
+			return
+		}
+
+		if firstWrite {
+			b = regex.Comp(`^\s+`).RepStrRef(&b, []byte{})
+			if len(b) == 0 {
+				return
+			}
+			firstWrite = false
+		}
+
+		b = regex.Comp(`\r+`).RepStrRef(&b, []byte{})
+		if len(b) == 0 {
+			return
+		}
+
+		b = regex.Comp(`(\n{2})\n+`).RepStrCompRef(&b, []byte("$1"))
+		if len(b) == 0 {
+			return
+		}
+
+		if endLineBreak >= 2 {
+			b = regex.Comp(`^\n+`).RepStrRef(&b, []byte{})
+			if len(b) == 0 {
+				return
+			}
+		}else if endLineBreak == 1 {
+			b = regex.Comp(`^\n+`).RepStrRef(&b, []byte{'\n'})
+			if len(b) == 0 {
+				return
+			}
+		}
+
+		if endLineBreak != 0 {
+			b = regex.Comp(`^[\t ]$`).RepStrRef(&b, []byte{})
+			if len(b) == 0 {
+				return
+			}
+		}
+
+		if b[len(b)-1] == '\n' {
+			endLineBreak++
+			if len(b) > 1 && b[len(b)-2] == '\n' {
+				endLineBreak++
+			}
+		}else{
+			endLineBreak = 0
+		}
+
 		if len(htmlContTempTag) != 0 {
 			htmlContTemp[len(htmlContTempTag)-1] = append(htmlContTemp[len(htmlContTempTag)-1], b...)
 		}else{
@@ -1195,6 +1357,8 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 	}
 
 	*html = append(*html, htmlRes...)
+
+	*html = regex.Comp(`\s+$`).RepStrRef(html, []byte{'\n'})
 
 	if !hasUnhandledVars {
 		// can be added to static html (and gzipped)
