@@ -20,20 +20,49 @@ import (
 )
 
 type Config struct {
+	// Root dir for html files
+	// example: "~/MySiteDir/views"
+	// default: "./views"
 	Root string
+
+	// File Extention to use for html files (without the dot)
+	// example: "html"
+	// default: "html"
 	Ext string
+
+	// A public/static path for js, css, and other static files
+	// example: "~/MySiteDir/public"
+	// default: "./public"
 	Static string
+
+	// The url where public/static files will be served from (js, css, etc)
+	// example: "/cdn/assets"
+	// default: "/"
 	StaticUrl string
+
+	// A dir path to store static html files, for when the precompiler produces static html
 	StaticHTML string
+
+	// A dir path to cache dynamic html files, for when the precompiler produces dynamically changing content
 	CacheDir string
+
+	// Brotli compression level for static files (0-11)
 	CompressStatic int
+
+	// Brotli compression level for temp cache files (0-11)
 	CompressCache int
+
+	// Cache Time In Minutes
+	CacheTime int
+
+	// Debug Mode For Developers
 	DebugMode bool
 }
 
 type cacheObj struct {
 	cachePath []string
 	static bool
+	accessed int
 }
 
 var compilerConfig Config
@@ -46,6 +75,9 @@ func SetConfig(config Config) error {
 		if err != nil {
 			return err
 		}
+
+		cacheWatcher.WatchDir(path)
+		cacheWatcher.CloseWatcher(compilerConfig.Root)
 		compilerConfig.Root = path
 	}
 
@@ -113,6 +145,13 @@ func SetConfig(config Config) error {
 		compilerConfig.CompressCache = config.CompressCache
 	}
 
+	if config.CacheTime != 0 {
+		if config.CacheTime < 0 {
+			config.CacheTime = 0
+		}
+		compilerConfig.CacheTime = config.CacheTime
+	}
+
 	compilerConfig.DebugMode = config.DebugMode
 
 	// ensure directories exist
@@ -127,7 +166,76 @@ func InitDefault(){
 	os.MkdirAll(compilerConfig.Static, 0775)
 	os.MkdirAll(compilerConfig.StaticHTML, 0775)
 	os.MkdirAll(compilerConfig.CacheDir, 0775)
+
+	// add possible cache files to list
+	if files, err := os.ReadDir(compilerConfig.StaticHTML); err == nil {
+		for _, file := range files {
+			if !file.IsDir() {
+				fileName := []byte(file.Name())
+				if regex.Comp(`\.(%1)\.(br|gz|html)$`, compilerConfig.Ext).MatchRef(&fileName) {
+					fileName = regex.Comp(`\.(%1)\.(br|gz|html)$`, compilerConfig.Ext).RepStrCompRef(&fileName, []byte(".$1"))
+					fileName = regex.Comp(`\.(?!%1$)`, compilerConfig.Ext).RepStrRef(&fileName, []byte{'/'})
+					if path, err := goutil.FS.JoinPath(compilerConfig.Root, string(fileName)); err == nil {
+						if staticPath, err := goutil.FS.JoinPath(compilerConfig.StaticHTML, string(fileName)); err == nil {
+							cachePath := []string{}
+							if stat, err := os.Stat(staticPath+".br"); err == nil && !stat.IsDir() {
+								cachePath = append(cachePath, staticPath+".br")
+							}
+							if stat, err := os.Stat(staticPath+".gz"); err == nil && !stat.IsDir() {
+								cachePath = append(cachePath, staticPath+".gz")
+							}
+							if stat, err := os.Stat(staticPath+".html"); err == nil && !stat.IsDir() {
+								cachePath = append(cachePath, staticPath+".html")
+							}
+
+							htmlPreCache.Set(path, cacheObj{
+								cachePath: cachePath,
+								static: true,
+								accessed: int(time.Now().UnixMilli() / 60000),
+							})
+						}
+					}
+				}
+			}
+		}
+	}
+
+	if files, err := os.ReadDir(compilerConfig.CacheDir); err == nil {
+		for _, file := range files {
+			if !file.IsDir() {
+				fileName := []byte(file.Name())
+				if regex.Comp(`\.(%1)\.(br|gz|html)\.cache$`, compilerConfig.Ext).MatchRef(&fileName) {
+					fileName = regex.Comp(`\.(%1)\.(br|gz|html)\.cache$`, compilerConfig.Ext).RepStrCompRef(&fileName, []byte(".$1"))
+					fileName = regex.Comp(`\.(?!%1$)`, compilerConfig.Ext).RepStrRef(&fileName, []byte{'/'})
+					if path, err := goutil.FS.JoinPath(compilerConfig.Root, string(fileName)); err == nil {
+						if staticPath, err := goutil.FS.JoinPath(compilerConfig.StaticHTML, string(fileName)); err == nil {
+							cachePath := []string{}
+							if stat, err := os.Stat(staticPath+".br.cache"); err == nil && !stat.IsDir() {
+								cachePath = append(cachePath, staticPath+".br.cache")
+							}
+							if stat, err := os.Stat(staticPath+".gz.cache"); err == nil && !stat.IsDir() {
+								cachePath = append(cachePath, staticPath+".gz.cache")
+							}
+							if stat, err := os.Stat(staticPath+".html.cache"); err == nil && !stat.IsDir() {
+								cachePath = append(cachePath, staticPath+".html.cache")
+							}
+
+							htmlPreCache.Set(path, cacheObj{
+								cachePath: cachePath,
+								static: true,
+								accessed: int(time.Now().UnixMilli() / 60000),
+							})
+						}
+					}
+				}
+			}
+		}
+	}
 }
+
+var runningCompiler bool = true
+
+var cacheWatcher *goutil.FileWatcher
 
 func init(){
 	root, err := filepath.Abs("views")
@@ -150,6 +258,32 @@ func init(){
 		cacheDir = "html.cache"
 	}
 
+	cacheWatcher = goutil.FS.FileWatcher()
+	cacheWatcher.OnFileChange = func(path, op string) {
+		if data, ok := htmlPreCache.Get(path); ok {
+			htmlPreCache.Del(path)
+			for _, file := range data.cachePath {
+				if (data.static && strings.HasPrefix(file, compilerConfig.StaticHTML)) || (!data.static && strings.HasPrefix(file, compilerConfig.CacheDir)) {
+					os.Remove(file)
+				}
+			}
+		}
+	}
+	cacheWatcher.OnRemove = func(path, op string) bool {
+		if data, ok := htmlPreCache.Get(path); ok {
+			htmlPreCache.Del(path)
+			for _, file := range data.cachePath {
+				if (data.static && strings.HasPrefix(file, compilerConfig.StaticHTML)) || (!data.static && strings.HasPrefix(file, compilerConfig.CacheDir)) {
+					os.Remove(file)
+				}
+			}
+		}
+		return true
+	}
+
+
+	cacheWatcher.WatchDir(root)
+
 	compilerConfig = Config{
 		Root: root,
 		Ext: "html",
@@ -159,11 +293,51 @@ func init(){
 		CacheDir: cacheDir,
 		CompressStatic: 11,
 		CompressCache: 7,
+		CacheTime: 120, // minutes: 2 hours
 		DebugMode: false,
 	}
+
+
+	// clear cache items as needed
+	go func(){
+		lastRun := 0
+
+		for {
+			time.Sleep(10 * time.Second)
+
+			if !runningCompiler {
+				break
+			}
+
+			if compilerConfig.CacheTime == 0 {
+				continue
+			}
+
+			now := int(time.Now().UnixMilli() / 60000)
+			if now - lastRun < 10 {
+				continue
+			}
+			lastRun = now
+
+			htmlPreCache.ForEach(func(path string, data cacheObj) bool {
+				if now - data.accessed > compilerConfig.CacheTime {
+					htmlPreCache.Del(path)
+					for _, file := range data.cachePath {
+						if (data.static && strings.HasPrefix(file, compilerConfig.StaticHTML)) || (!data.static && strings.HasPrefix(file, compilerConfig.CacheDir)) {
+							os.Remove(file)
+						}
+					}
+				}
+				return true
+			})
+		}
+	}()
 }
 
 func Close(){
+	runningCompiler = false
+	cacheWatcher.CloseWatcher("*")
+
 	// time.Sleep(3 * time.Second)
 }
 
@@ -244,6 +418,34 @@ type handleHtmlData struct {
 	stopChan bool
 }
 
+// Compile will return html content, (or a static path when possible)
+//
+// first byte ([]byte[0]):
+//
+// - 0: html
+//
+// - 1: path to static html (compressed with brotli)
+//
+// - 2: path to static html (compressed with gzip)
+//
+// - 3: path to static html (uncompressed raw html)
+//
+// note: putting any extra '.' in a filename (apart from the extention name) may cause conflicts with restoring old cache files
+func Compile(path string, opts map[string]interface{}) ([]byte, error) {
+	// return []byte{0} for html output
+	// return []byte{1} for path to static html file (brotli)
+	// return []byte{2} for path to static html file (gzip)
+	// return []byte{3} for path to static html file (html)
+
+
+
+	return nil, nil
+}
+
+
+// PreCompile will generate a new file for the cache (or a static file when possible)
+//
+// note: putting any extra '.' in a filename (apart from the extention name) may cause conflicts with restoring old cache files
 func PreCompile(path string, opts map[string]interface{}) error {
 	origPath := path
 
@@ -277,6 +479,8 @@ func PreCompile(path string, opts map[string]interface{}) error {
 			return err
 		}
 	}
+
+	origPath = string(regex.Comp(`[\\\/]+`).RepStr([]byte(origPath), []byte{'.'}))
 
 	if html[0] == 3 {
 		// create static html file
@@ -320,6 +524,7 @@ func PreCompile(path string, opts map[string]interface{}) error {
 			htmlPreCache.Set(path, cacheObj{
 				cachePath: cachePath,
 				static: true,
+				accessed: int(time.Now().UnixMilli() / 60000),
 			})
 		}
 	}else{
@@ -337,28 +542,28 @@ func PreCompile(path string, opts map[string]interface{}) error {
 
 		cachePath := []string{}
 		if br, err := goutil.BROTLI.Zip(html, compilerConfig.CompressCache); err == nil {
-			if err := os.WriteFile(staticPath+".br", br, 0775); err == nil {
-				cachePath = append(cachePath, staticPath+".br")
+			if err := os.WriteFile(staticPath+".br.cache", br, 0775); err == nil {
+				cachePath = append(cachePath, staticPath+".br.cache")
 			}
 		}
 
 		if len(cachePath) == 0 {
 			if gz, err := goutil.BROTLI.Zip(html, 7); err == nil {
-				if err := os.WriteFile(staticPath+".gz", gz, 0775); err == nil {
-					cachePath = append(cachePath, staticPath+".gz")
+				if err := os.WriteFile(staticPath+".gz.cache", gz, 0775); err == nil {
+					cachePath = append(cachePath, staticPath+".gz.cache")
 				}
 			}
 		}
 
 		if len(cachePath) == 0 {
-			if err = os.WriteFile(staticPath+".html", html, 0775); err != nil {
+			if err = os.WriteFile(staticPath+".html.cache", html, 0775); err != nil {
 				if compilerConfig.DebugMode {
 					fmt.Println(err)
 					html = append(html, regex.JoinBytes([]byte("<!--{{#error: "), regex.Comp(`%1`, compilerConfig.Root).RepStr([]byte(err.Error()), []byte{}), []byte("}}-->"))...)
 				}
 				return err
 			}else{
-				cachePath = append(cachePath, staticPath+".html")
+				cachePath = append(cachePath, staticPath+".html.cache")
 			}
 		}
 
@@ -366,6 +571,7 @@ func PreCompile(path string, opts map[string]interface{}) error {
 			htmlPreCache.Set(path, cacheObj{
 				cachePath: cachePath,
 				static: false,
+				accessed: int(time.Now().UnixMilli() / 60000),
 			})
 		}
 	}
