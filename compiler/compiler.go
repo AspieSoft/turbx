@@ -851,7 +851,7 @@ func compile(path string, options *map[string]interface{}, compType uint8) ([]by
 										}else{
 											args.tag[0] = bytes.ToUpper([]byte{args.tag[0]})[0]
 
-											//todo: handle other functions
+											//todo: handle other functions (may always run in sync, and ignore function preference)
 										}
 									}
 								}
