@@ -576,7 +576,6 @@ func compile(path string, options *map[string]interface{}, compType uint8) ([]by
 
 	ifTagLevel := []uint8{}
 	eachArgsList := []EachArgs{}
-	_, _ = ifTagLevel, eachArgsList
 
 	var buf []byte
 	for err == nil {
@@ -660,8 +659,9 @@ func compile(path string, options *map[string]interface{}, compType uint8) ([]by
 										if tagMode == 0 {
 											if varData[i] == ' ' || varData[i] == '\r' || varData[i] == '\n' {
 												tagMode = 1
+											}else{
+												args.tag = append(args.tag, varData[i])
 											}
-											args.tag = append(args.tag, varData[i])
 										}else{
 											if tq == 0 && varData[i] == ' ' || varData[i] == '\r' || varData[i] == '\n' {
 												if tagMode == 1 && tName != "" {
@@ -713,6 +713,8 @@ func compile(path string, options *map[string]interface{}, compType uint8) ([]by
 									}
 
 									if len(args.tag) != 0 {
+										args.tag = bytes.ToLower(args.tag)
+
 										// args.close:
 										// 0 = failed to close (<tag)
 										// 1 = </tag>
@@ -720,14 +722,129 @@ func compile(path string, options *map[string]interface{}, compType uint8) ([]by
 										// 3 = <tag>
 	
 										if bytes.Equal(args.tag, []byte("if")) || bytes.Equal(args.tag, []byte("else")) {
-											//todo: handle if functions
-	
-											if args.close == 3 && bytes.Equal(args.tag, []byte("if")) {
-												// open if tag
-											}else if bytes.Equal(args.tag, []byte("else")) {
-												// else tag
-											}else if args.close == 1 && bytes.Equal(args.tag, []byte("if")) {
-												// close if tag
+											if args.close == 3 && bytes.Equal(args.tag, []byte("if")) { // open tag
+												if _, ok := TagFuncs.If(options, &args, &eachArgsList, false); ok {
+													// grab if content and skip else content
+													ifTagLevel = append(ifTagLevel, 0)
+													removeLineBreak(reader)
+												}else{
+													// skip if content and move on to next else tag
+													ifTagLevel = append(ifTagLevel, 3)
+													ib, ie := reader.Peek(2)
+													ifLevel := 0
+													for ie == nil {
+														if ib[0] == '"' || ib[0] == '\'' || ib[0] == '`' {
+															q := ib[0]
+															reader.Discard(1)
+															ib, ie = reader.Peek(2)
+															for ie == nil && ib[0] != q {
+																if ib[0] == '\\' {
+																	reader.Discard(1)
+																}
+																reader.Discard(1)
+																ib, ie = reader.Peek(2)
+															}
+														}else if ib[0] == '{' && ib[1] == '{' {
+															ibTag, ie := reader.Peek(10)
+															if ie == nil && ifLevel == 0 && regex.Comp(`^\{\{\{?%/?else[\s/\}:]`).MatchRef(&ibTag) {
+																break
+															}else if (ie == nil || len(ibTag) > 6) && regex.Comp(`^\{\{\{?%/?if[\s/\}:]`).MatchRef(&ibTag) {
+																if ibTag[3] == '/' || ibTag[4] == '/' {
+																	ifLevel--
+																	if ifLevel < 0 {
+																		break
+																	}
+																}else{
+																	ifLevel++
+																}
+															}
+														}
+
+														reader.Discard(1)
+														ib, ie = reader.Peek(2)
+													}
+												}
+											}else if args.close == 1 && len(ifTagLevel) != 0 && bytes.Equal(args.tag, []byte("if")) { // close tag
+												removeLineBreak(reader)
+												ifTagLevel = ifTagLevel[:len(ifTagLevel)-1]
+											}else if len(ifTagLevel) != 0 && bytes.Equal(args.tag, []byte("else")) { // else tag
+												if ifTagLevel[len(ifTagLevel)-1] == 0 { // true if statement
+													// skip content to closing if tag
+													ib, ie := reader.Peek(2)
+													ifLevel := 0
+													for ie == nil {
+														if ib[0] == '"' || ib[0] == '\'' || ib[0] == '`' {
+															q := ib[0]
+															reader.Discard(1)
+															ib, ie = reader.Peek(2)
+															for ie == nil && ib[0] != q {
+																if ib[0] == '\\' {
+																	reader.Discard(1)
+																}
+																reader.Discard(1)
+																ib, ie = reader.Peek(2)
+															}
+														}else if ib[0] == '{' && ib[1] == '{' {
+															ibTag, ie := reader.Peek(8)
+															if ie == nil && ifLevel == 0 && regex.Comp(`^\{\{\{?%/if[\s/\}:]`).MatchRef(&ibTag) {
+																break
+															}else if (ie == nil || len(ibTag) > 6) && regex.Comp(`^\{\{\{?%/?if[\s/>:]`).MatchRef(&ibTag) {
+																if ibTag[1] == '/' {
+																	ifLevel--
+																	if ifLevel < 0 {
+																		ifLevel = 0
+																	}
+																}else{
+																	ifLevel++
+																}
+															}
+														}
+				
+														reader.Discard(1)
+														ib, ie = reader.Peek(2)
+													}
+												}else if ifTagLevel[len(ifTagLevel)-1] == 3 { // false if statement
+													if _, ok := TagFuncs.If(options, &args, &eachArgsList, false); ok {
+														// grab if content and skip else content
+														ifTagLevel[len(ifTagLevel)-1] = 0
+														removeLineBreak(reader)
+													}else{
+														// skip if content and move on to next else tag
+														ib, ie := reader.Peek(2)
+														ifLevel := 0
+														for ie == nil {
+															if ib[0] == '"' || ib[0] == '\'' || ib[0] == '`' {
+																q := ib[0]
+																reader.Discard(1)
+																ib, ie = reader.Peek(2)
+																for ie == nil && ib[0] != q {
+																	if ib[0] == '\\' {
+																		reader.Discard(1)
+																	}
+																	reader.Discard(1)
+																	ib, ie = reader.Peek(2)
+																}
+															}else if ib[0] == '{' && ib[1] == '{' {
+																ibTag, ie := reader.Peek(10)
+																if ie == nil && ifLevel == 0 && regex.Comp(`^\{\{\{?%/?else[\s/\}:]`).MatchRef(&ibTag) {
+																	break
+																}else if (ie == nil || len(ibTag) > 6) && regex.Comp(`^\{\{\{?%/?if[\s/\}:]`).MatchRef(&ibTag) {
+																	if ibTag[1] == '/' {
+																		ifLevel--
+																		if ifLevel < 0 {
+																			break
+																		}
+																	}else{
+																		ifLevel++
+																	}
+																}
+															}
+					
+															reader.Discard(1)
+															ib, ie = reader.Peek(2)
+														}
+													}
+												}
 											}
 										}else if bytes.Equal(args.tag, []byte("each")) {
 											//todo: handle each functions
@@ -786,6 +903,7 @@ func compile(path string, options *map[string]interface{}, compType uint8) ([]by
 				}
 			}
 		}else if buf[0] == '\\' && (buf[1] == '{' || buf[1] == '}') {
+			// remove escape chars from escaped {{MyVar}} tags (example: {\{NotAVar}\}, {\{\{NotAnHTMLVar}\}\})
 			reader.Discard(2)
 			write([]byte{buf[1]})
 			continue
@@ -1399,14 +1517,21 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 											reader.Discard(1)
 											ib, ie = reader.PeekByte(0)
 											for ie == nil && ib != q {
+												if ib == '\\' {
+													reader.Discard(1)
+													ib, ie = reader.PeekByte(0)
+													if ie != nil {
+														break
+													}
+												}
 												reader.Discard(1)
 												ib, ie = reader.PeekByte(0)
 											}
 										}else if ib == '<' {
-											ibTag, ie := reader.Peek(8)
+											ibTag, ie := reader.Peek(11)
 											if ie == nil && ifLevel == 0 && regex.Comp(`^</?_?(el(?:se|if)|else_?if)[\s/>:]`).MatchRef(&ibTag) {
 												break
-											}else if ie == nil && regex.Comp(`^</?_?(if)[\s/>:]`).MatchRef(&ibTag) {
+											}else if (ie == nil || len(ibTag) > 4) && regex.Comp(`^</?_?(if)[\s/>:]`).MatchRef(&ibTag) {
 												if ibTag[1] == '/' {
 													ifLevel--
 													if ifLevel < 0 {
@@ -1422,7 +1547,7 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 										ib, ie = reader.PeekByte(0)
 									}
 								}
-							}else if args.close == 1 && len(ifTagLevel) != 0 && (bytes.Equal(args.tag, []byte("_if")) || bytes.Equal(args.tag, []byte("if"))) {
+							}else if args.close == 1 && len(ifTagLevel) != 0 && (bytes.Equal(args.tag, []byte("_if")) || bytes.Equal(args.tag, []byte("if"))) { // close tag
 								if ifTagLevel[len(ifTagLevel)-1] == 1 || ifTagLevel[len(ifTagLevel)-1] == 2 {
 									write([]byte("{{%/if}}"))
 									hasUnhandledVars = true
@@ -1430,7 +1555,7 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 									removeLineBreak(reader)
 								}
 								ifTagLevel = ifTagLevel[:len(ifTagLevel)-1]
-							}else if len(ifTagLevel) != 0 && regex.Comp(`(?i)^_?(el(?:se|if)|else_?if)$`).MatchRef(&args.tag) {
+							}else if len(ifTagLevel) != 0 && regex.Comp(`(?i)^_?(el(?:se|if)|else_?if)$`).MatchRef(&args.tag) { // else tag
 								if ifTagLevel[len(ifTagLevel)-1] == 0 || ifTagLevel[len(ifTagLevel)-1] == 1 { // true if statement
 									// skip content to closing if tag
 									ib, ie := reader.PeekByte(0)
@@ -1441,14 +1566,21 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 											reader.Discard(1)
 											ib, ie = reader.PeekByte(0)
 											for ie == nil && ib != q {
+												if ib == '\\' {
+													reader.Discard(1)
+													ib, ie = reader.PeekByte(0)
+													if ie != nil {
+														break
+													}
+												}
 												reader.Discard(1)
 												ib, ie = reader.PeekByte(0)
 											}
 										}else if ib == '<' {
-											ibTag, ie := reader.Peek(8)
-											if ie == nil && ifLevel == 0 && regex.Comp(`^</_?(if)[\s/>:]`).MatchRef(&ibTag) {
+											ibTag, ie := reader.Peek(6)
+											if ie == nil && ifLevel == 0 && regex.Comp(`^</_?if[\s/>:]`).MatchRef(&ibTag) {
 												break
-											}else if ie == nil && regex.Comp(`^</?_?(if)[\s/>:]`).MatchRef(&ibTag) {
+											}else if (ie == nil || len(ibTag) > 4) && regex.Comp(`^</?_?if[\s/>:]`).MatchRef(&ibTag) {
 												if ibTag[1] == '/' {
 													ifLevel--
 													if ifLevel < 0 {
@@ -1484,14 +1616,21 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 												reader.Discard(1)
 												ib, ie = reader.PeekByte(0)
 												for ie == nil && ib != q {
+													if ib == '\\' {
+														reader.Discard(1)
+														ib, ie = reader.PeekByte(0)
+														if ie != nil {
+															break
+														}
+													}
 													reader.Discard(1)
 													ib, ie = reader.PeekByte(0)
 												}
 											}else if ib == '<' {
-												ibTag, ie := reader.Peek(8)
+												ibTag, ie := reader.Peek(11)
 												if ie == nil && ifLevel == 0 && regex.Comp(`^</?_?(el(?:se|if)|else_?if)[\s/>:]`).MatchRef(&ibTag) {
 													break
-												}else if ie == nil && regex.Comp(`^</?_?(if)[\s/>:]`).MatchRef(&ibTag) {
+												}else if (ie == nil || len(ibTag) > 4) && regex.Comp(`^</?_?if[\s/>:]`).MatchRef(&ibTag) {
 													if ibTag[1] == '/' {
 														ifLevel--
 														if ifLevel < 0 {
@@ -1529,14 +1668,21 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 												reader.Discard(1)
 												ib, ie = reader.PeekByte(0)
 												for ie == nil && ib != q {
+													if ib == '\\' {
+														reader.Discard(1)
+														ib, ie = reader.PeekByte(0)
+														if ie != nil {
+															break
+														}
+													}
 													reader.Discard(1)
 													ib, ie = reader.PeekByte(0)
 												}
 											}else if ib == '<' {
-												ibTag, ie := reader.Peek(8)
+												ibTag, ie := reader.Peek(11)
 												if ie == nil && ifLevel == 0 && regex.Comp(`^</?_?(el(?:se|if)|else_?if)[\s/>:]`).MatchRef(&ibTag) {
 													break
-												}else if ie == nil && regex.Comp(`^</?_?(if)[\s/>:]`).MatchRef(&ibTag) {
+												}else if (ie == nil || len(ibTag) > 4) && regex.Comp(`^</?_?if[\s/>:]`).MatchRef(&ibTag) {
 													if ibTag[1] == '/' {
 														ifLevel--
 														if ifLevel < 0 {
@@ -1874,6 +2020,9 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 							ind++
 							b, e = reader.Get(ind, 2)
 							for e == nil && b[0] != q {
+								if b[0] == '\\' {
+									ind++
+								}
 								ind++
 								b, e = reader.Get(ind, 2)
 							}

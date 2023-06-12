@@ -2,8 +2,6 @@ package compiler
 
 import (
 	"errors"
-
-	"github.com/AspieSoft/go-regex/v4"
 )
 
 type tagFuncs struct {
@@ -54,20 +52,14 @@ func (funcs *tagFuncs) AddFN(name string, cb func(opts *map[string]interface{}, 
 	return nil
 }
 
+
 // note: If is a unique tag func, with different args and return values
 func (funcs *tagFuncs) If(opts *map[string]interface{}, args *htmlArgs, eachArgs *[]EachArgs, precomp bool) ([]byte, bool) {
 	//todo: handle and reduce if statement args
 	// if precomp == true, return leftover args
 	// if precomp == false, assume leftover args are false
 
-	// temp
-	if precomp {
-		if v, ok := args.args["test"]; ok {
-			return regex.JoinBytes("test=", '"', v[1:], '"'), true
-		}else{
-			return nil, true
-		}
-	}
+
 
 	// return nil, false (absolute false)
 	// return nil, true (absolute true)
