@@ -182,17 +182,17 @@ func InitDefault(){
 		for _, file := range files {
 			if !file.IsDir() {
 				fileName := []byte(file.Name())
-				if regex.Comp(`\.(%1)\.(br|gz|html)$`, compilerConfig.Ext).MatchRef(&fileName) {
-					fileName = regex.Comp(`\.(%1)\.(br|gz|html)$`, compilerConfig.Ext).RepStrCompRef(&fileName, []byte(".$1"))
+				if regex.Comp(`\.(%1)\.html\.(?:\.br|\.gz|)$`, compilerConfig.Ext).MatchRef(&fileName) {
+					fileName = regex.Comp(`\.(%1)\.html(?:\.br|\.gz|)$`, compilerConfig.Ext).RepStrCompRef(&fileName, []byte(".$1"))
 					fileName = regex.Comp(`\.(?!%1$)`, compilerConfig.Ext).RepStrRef(&fileName, []byte{'/'})
 					if path, err := goutil.FS.JoinPath(compilerConfig.Root, string(fileName)); err == nil {
 						if staticPath, err := goutil.FS.JoinPath(compilerConfig.StaticHTML, string(fileName)); err == nil {
 							cachePath := []string{}
-							if stat, err := os.Stat(staticPath+".br"); err == nil && !stat.IsDir() {
-								cachePath = append(cachePath, staticPath+".br")
+							if stat, err := os.Stat(staticPath+".html.br"); err == nil && !stat.IsDir() {
+								cachePath = append(cachePath, staticPath+".html.br")
 							}
-							if stat, err := os.Stat(staticPath+".gz"); err == nil && !stat.IsDir() {
-								cachePath = append(cachePath, staticPath+".gz")
+							if stat, err := os.Stat(staticPath+".html.gz"); err == nil && !stat.IsDir() {
+								cachePath = append(cachePath, staticPath+".html.gz")
 							}
 							if stat, err := os.Stat(staticPath+".html"); err == nil && !stat.IsDir() {
 								cachePath = append(cachePath, staticPath+".html")
@@ -214,14 +214,14 @@ func InitDefault(){
 		for _, file := range files {
 			if !file.IsDir() {
 				fileName := []byte(file.Name())
-				if regex.Comp(`\.(%1)\.cache$`, compilerConfig.Ext).MatchRef(&fileName) {
-					fileName = regex.Comp(`\.(%1)\.cache$`, compilerConfig.Ext).RepStrCompRef(&fileName, []byte(".$1"))
+				if regex.Comp(`\.(%1)\.html\.cache$`, compilerConfig.Ext).MatchRef(&fileName) {
+					fileName = regex.Comp(`\.(%1)\.html\.cache$`, compilerConfig.Ext).RepStrCompRef(&fileName, []byte(".$1"))
 					fileName = regex.Comp(`\.(?!%1$)`, compilerConfig.Ext).RepStrRef(&fileName, []byte{'/'})
 					if path, err := goutil.FS.JoinPath(compilerConfig.Root, string(fileName)); err == nil {
 						if staticPath, err := goutil.FS.JoinPath(compilerConfig.CacheDir, string(fileName)); err == nil {
 							cachePath := []string{}
-							if stat, err := os.Stat(staticPath+".cache"); err == nil && !stat.IsDir() {
-								cachePath = append(cachePath, staticPath+".cache")
+							if stat, err := os.Stat(staticPath+".html.cache"); err == nil && !stat.IsDir() {
+								cachePath = append(cachePath, staticPath+".html.cache")
 							}
 
 							htmlPreCache.Set(path, cacheObj{
@@ -696,14 +696,14 @@ func PreCompile(path string, opts map[string]interface{}) error {
 
 		cachePath := []string{}
 		if br, err := goutil.BROTLI.Zip(html, compilerConfig.PreCompress); err == nil {
-			if err := os.WriteFile(staticPath+".br", br, 0775); err == nil {
-				cachePath = append(cachePath, staticPath+".br")
+			if err := os.WriteFile(staticPath+".html.br", br, 0775); err == nil {
+				cachePath = append(cachePath, staticPath+".html.br")
 			}
 		}
 
 		if gz, err := goutil.GZIP.Zip(html); err == nil {
-			if err := os.WriteFile(staticPath+".gz", gz, 0775); err == nil {
-				cachePath = append(cachePath, staticPath+".gz")
+			if err := os.WriteFile(staticPath+".html.gz", gz, 0775); err == nil {
+				cachePath = append(cachePath, staticPath+".html.gz")
 			}
 		}
 
@@ -720,6 +720,14 @@ func PreCompile(path string, opts map[string]interface{}) error {
 		}
 
 		if len(cachePath) != 0 {
+			if oldCache, ok := htmlPreCache.Get(path); ok {
+				for _, file := range oldCache.cachePath {
+					if (oldCache.static && strings.HasPrefix(file, compilerConfig.StaticHTML)) || (!oldCache.static && strings.HasPrefix(file, compilerConfig.CacheDir)) {
+						os.Remove(file)
+					}
+				}
+			}
+
 			htmlPreCache.Set(path, cacheObj{
 				cachePath: cachePath,
 				static: true,
@@ -741,17 +749,25 @@ func PreCompile(path string, opts map[string]interface{}) error {
 
 		cachePath := []string{}
 
-		if err = os.WriteFile(staticPath+".cache", html, 0775); err != nil {
+		if err = os.WriteFile(staticPath+".html.cache", html, 0775); err != nil {
 			if compilerConfig.DebugMode {
 				fmt.Println(err)
 				html = append(html, regex.JoinBytes([]byte("<!--{{#error: "), regex.Comp(`%1`, compilerConfig.Root).RepStr([]byte(err.Error()), []byte{}), []byte("}}-->"))...)
 			}
 			return err
 		}else{
-			cachePath = append(cachePath, staticPath+".cache")
+			cachePath = append(cachePath, staticPath+".html.cache")
 		}
 
 		if len(cachePath) != 0 {
+			if oldCache, ok := htmlPreCache.Get(path); ok {
+				for _, file := range oldCache.cachePath {
+					if (oldCache.static && strings.HasPrefix(file, compilerConfig.StaticHTML)) || (!oldCache.static && strings.HasPrefix(file, compilerConfig.CacheDir)) {
+						os.Remove(file)
+					}
+				}
+			}
+
 			htmlPreCache.Set(path, cacheObj{
 				cachePath: cachePath,
 				static: false,
