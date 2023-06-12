@@ -59,7 +59,7 @@ func (funcs *tagFuncs) If(opts *map[string]interface{}, args *htmlArgs, eachArgs
 	// if precomp == true, return leftover args
 	// if precomp == false, assume leftover args are false
 
-
+	//! Note (for precomp): the folowing chars `&|()` should have spaces seperating them from normal var tags, when being returned as compiler args
 
 	// return nil, false (absolute false)
 	// return nil, true (absolute true)
