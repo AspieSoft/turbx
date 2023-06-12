@@ -604,9 +604,15 @@ func compile(path string, options *map[string]interface{}, compType uint8) ([]by
 						ind++
 						b, e = reader.Get(ind, 2)
 						for e == nil && b[0] != q {
-							varData = append(varData, b[0])
-							ind++
-							b, e = reader.Get(ind, 2)
+							if b[0] == '\\' {
+								varData = append(varData, b[0], b[1])
+								ind += 2
+								b, e = reader.Get(ind, 2)
+							}else{
+								varData = append(varData, b[0])
+								ind++
+								b, e = reader.Get(ind, 2)
+							}
 						}
 					}
 
@@ -615,7 +621,7 @@ func compile(path string, options *map[string]interface{}, compType uint8) ([]by
 					b, e = reader.Get(ind, 2)
 				}
 
-				if err == nil && b[0] == '}' && b[1] == '}' {
+				if err == nil && len(b) == 2 && b[0] == '}' && b[1] == '}' {
 					ind += 2
 					b, e = reader.Get(ind, 1)
 					if b[0] == '}' {
@@ -629,27 +635,107 @@ func compile(path string, options *map[string]interface{}, compType uint8) ([]by
 						if varData[0] == '%' {
 							varData = varData[1:]
 							if len(varData) != 0 {
-								close := uint8(3)
+								args := htmlArgs{
+									tag: []byte{},
+									args: map[string][]byte{},
+									ind: []string{},
+									close: 3,
+									passToComp: false,
+								}
+
 								if varData[0] == '/' {
 									varData = varData[1:]
-									close = 1
+									args.close = 1
 								}else if varData[len(varData)-1] == '/' {
 									varData = varData[1:]
-									close = 2
+									args.close = 2
 								}
 
 								if len(varData) != 0 {
-									// close:
-									// 0 = failed to close (<tag)
-									// 1 = </tag>
-									// 2 = <tag/> (</tag/>)
-									// 3 = <tag>
+									tagMode := 0
+									ind := 0
+									tName := ""
+									var tq byte
+									for i := 0; i < len(varData); i++ {
+										if tagMode == 0 {
+											if varData[i] == ' ' || varData[i] == '\r' || varData[i] == '\n' {
+												tagMode = 1
+											}
+											args.tag = append(args.tag, varData[i])
+										}else{
+											if tq == 0 && varData[i] == ' ' || varData[i] == '\r' || varData[i] == '\n' {
+												if tagMode == 1 && tName != "" {
+													s := strconv.Itoa(ind)
+													args.ind = append(args.ind, s)
+													args.args[s] = []byte(tName)
+													ind++
+												}else if tagMode == 2 {
+													tagMode = 1
+												}
+												tName = ""
+											}else if tagMode == 1 {
+												if varData[i] == '=' && tName != "" {
+													tagMode = 2
+													args.ind = append(args.ind, tName)
+													args.args[tName] = []byte{}
+													if i+1 < len(varData) && (varData[i+1] == '"' || varData[i+1] == '\'' || varData[i+1] == '`') {
+														tq = varData[i+1]
+														i++
+													}
+												}else{
+													tName += string(varData[i])
+												}
+											}else if tagMode == 2 {
+												if varData[i] == tq {
+													tq = 0
+													continue
+												}else if varData[i] == '\\' && i+1 < len(varData) {
+													args.args[tName] = append(args.args[tName], varData[i])
+													i++
+												}else if varData[i] == '"' || varData[i] == '\'' || varData[i] == '`' {
+													q := varData[i]
+													args.args[tName] = append(args.args[tName], varData[i])
+													i++
+													for i < len(varData) && varData[i] != q {
+														if varData[i] == '\\' && i+1 < len(varData) {
+															args.args[tName] = append(args.args[tName], varData[i])
+															i++
+														}
+														args.args[tName] = append(args.args[tName], varData[i])
+														i++
+													}
+												}
+												if i < len(varData) {
+													args.args[tName] = append(args.args[tName], varData[i])
+												}
+											}
+										}
+									}
 
-									//todo: handle functions
-									fmt.Println(string(varData))
+									if len(args.tag) != 0 {
+										// args.close:
+										// 0 = failed to close (<tag)
+										// 1 = </tag>
+										// 2 = <tag/> (</tag/>)
+										// 3 = <tag>
+	
+										if bytes.Equal(args.tag, []byte("if")) || bytes.Equal(args.tag, []byte("else")) {
+											//todo: handle if functions
+	
+											if args.close == 3 && bytes.Equal(args.tag, []byte("if")) {
+												// open if tag
+											}else if bytes.Equal(args.tag, []byte("else")) {
+												// else tag
+											}else if args.close == 1 && bytes.Equal(args.tag, []byte("if")) {
+												// close if tag
+											}
+										}else if bytes.Equal(args.tag, []byte("each")) {
+											//todo: handle each functions
+										}else{
+											args.tag[0] = bytes.ToUpper([]byte{args.tag[0]})[0]
 
-									if close == 3 {
-										// open tag
+											//todo: handle other functions
+										}
 									}
 								}
 							}
