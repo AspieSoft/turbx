@@ -37,6 +37,7 @@ func main(){
 			"key3": "value3",
 		},
 	})
+
 	if err != nil {
 		fmt.Println(err)
 		return
