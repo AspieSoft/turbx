@@ -60,6 +60,7 @@ func (funcs *tagFuncs) If(opts *map[string]interface{}, args *htmlArgs, eachArgs
 	// if precomp == true, return leftover args
 	// if precomp == false, assume leftover args are false
 
+	// temp
 	if precomp {
 		if v, ok := args.args["test"]; ok {
 			return regex.JoinBytes("test=", '"', v[1:], '"'), true
