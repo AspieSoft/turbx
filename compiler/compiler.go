@@ -435,13 +435,13 @@ type handleHtmlData struct {
 
 // Compile will return html content, (or a static path when possible)
 //
-// This method will automatically run the PreCompile method as needed
+// this method will automatically run the PreCompile method as needed
 //
-// []byte: first byte ([]byte[0]):
+// Output Types (note: only []byte or string will have a non empty value. if string == "", you can assume you have an html result)
 //
-// - 0: raw html (to send to client)
+// []byte: raw html (to send to client)
 //
-// - 1: path to static html file
+// string: path to static html file
 //
 // uint8: compression type:
 //
@@ -452,7 +452,7 @@ type handleHtmlData struct {
 // - 2: compressed to gzip
 //
 // note: putting any extra '.' in a filename (apart from the extention name) may cause conflicts with restoring old cache files
-func Compile(path string, opts map[string]interface{}) ([]byte, uint8, error) {
+func Compile(path string, opts map[string]interface{}) ([]byte, string, uint8, error) {
 	origPath := path
 
 	path, err := goutil.FS.JoinPath(compilerConfig.Root, path + "." + compilerConfig.Ext)
@@ -460,7 +460,7 @@ func Compile(path string, opts map[string]interface{}) ([]byte, uint8, error) {
 		if compilerConfig.DebugMode {
 			fmt.Println(err)
 		}
-		return []byte{0}, 0, err
+		return []byte{}, "", 0, err
 	}
 
 	if opts == nil {
@@ -495,7 +495,7 @@ func Compile(path string, opts map[string]interface{}) ([]byte, uint8, error) {
 	if useCache {
 		if cache, ok := htmlPreCache.Get(path); ok {
 			if len(cache.cachePath) == 0 {
-				return []byte{0}, 0, errors.New("cache does not contain any paths for this file")
+				return []byte{}, "", 0, errors.New("cache does not contain any paths for this file")
 			}
 	
 			if cache.static {
@@ -510,7 +510,7 @@ func Compile(path string, opts map[string]interface{}) ([]byte, uint8, error) {
 	if filePath == "" {
 		err := PreCompile(origPath, opts)
 		if err != nil {
-			return []byte{0}, 0, err
+			return []byte{}, "", 0, err
 		}
 
 		if cache, ok := htmlPreCache.Get(path); ok {
@@ -520,7 +520,7 @@ func Compile(path string, opts map[string]interface{}) ([]byte, uint8, error) {
 				filePath = cache.cachePath[0]
 			}
 		}else{
-			return []byte{0}, 0, errors.New("failed to precompile file")
+			return []byte{}, "", 0, errors.New("failed to precompile file")
 		}
 	}
 
@@ -528,11 +528,11 @@ func Compile(path string, opts map[string]interface{}) ([]byte, uint8, error) {
 	return compile(filePath, &opts, compType)
 }
 
-func compile(path string, options *map[string]interface{}, compType uint8) ([]byte, uint8, error) {
+func compile(path string, options *map[string]interface{}, compType uint8) ([]byte, string, uint8, error) {
 	// compile file
 	reader, err := liveread.Read[uint8](path)
 	if err != nil {
-		return []byte{}, 0, err
+		return []byte{}, "", 0, err
 	}
 
 	// auto compress while writing
@@ -600,14 +600,14 @@ func compile(path string, options *map[string]interface{}, compType uint8) ([]by
 		writerRaw.Flush()
 	}
 
-	return append([]byte{0}, res.Bytes()...), compType, nil
+	return res.Bytes(), "", compType, nil
 }
 
-func getStaticPath(cache cacheObj, compressRes []string) ([]byte, uint8, error) {
+func getStaticPath(cache cacheObj, compressRes []string) ([]byte, string, uint8, error) {
 	if goutil.Contains(compressRes, "br") {
 		for _, p := range cache.cachePath {
 			if strings.HasSuffix(p, ".html.br") {
-				return append([]byte{1}, []byte(p)...), 1, nil
+				return []byte{}, p, 1, nil
 			}
 		}
 	}
@@ -615,42 +615,42 @@ func getStaticPath(cache cacheObj, compressRes []string) ([]byte, uint8, error) 
 	if goutil.Contains(compressRes, "gz") {
 		for _, p := range cache.cachePath {
 			if strings.HasSuffix(p, ".html.gz") {
-				return append([]byte{1}, []byte(p)...), 2, nil
+				return []byte{}, p, 2, nil
 			}
 		}
 	}
 
 	for _, p := range cache.cachePath {
 		if strings.HasSuffix(p, ".html") {
-			return append([]byte{1}, []byte(p)...), 0, nil
+			return []byte{}, p, 0, nil
 		}
 	}
 
 	p := cache.cachePath[0]
 	file, err := os.ReadFile(p)
 	if err != nil {
-		return []byte{0}, 0, err
+		return []byte{}, "", 0, err
 	}
 
 	if strings.HasSuffix(p, ".html.br") {
 		if goutil.Contains(compressRes, "br") {
-			return append([]byte{0}, file...), 1, nil
+			return file, "", 1, nil
 		}
 		file, err = goutil.BROTLI.UnZip(file)
 		if err != nil {
-			return []byte{0}, 0, err
+			return []byte{}, "", 0, err
 		}
 	}else if strings.HasSuffix(p, ".html.gz") {
 		if goutil.Contains(compressRes, "gz") {
-			return append([]byte{0}, file...), 2, nil
+			return file, "", 2, nil
 		}
 		file, err = goutil.GZIP.UnZip(file)
 		if err != nil {
-			return []byte{0}, 0, err
+			return []byte{0}, "", 0, err
 		}
 	}
 
-	return append([]byte{0}, file...), 0, nil
+	return file, "", 0, nil
 }
 
 

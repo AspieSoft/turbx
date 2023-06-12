@@ -25,7 +25,7 @@ func main(){
 
 	startTime := time.Now().UnixNano()
 
-	html, comp, err := compiler.Compile("index", map[string]interface{}{
+	html, path, comp, err := compiler.Compile("index", map[string]interface{}{
 		"@compress": []string{"br", "gz"},
 		"@cache": false,
 
@@ -46,14 +46,12 @@ func main(){
 	endTime := time.Now().UnixNano()
 
 
-	if html[0] == 1 {
+	if path != "" {
 		html, err = os.ReadFile(string(html[1:]))
 		if err != nil {
 			fmt.Println(err)
 			return
 		}
-	}else{
-		html = html[1:]
 	}
 
 	if comp == 1 {
