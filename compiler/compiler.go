@@ -575,18 +575,137 @@ func compile(path string, options *map[string]interface{}, compType uint8) ([]by
 	}
 
 	ifTagLevel := []uint8{}
-	_ = ifTagLevel
+	eachArgsList := []EachArgs{}
+	_, _ = ifTagLevel, eachArgsList
 
-	var buf byte
+	var buf []byte
 	for err == nil {
-		buf, err = reader.PeekByte(0)
-		if buf == 0 {
+		buf, err = reader.Peek(2)
+		if len(buf) == 0 {
 			break
 		}
 
 		//todo: compile file
+		if buf[0] == '{' && buf[1] == '{' {
+			ind := uint(2)
+			esc := uint8(2)
+			if b, e := reader.Get(ind, 2); e == nil {
+				if b[0] == '{' {
+					esc--
+					ind++
+					b, e = reader.Get(ind, 2)
+				}
 
-		write([]byte{buf})
+				varData := []byte{}
+				for e == nil && !(b[0] == '}' && b[1] == '}') && b[0] != '\r' && b[0] != '\n' {
+					if b[0] == '"' || b[0] == '\'' || b[0] == '`' {
+						q := b[0]
+						varData = append(varData, b[0])
+						ind++
+						b, e = reader.Get(ind, 2)
+						for e == nil && b[0] != q {
+							varData = append(varData, b[0])
+							ind++
+							b, e = reader.Get(ind, 2)
+						}
+					}
+
+					varData = append(varData, b[0])
+					ind++
+					b, e = reader.Get(ind, 2)
+				}
+
+				if err == nil && b[0] == '}' && b[1] == '}' {
+					ind += 2
+					b, e = reader.Get(ind, 1)
+					if b[0] == '}' {
+						ind++
+						esc--
+					}
+
+					reader.Discard(ind)
+
+					if len(varData) != 0 {
+						if varData[0] == '%' {
+							varData = varData[1:]
+							if len(varData) != 0 {
+								close := uint8(3)
+								if varData[0] == '/' {
+									varData = varData[1:]
+									close = 1
+								}else if varData[len(varData)-1] == '/' {
+									varData = varData[1:]
+									close = 2
+								}
+
+								if len(varData) != 0 {
+									// close:
+									// 0 = failed to close (<tag)
+									// 1 = </tag>
+									// 2 = <tag/> (</tag/>)
+									// 3 = <tag>
+
+									//todo: handle functions
+									fmt.Println(string(varData))
+
+									if close == 3 {
+										// open tag
+									}
+								}
+							}
+							continue
+						}
+
+						if varData[0] == ':' {
+							val := GetOpt(varData[1:], options, &eachArgsList, 4, false, true)
+							if !goutil.IsZeroOfUnderlyingType(val) {
+								if len(val.([]byte)) != 0 && val.([]byte)[0] == 0 {
+									val = val.([]byte)[1:]
+								}
+								write(val.([]byte))
+							}
+						}else if regex.Comp(`^[\w_-]+=`).MatchRef(&varData) {
+							args := bytes.SplitN(varData, []byte{'='}, 2)
+							if len(args) == 2 {
+								if esc != 0 {
+									esc = 3
+								}else{
+									esc = 1
+								}
+
+								val := GetOpt(args[1], options, &eachArgsList, esc, false, true)
+								if !goutil.IsZeroOfUnderlyingType(val) {
+									if len(val.([]byte)) != 0 && val.([]byte)[0] == 0 {
+										val = val.([]byte)[1:]
+									}
+									write(regex.JoinBytes(args[0], '=', '"', val.([]byte), '"'))
+								}
+							}
+						}else{
+							if esc != 0 {
+								esc = 2
+							}
+
+							val := GetOpt(varData, options, &eachArgsList, esc, false, true)
+							if !goutil.IsZeroOfUnderlyingType(val) {
+								if len(val.([]byte)) != 0 && val.([]byte)[0] == 0 {
+									val = val.([]byte)[1:]
+								}
+								write(val.([]byte))
+							}
+						}
+					}
+
+					continue
+				}
+			}
+		}else if buf[0] == '\\' && (buf[1] == '{' || buf[1] == '}') {
+			reader.Discard(2)
+			write([]byte{buf[1]})
+			continue
+		}
+
+		write([]byte{buf[0]})
 		reader.Discard(1)
 	}
 
@@ -1704,7 +1823,7 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 
 						val := GetOpt(b, options, &eachArgsList, esc, true, true)
 						if !goutil.IsZeroOfUnderlyingType(val) {
-							if reflect.TypeOf(val) == goutil.VarType["[]byte"] && len(val.([]byte)) != 0 && val.([]byte)[0] == 0 {
+							if len(val.([]byte)) != 0 && val.([]byte)[0] == 0 {
 								v := val.([]byte)[1:]
 								if !regex.Comp(`(?i)^\{\{\{?body\}\}\}?$`).MatchRef(&v) {
 									write(v)
@@ -1713,7 +1832,7 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 									removeLineBreak(reader)
 								}
 							}else{
-								write(toBytesOrJson(val))
+								write(val.([]byte))
 							}
 						}
 
@@ -1811,10 +1930,10 @@ func handleHtmlTag(htmlData handleHtmlData){
 				delete(htmlData.arguments.args, v)
 				continue
 			}else{
-				if reflect.TypeOf(arg) == goutil.VarType["[]byte"] && len(arg.([]byte)) != 0 && arg.([]byte)[0] == 0 {
+				if len(arg.([]byte)) != 0 && arg.([]byte)[0] == 0 {
 					*htmlData.hasUnhandledVars = true
 				}
-				htmlData.arguments.args[v] = goutil.Conv.ToBytes(arg)
+				htmlData.arguments.args[v] = arg.([]byte)
 			}
 		}else if htmlData.arguments.args[v][0] == 2 {
 			arg := GetOpt(htmlData.arguments.args[v][1:], htmlData.options, &htmlData.eachArgs, 1, true, true)
@@ -1822,10 +1941,10 @@ func handleHtmlTag(htmlData handleHtmlData){
 				delete(htmlData.arguments.args, v)
 				continue
 			}else{
-				if reflect.TypeOf(arg) == goutil.VarType["[]byte"] && len(arg.([]byte)) != 0 && arg.([]byte)[0] == 0 {
+				if len(arg.([]byte)) != 0 && arg.([]byte)[0] == 0 {
 					*htmlData.hasUnhandledVars = true
 				}
-				htmlData.arguments.args[v] = goutil.Conv.ToBytes(arg)
+				htmlData.arguments.args[v] = arg.([]byte)
 			}
 		}
 
@@ -1843,6 +1962,13 @@ func handleHtmlTag(htmlData handleHtmlData){
 	for _, v := range htmlData.arguments.ind {
 		if htmlData.arguments.args[v] != nil && len(htmlData.arguments.args[v]) != 0 {
 			if _, err := strconv.Atoi(v); err == nil {
+				if bytes.HasPrefix(htmlData.arguments.args[v], []byte{0, '{', '{'}) && bytes.HasSuffix(htmlData.arguments.args[v], []byte("}}")) {
+					htmlData.arguments.args[v] = htmlData.arguments.args[v][1:]
+				}else{
+					htmlData.arguments.args[v] = regex.Comp(`({{+|}}+)`).RepFunc(htmlData.arguments.args[v], func(data func(int) []byte) []byte {
+						return bytes.Join(bytes.Split(data(1), []byte{}), []byte{'\\'})
+					})
+				}
 				args = append(args, htmlData.arguments.args[v])
 			}else{
 				if bytes.HasPrefix(htmlData.arguments.args[v], []byte{0, '{', '{'}) && bytes.HasSuffix(htmlData.arguments.args[v], []byte("}}")) {

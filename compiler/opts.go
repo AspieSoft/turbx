@@ -8,9 +8,10 @@ import (
 	"github.com/AspieSoft/goutil/v5"
 )
 
+// GetOpt handles grabbing and escaping an option (or eachArgs as needed)
+//
+// escape: 0 = raw, 1 = raw arg, 2 = html, 3 = arg, 4 = html arg key
 func GetOpt(name []byte, opts *map[string]interface{}, eachArgs *[]EachArgs, escape uint8, precomp bool, stringsOnly bool) interface{} {
-	// escape: 0 = raw, 1 = raw arg, 2 = html, 3 = arg, 4 = html arg key
-
 	regWord := `(?:[\w_\-$]+|'(?:\\[\\']|[^'])*'|"(?:\\[\\"]|[^"])*"|\'(?:\\[\\\']|[^\'])*\')+`
 	nameVars := regex.Comp(`((?:`+regWord+`|\.`+regWord+`|\[`+regWord+`\])+)`).SplitRef(&name)
 

@@ -29,6 +29,9 @@ func main(){
 		"@compress": []string{"br", "gz"},
 		"@cache": false,
 
+		"key": "MyKey",
+		"name": "MyName",
+
 		"test": 1,
 		"var": "MyVar",
 		"list": map[string]interface{}{
