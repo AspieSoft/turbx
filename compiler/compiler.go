@@ -182,10 +182,14 @@ func InitDefault(){
 		for _, file := range files {
 			if !file.IsDir() {
 				fileName := []byte(file.Name())
-				if regex.Comp(`\.(%1)\.html\.(?:\.br|\.gz|)$`, compilerConfig.Ext).MatchRef(&fileName) {
+				if regex.Comp(`\.(%1)\.html(?:\.br|\.gz|)$`, compilerConfig.Ext).MatchRef(&fileName) {
 					fileName = regex.Comp(`\.(%1)\.html(?:\.br|\.gz|)$`, compilerConfig.Ext).RepStrCompRef(&fileName, []byte(".$1"))
 					fileName = regex.Comp(`\.(?!%1$)`, compilerConfig.Ext).RepStrRef(&fileName, []byte{'/'})
 					if path, err := goutil.FS.JoinPath(compilerConfig.Root, string(fileName)); err == nil {
+						if _, ok := htmlPreCache.Get(path); ok {
+							continue
+						}
+						
 						if staticPath, err := goutil.FS.JoinPath(compilerConfig.StaticHTML, string(fileName)); err == nil {
 							cachePath := []string{}
 							if stat, err := os.Stat(staticPath+".html.br"); err == nil && !stat.IsDir() {
@@ -224,9 +228,17 @@ func InitDefault(){
 								cachePath = append(cachePath, staticPath+".html.cache")
 							}
 
+							if oldCache, ok := htmlPreCache.Get(path); ok {
+								for _, file := range oldCache.cachePath {
+									if oldCache.static && strings.HasPrefix(file, compilerConfig.StaticHTML) {
+										os.Remove(file)
+									}
+								}
+							}
+
 							htmlPreCache.Set(path, cacheObj{
 								cachePath: cachePath,
-								static: true,
+								static: false,
 								accessed: int(time.Now().UnixMilli() / 60000),
 							})
 						}
@@ -594,7 +606,7 @@ func compile(path string, options *map[string]interface{}, compType uint8) ([]by
 func getStaticPath(cache cacheObj, compressRes []string) ([]byte, uint8, error) {
 	if goutil.Contains(compressRes, "br") {
 		for _, p := range cache.cachePath {
-			if strings.HasSuffix(p, ".br") {
+			if strings.HasSuffix(p, ".html.br") {
 				return append([]byte{1}, []byte(p)...), 1, nil
 			}
 		}
@@ -602,7 +614,7 @@ func getStaticPath(cache cacheObj, compressRes []string) ([]byte, uint8, error) 
 
 	if goutil.Contains(compressRes, "gz") {
 		for _, p := range cache.cachePath {
-			if strings.HasSuffix(p, ".gz") {
+			if strings.HasSuffix(p, ".html.gz") {
 				return append([]byte{1}, []byte(p)...), 2, nil
 			}
 		}
@@ -620,7 +632,7 @@ func getStaticPath(cache cacheObj, compressRes []string) ([]byte, uint8, error) 
 		return []byte{0}, 0, err
 	}
 
-	if strings.HasSuffix(p, ".br") {
+	if strings.HasSuffix(p, ".html.br") {
 		if goutil.Contains(compressRes, "br") {
 			return append([]byte{0}, file...), 1, nil
 		}
@@ -628,7 +640,7 @@ func getStaticPath(cache cacheObj, compressRes []string) ([]byte, uint8, error) 
 		if err != nil {
 			return []byte{0}, 0, err
 		}
-	}else if strings.HasSuffix(p, ".gz") {
+	}else if strings.HasSuffix(p, ".html.gz") {
 		if goutil.Contains(compressRes, "gz") {
 			return append([]byte{0}, file...), 2, nil
 		}
@@ -722,7 +734,7 @@ func PreCompile(path string, opts map[string]interface{}) error {
 		if len(cachePath) != 0 {
 			if oldCache, ok := htmlPreCache.Get(path); ok {
 				for _, file := range oldCache.cachePath {
-					if (oldCache.static && strings.HasPrefix(file, compilerConfig.StaticHTML)) || (!oldCache.static && strings.HasPrefix(file, compilerConfig.CacheDir)) {
+					if !oldCache.static && strings.HasPrefix(file, compilerConfig.CacheDir) {
 						os.Remove(file)
 					}
 				}
@@ -762,7 +774,7 @@ func PreCompile(path string, opts map[string]interface{}) error {
 		if len(cachePath) != 0 {
 			if oldCache, ok := htmlPreCache.Get(path); ok {
 				for _, file := range oldCache.cachePath {
-					if (oldCache.static && strings.HasPrefix(file, compilerConfig.StaticHTML)) || (!oldCache.static && strings.HasPrefix(file, compilerConfig.CacheDir)) {
+					if oldCache.static && strings.HasPrefix(file, compilerConfig.StaticHTML) {
 						os.Remove(file)
 					}
 				}

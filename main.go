@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/AspieSoft/goutil/v5"
 	"github.com/AspieSoft/turbx/compiler"
@@ -21,13 +22,16 @@ func main(){
 		DebugMode: true,
 	})
 
+
+	startTime := time.Now().UnixNano()
+
 	html, comp, err := compiler.Compile("index", map[string]interface{}{
 		"@compress": []string{"br", "gz"},
 		"@cache": false,
 
-		"$test": 1,
-		"$var": "MyVar",
-		"$list": map[string]interface{}{
+		"test": 1,
+		"var": "MyVar",
+		"list": map[string]interface{}{
 			"key1": "value1",
 			"key2": "value2",
 			"key3": "value3",
@@ -37,6 +41,8 @@ func main(){
 		fmt.Println(err)
 		return
 	}
+
+	endTime := time.Now().UnixNano()
 
 
 	if html[0] == 1 {
@@ -61,8 +67,11 @@ func main(){
 		}
 	}
 
-	fmt.Println("----------\n")
+	fmt.Println("----------")
 	fmt.Println(string(html))
+	fmt.Println("----------")
+
+	fmt.Println(float64(endTime - startTime) / float64(time.Millisecond))
 
 	compiler.Close()
 }
