@@ -1,6 +1,10 @@
 package main
 
 import (
+	"fmt"
+	"os"
+
+	"github.com/AspieSoft/goutil/v5"
 	"github.com/AspieSoft/turbx/compiler"
 )
 
@@ -17,7 +21,10 @@ func main(){
 		DebugMode: true,
 	})
 
-	compiler.PreCompile("index", map[string]interface{}{
+	html, comp, err := compiler.Compile("index", map[string]interface{}{
+		"@compress": []string{"br", "gz"},
+		"@cache": false,
+
 		"$test": 1,
 		"$var": "MyVar",
 		"$list": map[string]interface{}{
@@ -26,4 +33,36 @@ func main(){
 			"key3": "value3",
 		},
 	})
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+
+
+	if html[0] == 1 {
+		html, err = os.ReadFile(string(html[1:]))
+		if err != nil {
+			fmt.Println(err)
+			return
+		}
+	}else{
+		html = html[1:]
+	}
+
+	if comp == 1 {
+		if html, err = goutil.BROTLI.UnZip(html); err != nil {
+			fmt.Println(err)
+			return
+		}
+	}else if comp == 2 {
+		if html, err = goutil.GZIP.UnZip(html); err != nil {
+			fmt.Println(err)
+			return
+		}
+	}
+
+	fmt.Println("----------\n")
+	fmt.Println(string(html))
+
+	compiler.Close()
 }

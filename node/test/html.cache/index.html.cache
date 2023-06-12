@@ -1,0 +1,24 @@
+start
+
+<h1>Hello, Component!</h1>
+
+value1
+
+<h2>End Of Component</h2>
+
+<h1>Hello, Component!</h1>
+
+value2
+
+<h2>End Of Component</h2>
+
+<h1>Hello, Component!</h1>
+
+value3
+
+<h2>End Of Component</h2>
+
+
+{{SomeCompiledVar}}
+
+end

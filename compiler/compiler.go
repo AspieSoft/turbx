@@ -1,7 +1,9 @@
 package compiler
 
 import (
+	"bufio"
 	"bytes"
+	"compress/gzip"
 	"errors"
 	"fmt"
 	"os"
@@ -17,6 +19,7 @@ import (
 	"github.com/AspieSoft/go-regex/v4"
 	"github.com/AspieSoft/goutil/v5"
 	"github.com/alphadose/haxmap"
+	"github.com/andybalholm/brotli"
 )
 
 type Config struct {
@@ -46,11 +49,14 @@ type Config struct {
 	// A dir path to cache dynamic html files, for when the precompiler produces dynamically changing content
 	CacheDir string
 
-	// Brotli compression level for static files (0-11)
-	CompressStatic int
+	// Brotli compression level for precompressed static files (0-11)
+	PreCompress int
 
-	// Brotli compression level for temp cache files (0-11)
-	CompressCache int
+	// Brotli compression level for live compressed files (0-11)
+	Compress int
+
+	// The maximum size of the compiled output before flushing it to the result writer
+	CompileMaxFlush uint
 
 	// Cache Time In Minutes
 	CacheTime int
@@ -68,6 +74,7 @@ type cacheObj struct {
 var compilerConfig Config
 
 var htmlPreCache *haxmap.Map[string, cacheObj] = haxmap.New[string, cacheObj]()
+var htmlCacheDel *haxmap.Map[string, int] = haxmap.New[string, int]()
 
 func SetConfig(config Config) error {
 	if config.Root != "" {
@@ -127,22 +134,22 @@ func SetConfig(config Config) error {
 		compilerConfig.StaticUrl = config.StaticUrl
 	}
 
-	if config.CompressStatic != 0 {
-		if config.CompressStatic < 0 {
-			config.CompressStatic = 0
-		}else if config.CompressStatic > 11 {
-			config.CompressStatic = 11
+	if config.PreCompress != 0 {
+		if config.PreCompress < 0 {
+			config.PreCompress = 0
+		}else if config.PreCompress > 11 {
+			config.PreCompress = 11
 		}
-		compilerConfig.CompressStatic = config.CompressStatic
+		compilerConfig.PreCompress = config.PreCompress
 	}
 
-	if config.CompressCache != 0 {
-		if config.CompressCache < 0 {
-			config.CompressCache = 0
-		}else if config.CompressCache > 11 {
-			config.CompressCache = 11
+	if config.Compress != 0 {
+		if config.Compress < 0 {
+			config.Compress = 0
+		}else if config.Compress > 11 {
+			config.Compress = 11
 		}
-		compilerConfig.CompressCache = config.CompressCache
+		compilerConfig.Compress = config.Compress
 	}
 
 	if config.CacheTime != 0 {
@@ -153,6 +160,9 @@ func SetConfig(config Config) error {
 	}
 
 	compilerConfig.DebugMode = config.DebugMode
+
+	compilerConfig.CompileMaxFlush = config.CompileMaxFlush
+	
 
 	// ensure directories exist
 	InitDefault()
@@ -204,20 +214,14 @@ func InitDefault(){
 		for _, file := range files {
 			if !file.IsDir() {
 				fileName := []byte(file.Name())
-				if regex.Comp(`\.(%1)\.(br|gz|html)\.cache$`, compilerConfig.Ext).MatchRef(&fileName) {
-					fileName = regex.Comp(`\.(%1)\.(br|gz|html)\.cache$`, compilerConfig.Ext).RepStrCompRef(&fileName, []byte(".$1"))
+				if regex.Comp(`\.(%1)\.cache$`, compilerConfig.Ext).MatchRef(&fileName) {
+					fileName = regex.Comp(`\.(%1)\.cache$`, compilerConfig.Ext).RepStrCompRef(&fileName, []byte(".$1"))
 					fileName = regex.Comp(`\.(?!%1$)`, compilerConfig.Ext).RepStrRef(&fileName, []byte{'/'})
 					if path, err := goutil.FS.JoinPath(compilerConfig.Root, string(fileName)); err == nil {
-						if staticPath, err := goutil.FS.JoinPath(compilerConfig.StaticHTML, string(fileName)); err == nil {
+						if staticPath, err := goutil.FS.JoinPath(compilerConfig.CacheDir, string(fileName)); err == nil {
 							cachePath := []string{}
-							if stat, err := os.Stat(staticPath+".br.cache"); err == nil && !stat.IsDir() {
-								cachePath = append(cachePath, staticPath+".br.cache")
-							}
-							if stat, err := os.Stat(staticPath+".gz.cache"); err == nil && !stat.IsDir() {
-								cachePath = append(cachePath, staticPath+".gz.cache")
-							}
-							if stat, err := os.Stat(staticPath+".html.cache"); err == nil && !stat.IsDir() {
-								cachePath = append(cachePath, staticPath+".html.cache")
+							if stat, err := os.Stat(staticPath+".cache"); err == nil && !stat.IsDir() {
+								cachePath = append(cachePath, staticPath+".cache")
 							}
 
 							htmlPreCache.Set(path, cacheObj{
@@ -291,8 +295,9 @@ func init(){
 		StaticUrl: "",
 		StaticHTML: staticHTML,
 		CacheDir: cacheDir,
-		CompressStatic: 11,
-		CompressCache: 7,
+		PreCompress: 11,
+		Compress: 7,
+		CompileMaxFlush: 100,
 		CacheTime: 120, // minutes: 2 hours
 		DebugMode: false,
 	}
@@ -337,8 +342,6 @@ func init(){
 func Close(){
 	runningCompiler = false
 	cacheWatcher.CloseWatcher("*")
-
-	// time.Sleep(3 * time.Second)
 }
 
 
@@ -420,26 +423,222 @@ type handleHtmlData struct {
 
 // Compile will return html content, (or a static path when possible)
 //
-// first byte ([]byte[0]):
+// This method will automatically run the PreCompile method as needed
 //
-// - 0: html
+// []byte: first byte ([]byte[0]):
 //
-// - 1: path to static html (compressed with brotli)
+// - 0: raw html (to send to client)
 //
-// - 2: path to static html (compressed with gzip)
+// - 1: path to static html file
 //
-// - 3: path to static html (uncompressed raw html)
+// uint8: compression type:
+//
+// - 0: uncompressed raw html
+//
+// - 1: compressed to brotli
+//
+// - 2: compressed to gzip
 //
 // note: putting any extra '.' in a filename (apart from the extention name) may cause conflicts with restoring old cache files
-func Compile(path string, opts map[string]interface{}) ([]byte, error) {
-	// return []byte{0} for html output
-	// return []byte{1} for path to static html file (brotli)
-	// return []byte{2} for path to static html file (gzip)
-	// return []byte{3} for path to static html file (html)
+func Compile(path string, opts map[string]interface{}) ([]byte, uint8, error) {
+	origPath := path
+
+	path, err := goutil.FS.JoinPath(compilerConfig.Root, path + "." + compilerConfig.Ext)
+	if err != nil {
+		if compilerConfig.DebugMode {
+			fmt.Println(err)
+		}
+		return []byte{0}, 0, err
+	}
+
+	if opts == nil {
+		opts = map[string]interface{}{}
+	}
+
+	var compressRes []string
+	if val, ok := opts["@compress"]; ok && reflect.TypeOf(val) == goutil.VarType["[]string"] {
+		compressRes = val.([]string)
+	}else if val, ok := opts["@comp"]; ok && reflect.TypeOf(val) == goutil.VarType["[]string"] {
+		compressRes = val.([]string)
+	}else if val, ok := opts["@compression"]; ok && reflect.TypeOf(val) == goutil.VarType["[]string"] {
+		compressRes = val.([]string)
+	}
+
+	var compType = uint8(0)
+	if goutil.Contains(compressRes, "br") {
+		compType = 1
+	}else if goutil.Contains(compressRes, "gz") {
+		compType = 2
+	}
+
+	useCache := true
+	if val, ok := opts["@cache"]; ok && reflect.TypeOf(val) == goutil.VarType["bool"] {
+		useCache = val.(bool)
+	}
 
 
+	var filePath string
 
-	return nil, nil
+	// get precompiled file from cache
+	if useCache {
+		if cache, ok := htmlPreCache.Get(path); ok {
+			if len(cache.cachePath) == 0 {
+				return []byte{0}, 0, errors.New("cache does not contain any paths for this file")
+			}
+	
+			if cache.static {
+				return getStaticPath(cache, compressRes)
+			}else{
+				filePath = cache.cachePath[0]
+			}
+		}
+	}
+
+	// precompile file if needed
+	if filePath == "" {
+		err := PreCompile(origPath, opts)
+		if err != nil {
+			return []byte{0}, 0, err
+		}
+
+		if cache, ok := htmlPreCache.Get(path); ok {
+			if cache.static {
+				return getStaticPath(cache, compressRes)
+			}else{
+				filePath = cache.cachePath[0]
+			}
+		}else{
+			return []byte{0}, 0, errors.New("failed to precompile file")
+		}
+	}
+
+
+	return compile(filePath, &opts, compType)
+}
+
+func compile(path string, options *map[string]interface{}, compType uint8) ([]byte, uint8, error) {
+	// compile file
+	reader, err := liveread.Read[uint8](path)
+	if err != nil {
+		return []byte{}, 0, err
+	}
+
+	// auto compress while writing
+	var res bytes.Buffer
+	var resSize uint = 0
+	var writerRaw *bufio.Writer
+	var writerBr *brotli.Writer
+	var writerGz *gzip.Writer
+	if compType == 1 {
+		writerBr = brotli.NewWriter(&res)
+		brotli.NewWriterLevel(writerBr, compilerConfig.Compress)
+	}else if compType == 2 {
+		writerGz = gzip.NewWriter(&res)
+	}else {
+		writerRaw = bufio.NewWriter(&res)
+	}
+
+	write := func(b []byte){
+		resSize += uint(len(b))
+
+		if compType == 1 {
+			writerBr.Write(b)
+			if resSize >= compilerConfig.CompileMaxFlush {
+				resSize = 0
+				writerBr.Flush()
+			}
+		}else if compType == 2 {
+			writerGz.Write(b)
+			if resSize >= compilerConfig.CompileMaxFlush {
+				resSize = 0
+				writerGz.Flush()
+			}
+		}else{
+			writerRaw.Write(b)
+			if resSize >= compilerConfig.CompileMaxFlush {
+				resSize = 0
+				writerRaw.Flush()
+			}
+		}
+	}
+
+	ifTagLevel := []uint8{}
+	_ = ifTagLevel
+
+	var buf byte
+	for err == nil {
+		buf, err = reader.PeekByte(0)
+		if buf == 0 {
+			break
+		}
+
+		//todo: compile file
+
+		write([]byte{buf})
+		reader.Discard(1)
+	}
+
+	if compType == 1 {
+		writerBr.Flush()
+		writerBr.Close()
+	}else if compType == 2 {
+		writerGz.Flush()
+		writerGz.Close()
+	}else{
+		writerRaw.Flush()
+	}
+
+	return append([]byte{0}, res.Bytes()...), compType, nil
+}
+
+func getStaticPath(cache cacheObj, compressRes []string) ([]byte, uint8, error) {
+	if goutil.Contains(compressRes, "br") {
+		for _, p := range cache.cachePath {
+			if strings.HasSuffix(p, ".br") {
+				return append([]byte{1}, []byte(p)...), 1, nil
+			}
+		}
+	}
+
+	if goutil.Contains(compressRes, "gz") {
+		for _, p := range cache.cachePath {
+			if strings.HasSuffix(p, ".gz") {
+				return append([]byte{1}, []byte(p)...), 2, nil
+			}
+		}
+	}
+
+	for _, p := range cache.cachePath {
+		if strings.HasSuffix(p, ".html") {
+			return append([]byte{1}, []byte(p)...), 0, nil
+		}
+	}
+
+	p := cache.cachePath[0]
+	file, err := os.ReadFile(p)
+	if err != nil {
+		return []byte{0}, 0, err
+	}
+
+	if strings.HasSuffix(p, ".br") {
+		if goutil.Contains(compressRes, "br") {
+			return append([]byte{0}, file...), 1, nil
+		}
+		file, err = goutil.BROTLI.UnZip(file)
+		if err != nil {
+			return []byte{0}, 0, err
+		}
+	}else if strings.HasSuffix(p, ".gz") {
+		if goutil.Contains(compressRes, "gz") {
+			return append([]byte{0}, file...), 2, nil
+		}
+		file, err = goutil.GZIP.UnZip(file)
+		if err != nil {
+			return []byte{0}, 0, err
+		}
+	}
+
+	return append([]byte{0}, file...), 0, nil
 }
 
 
@@ -496,7 +695,7 @@ func PreCompile(path string, opts map[string]interface{}) error {
 		}
 
 		cachePath := []string{}
-		if br, err := goutil.BROTLI.Zip(html, compilerConfig.CompressStatic); err == nil {
+		if br, err := goutil.BROTLI.Zip(html, compilerConfig.PreCompress); err == nil {
 			if err := os.WriteFile(staticPath+".br", br, 0775); err == nil {
 				cachePath = append(cachePath, staticPath+".br")
 			}
@@ -541,30 +740,15 @@ func PreCompile(path string, opts map[string]interface{}) error {
 		}
 
 		cachePath := []string{}
-		if br, err := goutil.BROTLI.Zip(html, compilerConfig.CompressCache); err == nil {
-			if err := os.WriteFile(staticPath+".br.cache", br, 0775); err == nil {
-				cachePath = append(cachePath, staticPath+".br.cache")
-			}
-		}
 
-		if len(cachePath) == 0 {
-			if gz, err := goutil.BROTLI.Zip(html, 7); err == nil {
-				if err := os.WriteFile(staticPath+".gz.cache", gz, 0775); err == nil {
-					cachePath = append(cachePath, staticPath+".gz.cache")
-				}
+		if err = os.WriteFile(staticPath+".cache", html, 0775); err != nil {
+			if compilerConfig.DebugMode {
+				fmt.Println(err)
+				html = append(html, regex.JoinBytes([]byte("<!--{{#error: "), regex.Comp(`%1`, compilerConfig.Root).RepStr([]byte(err.Error()), []byte{}), []byte("}}-->"))...)
 			}
-		}
-
-		if len(cachePath) == 0 {
-			if err = os.WriteFile(staticPath+".html.cache", html, 0775); err != nil {
-				if compilerConfig.DebugMode {
-					fmt.Println(err)
-					html = append(html, regex.JoinBytes([]byte("<!--{{#error: "), regex.Comp(`%1`, compilerConfig.Root).RepStr([]byte(err.Error()), []byte{}), []byte("}}-->"))...)
-				}
-				return err
-			}else{
-				cachePath = append(cachePath, staticPath+".html.cache")
-			}
+			return err
+		}else{
+			cachePath = append(cachePath, staticPath+".cache")
 		}
 
 		if len(cachePath) != 0 {
