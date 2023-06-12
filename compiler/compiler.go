@@ -623,7 +623,7 @@ func compile(path string, options *map[string]interface{}, compType uint8) ([]by
 				if err == nil && len(b) == 2 && b[0] == '}' && b[1] == '}' {
 					ind += 2
 					b, e = reader.Get(ind, 1)
-					if b[0] == '}' {
+					if e == nil && b[0] == '}' {
 						ind++
 						esc--
 					}
@@ -847,7 +847,141 @@ func compile(path string, options *map[string]interface{}, compType uint8) ([]by
 												}
 											}
 										}else if bytes.Equal(args.tag, []byte("each")) {
-											//todo: handle each functions
+											if args.close == 3 {
+												if args.args["0"] != nil && len(args.args["0"]) != 0 {
+													if hasVarOpt(args.args["0"], options, &eachArgsList, 0, false) {
+														listArg := GetOpt(args.args["0"], options, &eachArgsList, 0, false, false)
+														if t := reflect.TypeOf(listArg); t == goutil.VarType["map[string]interface{}"] || t == goutil.VarType["[]interface{}"] {
+															eachArgs := EachArgs{}
+															if t == goutil.VarType["map[string]interface{}"] && len(listArg.(map[string]interface{})) != 0 {
+																eachArgs.listMap = listArg.(map[string]interface{})
+																eachArgs.listArr = []interface{}{}
+																for k := range eachArgs.listMap {
+																	eachArgs.listArr = append(eachArgs.listArr, k)
+																}
+				
+																sortStrings(&eachArgs.listArr)
+															}else if t == goutil.VarType["[]interface{}"] && len(listArg.([]interface{})) != 0 {
+																eachArgs.listArr = listArg.([]interface{})
+															}else{
+																// skip each content and move on to closing each tag
+																ifTagLevel = append(ifTagLevel, 3)
+																ib, ie := reader.Peek(2)
+																ifLevel := 0
+																for ie == nil {
+																	if ib[0] == '"' || ib[0] == '\'' || ib[0] == '`' {
+																		q := ib[0]
+																		reader.Discard(1)
+																		ib, ie = reader.Peek(2)
+																		for ie == nil && ib[0] != q {
+																			if ib[0] == '\\' {
+																				reader.Discard(1)
+																			}
+																			reader.Discard(1)
+																			ib, ie = reader.Peek(2)
+																		}
+																	}else if ib[0] == '{' && ib[1] == '{' {
+																		ibTag, ie := reader.Peek(10)
+																		if ie == nil && ifLevel == 0 && regex.Comp(`^\{\{\{?%/?each[\s/\}:]`).MatchRef(&ibTag) {
+																			break
+																		}else if (ie == nil || len(ibTag) > 8) && regex.Comp(`^\{\{\{?%/?each[\s/\}:]`).MatchRef(&ibTag) {
+																			if ibTag[1] == '/' {
+																				ifLevel--
+																				if ifLevel < 0 {
+																					break
+																				}
+																			}else{
+																				ifLevel++
+																			}
+																		}
+																	}
+				
+																	reader.Discard(1)
+																	ib, ie = reader.Peek(2)
+																}
+																continue
+															}
+
+															eachArgs.size = uint(len(eachArgs.listArr))
+
+															if args.args["key"] != nil && len(args.args["key"]) != 0 {
+																eachArgs.key = args.args["key"]
+															}else if args.args["of"] != nil && len(args.args["of"]) != 0 {
+																eachArgs.key = args.args["of"]
+															}
+
+															if args.args["value"] != nil && len(args.args["value"]) != 0 {
+																eachArgs.val = args.args["value"]
+															}else if args.args["as"] != nil && len(args.args["as"]) != 0 {
+																eachArgs.val = args.args["as"]
+															}
+
+															eachArgsList = append(eachArgsList, eachArgs)
+															reader.Save()
+
+															removeLineBreak(reader)
+															continue
+														}
+													}else{
+														continue
+													}
+												}
+
+												// skip each content and move on to closing each tag
+												ifTagLevel = append(ifTagLevel, 3)
+												ib, ie := reader.Peek(2)
+												ifLevel := 0
+												for ie == nil {
+													if ib[0] == '"' || ib[0] == '\'' || ib[0] == '`' {
+														q := ib[0]
+														reader.Discard(1)
+														ib, ie = reader.Peek(2)
+														for ie == nil && ib[0] != q {
+															if ib[0] == '\\' {
+																reader.Discard(1)
+															}
+															reader.Discard(1)
+															ib, ie = reader.Peek(2)
+														}
+													}else if ib[0] == '{' && ib[1] == '{' {
+														ibTag, ie := reader.Peek(10)
+														if ie == nil && ifLevel == 0 && regex.Comp(`^\{\{\{?%/?each[\s/\}:]`).MatchRef(&ibTag) {
+															break
+														}else if (ie == nil || len(ibTag) > 8) && regex.Comp(`^\{\{\{?%/?each[\s/\}:]`).MatchRef(&ibTag) {
+															if ibTag[1] == '/' {
+																ifLevel--
+																if ifLevel < 0 {
+																	break
+																}
+															}else{
+																ifLevel++
+															}
+														}
+													}
+
+													reader.Discard(1)
+													ib, ie = reader.Peek(2)
+												}
+											}else if args.close == 1 {
+												if len(eachArgsList) != 0 {
+													if eachArgsList[len(eachArgsList)-1].ind < eachArgsList[len(eachArgsList)-1].size-1 {
+														if eachArgsList[len(eachArgsList)-1].ind == 0 {
+															fmt.Println("test 1")
+															reader.Restore()
+															removeLineBreak(reader)
+														}else{
+															fmt.Println("test 2")
+															reader.RestoreReset()
+															removeLineBreak(reader)
+														}
+														eachArgsList[len(eachArgsList)-1].ind++
+													}else{
+														reader.DelSave()
+														removeLineBreak(reader)
+														eachArgsList = eachArgsList[:len(eachArgsList)-1]
+													}
+												}
+											}
 										}else{
 											args.tag[0] = bytes.ToUpper([]byte{args.tag[0]})[0]
 
@@ -1730,14 +1864,21 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 														reader.Discard(1)
 														ib, ie = reader.PeekByte(0)
 														for ie == nil && ib != q {
+															if ib == '\\' {
+																reader.Discard(1)
+																ib, ie = reader.PeekByte(0)
+																if ie != nil {
+																	break
+																}
+															}
 															reader.Discard(1)
 															ib, ie = reader.PeekByte(0)
 														}
 													}else if ib == '<' {
-														ibTag, ie := reader.Peek(8)
+														ibTag, ie := reader.Peek(12)
 														if ie == nil && ifLevel == 0 && regex.Comp(`^</?_?(each|for|for_?each)[\s/>:]`).MatchRef(&ibTag) {
 															break
-														}else if ie == nil && regex.Comp(`^</?_?(each|for|for_?each)[\s/>:]`).MatchRef(&ibTag) {
+														}else if (ie == nil || len(ibTag) > 5) && regex.Comp(`^</?_?(each|for|for_?each)[\s/>:]`).MatchRef(&ibTag) {
 															if ibTag[1] == '/' {
 																ifLevel--
 																if ifLevel < 0 {
@@ -1817,14 +1958,21 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 										reader.Discard(1)
 										ib, ie = reader.PeekByte(0)
 										for ie == nil && ib != q {
+											if ib == '\\' {
+												reader.Discard(1)
+												ib, ie = reader.PeekByte(0)
+												if ie != nil {
+													break
+												}
+											}
 											reader.Discard(1)
 											ib, ie = reader.PeekByte(0)
 										}
 									}else if ib == '<' {
-										ibTag, ie := reader.Peek(8)
+										ibTag, ie := reader.Peek(12)
 										if ie == nil && ifLevel == 0 && regex.Comp(`^</?_?(each|for|for_?each)[\s/>:]`).MatchRef(&ibTag) {
 											break
-										}else if ie == nil && regex.Comp(`^</?_?(each|for|for_?each)[\s/>:]`).MatchRef(&ibTag) {
+										}else if (ie == nil || len(ibTag) > 5) && regex.Comp(`^</?_?(each|for|for_?each)[\s/>:]`).MatchRef(&ibTag) {
 											if ibTag[1] == '/' {
 												ifLevel--
 												if ifLevel < 0 {
