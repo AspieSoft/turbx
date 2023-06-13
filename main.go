@@ -50,7 +50,7 @@ func main(){
 
 
 	if path != "" {
-		html, err = os.ReadFile(string(html[1:]))
+		html, err = os.ReadFile(path)
 		if err != nil {
 			fmt.Println(err)
 			return

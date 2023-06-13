@@ -727,7 +727,7 @@ func compile(path string, options *map[string]interface{}, compType uint8) ([]by
 										// 1 = </tag>
 										// 2 = <tag/> (</tag/>)
 										// 3 = <tag>
-	
+
 										if bytes.Equal(args.tag, []byte("if")) || bytes.Equal(args.tag, []byte("else")) {
 											if args.close == 3 && bytes.Equal(args.tag, []byte("if")) { // open tag
 												if _, ok := TagFuncs.If(options, &args, &eachArgsList, false); ok {
@@ -973,11 +973,9 @@ func compile(path string, options *map[string]interface{}, compType uint8) ([]by
 												if len(eachArgsList) != 0 {
 													if eachArgsList[len(eachArgsList)-1].ind < eachArgsList[len(eachArgsList)-1].size-1 {
 														if eachArgsList[len(eachArgsList)-1].ind == 0 {
-															fmt.Println("test 1")
 															reader.Restore()
 															removeLineBreak(reader)
 														}else{
-															fmt.Println("test 2")
 															reader.RestoreReset()
 															removeLineBreak(reader)
 														}
@@ -1083,7 +1081,7 @@ func compile(path string, options *map[string]interface{}, compType uint8) ([]by
 								}
 								write(val.([]byte))
 							}
-						}else if regex.Comp(`^[\w_-]+=`).MatchRef(&varData) {
+						}else if regex.Comp(`^[\w_-]*=`).MatchRef(&varData) {
 							args := bytes.SplitN(varData, []byte{'='}, 2)
 							if len(args) == 2 {
 								if esc != 0 {
@@ -1092,12 +1090,21 @@ func compile(path string, options *map[string]interface{}, compType uint8) ([]by
 									esc = 1
 								}
 
+								if len(args[0]) == 0 {
+									if regex.Comp(`^([\w_-]+).*$`).MatchRef(&args[1]) {
+										args[0] = regex.Comp(`^([\w_-]+).*$`).RepStrComplexRef(&args[1], []byte("$1"))
+										args[0] = append(args[0], '=')
+									}
+								}else{
+									args[0] = append(args[0], '=')
+								}
+
 								val := GetOpt(args[1], options, &eachArgsList, esc, false, true)
 								if !goutil.IsZeroOfUnderlyingType(val) {
 									if len(val.([]byte)) != 0 && val.([]byte)[0] == 0 {
 										val = val.([]byte)[1:]
 									}
-									write(regex.JoinBytes(args[0], '=', '"', val.([]byte), '"'))
+									write(regex.JoinBytes(args[0], '"', val.([]byte), '"'))
 								}
 							}
 						}else{
@@ -1542,7 +1549,7 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 						if b == 0 {
 							break
 						}
-	
+
 						if b == '/' {
 							if b2, e2 := reader.PeekByte(ind); e2 == nil && b2 == '>' {
 								ind++
@@ -1554,7 +1561,7 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 								args.close = 3
 							}
 							break
-						}else if b == '&' || b == '|' || b == '(' || b == ')' {
+						}else if b == '&' || b == '|' || b == '(' || b == ')' || b == '!' {
 							i := strconv.Itoa(argInd)
 							args.args[i] = []byte{5, b}
 							args.ind = append(args.ind, i)

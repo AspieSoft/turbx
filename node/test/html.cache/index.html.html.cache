@@ -1,14 +1,9 @@
 start
 
-{{%each list as="value"}}
-<h1>Hello, Component!</h1>
-
-{{value}}
-
-<h2>End Of Component</h2>
-
-{{%/each}}
-
-<div {{class=test}} {{name=name}} {{:key}}></div>
+{{%if test="'1'"}}
+test 1
+{{%else}}
+test 0
+{{%/if}}
 
 end

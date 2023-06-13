@@ -1,15 +1,9 @@
 start
 
-<_each list as="value">
-  <MyComponent test="{{value}}"/>
-</_each>
-
-<_if test="1">
+<_if test="'1'">
   test 1
 <_else/>
   test 0
 </_if>
-
-<div {{class="test"}} {{="name"}} {{key}}></div>
 
 end
