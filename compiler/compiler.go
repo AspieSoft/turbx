@@ -535,6 +535,9 @@ func compile(path string, options *map[string]interface{}, compType uint8) ([]by
 		return []byte{}, "", 0, err
 	}
 
+	htmlContTemp := [][]byte{}
+	htmlContTempTag := []htmlArgs{}
+
 	// auto compress while writing
 	var res bytes.Buffer
 	var resSize uint = 0
@@ -551,6 +554,11 @@ func compile(path string, options *map[string]interface{}, compType uint8) ([]by
 	}
 
 	write := func(b []byte){
+		if len(htmlContTempTag) != 0 {
+			htmlContTemp[len(htmlContTempTag)-1] = append(htmlContTemp[len(htmlContTempTag)-1], b...)
+			return
+		}
+
 		resSize += uint(len(b))
 
 		if compType == 1 {
@@ -584,7 +592,6 @@ func compile(path string, options *map[string]interface{}, compType uint8) ([]by
 			break
 		}
 
-		//todo: compile file
 		if buf[0] == '{' && buf[1] == '{' {
 			ind := uint(2)
 			esc := uint8(2)
@@ -646,7 +653,7 @@ func compile(path string, options *map[string]interface{}, compType uint8) ([]by
 									varData = varData[1:]
 									args.close = 1
 								}else if varData[len(varData)-1] == '/' {
-									varData = varData[1:]
+									varData = varData[:len(varData)-1]
 									args.close = 2
 								}
 
@@ -985,7 +992,82 @@ func compile(path string, options *map[string]interface{}, compType uint8) ([]by
 										}else{
 											args.tag[0] = bytes.ToUpper([]byte{args.tag[0]})[0]
 
-											//todo: handle other functions (may always run in sync, and ignore function preference)
+											if args.close == 3 {
+												htmlContTempTag = append(htmlContTempTag, args)
+												htmlContTemp = append(htmlContTemp, []byte{})
+											}else if args.close == 1 && len(htmlContTempTag) != 0 {
+												for i := len(htmlContTempTag)-1; i >= 0; i-- {
+													sameTag := bytes.Equal(htmlContTempTag[i].tag, args.tag)
+
+													fn, _, fnErr := getCoreTagFunc(htmlContTempTag[i].tag)
+													if fnErr != nil {
+														if newFn, ok := TagFuncs.list[string(htmlContTempTag[i].tag)]; ok {
+															fn = newFn
+															fnErr = nil
+														}
+													}
+
+													if fnErr == nil {
+														for k, v := range htmlContTempTag[i].args {
+															args.args[k] = v
+														}
+														args.args["body"] = htmlContTemp[i]
+
+														htmlContTemp = htmlContTemp[:i]
+														htmlContTempTag = htmlContTempTag[:i]
+
+														htmlCont := []byte{0}
+														var compErr error
+
+														handleHtmlFunc(handleHtmlData{fn: &fn, preComp: false, html: &htmlCont, options: options, arguments: &args, eachArgs: cloneArr(eachArgsList), compileError: &compErr})
+
+														if compErr == nil {
+															write(htmlCont[1:])
+														}else if compilerConfig.DebugMode {
+															fmt.Println(compErr)
+															write(regex.JoinBytes([]byte("<!--{{error: "), compErr, []byte("}}-->")))
+														}
+													}else{
+														if i != 0 && !sameTag && len(htmlContTemp[i]) != 0 {
+															if len(htmlContTemp[i]) != 0 && htmlContTemp[i][0] == '\r' {
+																htmlContTemp[i] = htmlContTemp[i][1:]
+															}
+															if len(htmlContTemp[i]) != 0 && htmlContTemp[i][0] == '\n' {
+																htmlContTemp[i] = htmlContTemp[i][1:]
+															}
+															htmlContTemp[i-1] = append(htmlContTemp[i-1], htmlContTemp[i]...)
+														}
+														htmlContTemp = htmlContTemp[:i]
+														htmlContTempTag = htmlContTempTag[:i]
+													}
+
+													if sameTag {
+														break
+													}
+												}
+											}else if args.close == 2 {
+												fn, _, fnErr := getCoreTagFunc(args.tag)
+												if fnErr != nil {
+													if newFn, ok := TagFuncs.list[string(args.tag)]; ok {
+														fn = newFn
+														fnErr = nil
+													}
+												}
+
+												if fnErr == nil {
+													htmlCont := []byte{0}
+													var compErr error
+
+													handleHtmlFunc(handleHtmlData{fn: &fn, preComp: false, html: &htmlCont, options: options, arguments: &args, eachArgs: cloneArr(eachArgsList), compileError: &compErr})
+
+													if compErr == nil {
+														write(htmlCont[1:])
+													}else if compilerConfig.DebugMode {
+														fmt.Println(compErr)
+														write(regex.JoinBytes([]byte("<!--{{error: "), compErr, []byte("}}-->")))
+													}
+												}
+											}
 										}
 									}
 								}
