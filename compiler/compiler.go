@@ -2308,13 +2308,16 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 		}
 
 		//todo: add optional shortcode handler (ie: {{#shortcode@plugin}} {{#priorityShortcode}}) ("@plugin" should be optional)
-		// may add in a "#shortcode" option to options, and pass in a list of functions that return html/markdown
-		// may also add a mothod for shortcodes to run other shortcodes (apart from themselves)
+		// may add in a "@shortcodes" option to options, and pass in a list of functions that return html/markdown
+		// may also add a mothod for shortcodes to run other shortcodes (apart from themselves to avoid recursion)
 		// may have shortcodes run in elixir or another lightweight programming language (may also add subfolder for shortcodes)
 
 		//todo: consider using 'AspieSoft/go-memshare' module if a funcs.go file is detected in the $PWD directory and link it to the TagFuncs.AddFN method
 
-		//todo: handle markdown
+		// handle markdown
+		if compileMarkdown(reader, &write) {
+			continue
+		}
 
 		write([]byte{buf})
 		reader.Discard(1)
