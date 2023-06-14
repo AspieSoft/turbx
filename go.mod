@@ -6,7 +6,7 @@ require (
 	github.com/AspieSoft/go-liveread v1.2.4
 	github.com/AspieSoft/go-regex/v4 v4.1.2
 	github.com/AspieSoft/goutil/v4 v4.1.0
-	github.com/AspieSoft/goutil/v5 v5.1.0
+	github.com/AspieSoft/goutil/v5 v5.2.1
 	github.com/alphadose/haxmap v1.2.0
 	github.com/andybalholm/brotli v1.0.5
 	github.com/drhodes/golorem v0.0.0-20220328165741-da82e5b29246

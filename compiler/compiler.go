@@ -50,10 +50,17 @@ type Config struct {
 	CacheDir string
 
 	// Brotli compression level for precompressed static files (0-11)
+	//
+	// Gzip will be set to this number capped between 1-9 (if val > 6 {val -= 1})
 	PreCompress int
 
 	// Brotli compression level for live compressed files (0-11)
+	//
+	// Gzip will be set to this number capped between 1-9 (if val > 6 {val -= 1})
 	Compress int
+
+	gzipPreCompress int
+	gzipCompress int
 
 	// The maximum size of the compiled output before flushing it to the result writer
 	CompileMaxFlush uint
@@ -141,6 +148,17 @@ func SetConfig(config Config) error {
 			config.PreCompress = 11
 		}
 		compilerConfig.PreCompress = config.PreCompress
+
+		c := config.PreCompress
+		if c > 6 {
+			c--
+		}
+		if c < 1 {
+			c = 1
+		}else if c > 9 {
+			c = 9
+		}
+		compilerConfig.gzipPreCompress = c
 	}
 
 	if config.Compress != 0 {
@@ -150,6 +168,17 @@ func SetConfig(config Config) error {
 			config.Compress = 11
 		}
 		compilerConfig.Compress = config.Compress
+
+		c := config.Compress
+		if c > 6 {
+			c--
+		}
+		if c < 1 {
+			c = 1
+		}else if c > 9 {
+			c = 9
+		}
+		compilerConfig.gzipCompress = c
 	}
 
 	if config.CacheTime != 0 {
@@ -307,8 +336,10 @@ func init(){
 		StaticUrl: "",
 		StaticHTML: staticHTML,
 		CacheDir: cacheDir,
-		PreCompress: 11,
-		Compress: 7,
+		PreCompress: 7,
+		Compress: 5,
+		gzipPreCompress: 6,
+		gzipCompress: 5,
 		CompileMaxFlush: 100,
 		CacheTime: 120, // minutes: 2 hours
 		DebugMode: false,
@@ -545,11 +576,13 @@ func compile(path string, options *map[string]interface{}, compType uint8) ([]by
 	var writerBr *brotli.Writer
 	var writerGz *gzip.Writer
 	if compType == 1 {
-		writerBr = brotli.NewWriter(&res)
-		brotli.NewWriterLevel(writerBr, compilerConfig.Compress)
+		writerBr = brotli.NewWriterLevel(&res, compilerConfig.Compress)
 	}else if compType == 2 {
-		writerGz = gzip.NewWriter(&res)
-	}else {
+		writerGz, err = gzip.NewWriterLevel(&res, compilerConfig.gzipCompress)
+		if err != nil {
+			writerGz = gzip.NewWriter(&res)
+		}
+	}else{
 		writerRaw = bufio.NewWriter(&res)
 	}
 
@@ -1259,7 +1292,7 @@ func PreCompile(path string, opts map[string]interface{}) error {
 			}
 		}
 
-		if gz, err := goutil.GZIP.Zip(html); err == nil {
+		if gz, err := goutil.GZIP.Zip(html, compilerConfig.gzipPreCompress); err == nil {
 			if err := os.WriteFile(staticPath+".html.gz", gz, 0775); err == nil {
 				cachePath = append(cachePath, staticPath+".html.gz")
 			}
