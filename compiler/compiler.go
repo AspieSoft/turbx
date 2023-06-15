@@ -278,6 +278,48 @@ func InitDefault(){
 	}
 }
 
+
+type tagData struct {
+	tag []byte
+	attr []byte
+}
+
+// list of self naturally closing html tags
+var singleHtmlTags [][]byte = [][]byte{
+	[]byte("br"),
+	[]byte("hr"),
+	[]byte("wbr"),
+	[]byte("meta"),
+	[]byte("link"),
+	[]byte("param"),
+	[]byte("base"),
+	[]byte("input"),
+	[]byte("img"),
+	[]byte("area"),
+	[]byte("col"),
+	[]byte("command"),
+	[]byte("embed"),
+	[]byte("keygen"),
+	[]byte("source"),
+	[]byte("track"),
+}
+
+// @tag: tag to detect
+// @attr: required attr to consider
+var emptyContentTags []tagData = []tagData{
+	{[]byte("script"), []byte("src")},
+	{[]byte("iframe"), nil},
+}
+
+
+//todo: add more image, video, and audio file types
+
+// regex selectors for image, video, and audio files
+var imageRE *regex.Regexp = regex.Comp(`\.(png|jpe?g)$`)
+var videoRE *regex.Regexp = regex.Comp(`\.(mp4|mov)$`)
+var audioRE *regex.Regexp = regex.Comp(`\.(mp3|wav|ogg)$`)
+
+
 var runningCompiler bool = true
 
 var cacheWatcher *goutil.FileWatcher
@@ -382,6 +424,8 @@ func init(){
 	}()
 
 	//todo: auto minify local js and css files
+
+	//todo: auto compress images, videos, and audio to webp, webm, and weba formats
 }
 
 func Close(){
@@ -389,38 +433,6 @@ func Close(){
 	cacheWatcher.CloseWatcher("*")
 }
 
-
-type tagData struct {
-	tag []byte
-	attr []byte
-}
-
-// list of self naturally closing html tags
-var singleHtmlTags [][]byte = [][]byte{
-	[]byte("br"),
-	[]byte("hr"),
-	[]byte("wbr"),
-	[]byte("meta"),
-	[]byte("link"),
-	[]byte("param"),
-	[]byte("base"),
-	[]byte("input"),
-	[]byte("img"),
-	[]byte("area"),
-	[]byte("col"),
-	[]byte("command"),
-	[]byte("embed"),
-	[]byte("keygen"),
-	[]byte("source"),
-	[]byte("track"),
-}
-
-// @tag: tag to detect
-// @attr: required attr to consider
-var emptyContentTags []tagData = []tagData{
-	{[]byte("script"), []byte("src")},
-	{[]byte("iframe"), nil},
-}
 
 type htmlArgs struct {
 	args map[string][]byte
@@ -2518,7 +2530,49 @@ func handleHtmlTag(htmlData handleHtmlData){
 						return bytes.Join(bytes.Split(data(1), []byte{}), []byte{'\\'})
 					})
 
-					//todo: check local js and css link args for .min files (unless in debug mode)
+					// check local js and css link args for .min files (unless in debug mode)
+					// also check for .webp, .webm, and .weba files
+					if !compilerConfig.DebugMode && (v == "src" || v == "href" || v == "url") && len(htmlData.arguments.args[v]) != 0 && htmlData.arguments.args[v][0] == '/' {
+						link := htmlData.arguments.args[v]
+						if regex.Comp(`(\.min|)\.([jt]s|css|less|s[ac]ss)$`).MatchRef(&link) {
+							link = regex.Comp(`(\.min|)\.([jt]s|css|less|s[ac]ss)$`).RepFuncRef(&link, func(data func(int) []byte) []byte {
+								ext := data(2)
+								if regex.Comp(`([jt]s)`).MatchRef(&ext) {
+									ext = []byte("js")
+								}else if regex.Comp(`(css|less|s[ac]ss)`).MatchRef(&ext) {
+									ext = []byte("css")
+								}
+
+								return regex.JoinBytes([]byte(".min."), ext)
+							})
+							if linkPath, err := goutil.FS.JoinPath(compilerConfig.Static, string(link)); err == nil {
+								if stat, err := os.Stat(linkPath); err == nil && !stat.IsDir() {
+									htmlData.arguments.args[v] = link
+								}
+							}
+						}else if imageRE.MatchRef(&link) {
+							link = imageRE.RepStrRef(&link, []byte(".webp"))
+							if linkPath, err := goutil.FS.JoinPath(compilerConfig.Static, string(link)); err == nil {
+								if stat, err := os.Stat(linkPath); err == nil && !stat.IsDir() {
+									htmlData.arguments.args[v] = link
+								}
+							}
+						}else if videoRE.MatchRef(&link) {
+							link = videoRE.RepStrRef(&link, []byte(".webm"))
+							if linkPath, err := goutil.FS.JoinPath(compilerConfig.Static, string(link)); err == nil {
+								if stat, err := os.Stat(linkPath); err == nil && !stat.IsDir() {
+									htmlData.arguments.args[v] = link
+								}
+							}
+						}else if audioRE.MatchRef(&link) {
+							link = audioRE.RepStrRef(&link, []byte(".weba"))
+							if linkPath, err := goutil.FS.JoinPath(compilerConfig.Static, string(link)); err == nil {
+								if stat, err := os.Stat(linkPath); err == nil && !stat.IsDir() {
+									htmlData.arguments.args[v] = link
+								}
+							}
+						}
+					}
 
 					args = append(args, regex.JoinBytes(v, []byte{'=', '"'}, goutil.HTML.EscapeArgs(htmlData.arguments.args[v], '"'), '"'))
 				}
