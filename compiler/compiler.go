@@ -380,6 +380,8 @@ func init(){
 			})
 		}
 	}()
+
+	//todo: auto minify local js and css files
 }
 
 func Close(){
@@ -2416,6 +2418,27 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 func handleHtmlTag(htmlData handleHtmlData){
 	//htmlData: html *[]byte, options *map[string]interface{}, arguments *htmlArgs, eachArgs *[]EachArgs, compileError *error
 
+	// auto fix "emptyContentTags" to closing (ie: <script/> <iframe/>)
+	closeEnd := false
+	for _, tag := range emptyContentTags {
+		if bytes.Equal(tag.tag, htmlData.arguments.tag) {
+			if tag.attr != nil {
+				if _, ok := htmlData.arguments.args[string(tag.attr)]; ok {
+					htmlData.arguments.close = 3
+					closeEnd = true
+				}else{
+					(*htmlData.html)[0] = 1
+					return
+				}
+			}else{
+				htmlData.arguments.close = 3
+				closeEnd = true
+			}
+
+			break
+		}
+	}
+
 	if htmlData.arguments.close == 1 {
 		(*htmlData.html) = append((*htmlData.html), regex.JoinBytes([]byte{'<', '/'}, htmlData.arguments.tag, '>')...)
 		(*htmlData.html)[0] = 1
@@ -2495,7 +2518,7 @@ func handleHtmlTag(htmlData handleHtmlData){
 						return bytes.Join(bytes.Split(data(1), []byte{}), []byte{'\\'})
 					})
 
-					//todo: check local js and css link args for .min files
+					//todo: check local js and css link args for .min files (unless in debug mode)
 
 					args = append(args, regex.JoinBytes(v, []byte{'=', '"'}, goutil.HTML.EscapeArgs(htmlData.arguments.args[v], '"'), '"'))
 				}
@@ -2525,8 +2548,6 @@ func handleHtmlTag(htmlData handleHtmlData){
 		return bytes.Compare(a, b) == -1
 	})
 
-	//todo: auto fix "emptyContentTags" to closing (ie: <script/> <iframe/>)
-
 	if len(args) == 0 {
 		(*htmlData.html) = append((*htmlData.html), regex.JoinBytes('<', htmlData.arguments.tag)...)
 	}else{
@@ -2537,6 +2558,10 @@ func handleHtmlTag(htmlData handleHtmlData){
 		(*htmlData.html) = append((*htmlData.html), '/', '>')
 	}else{
 		(*htmlData.html) = append((*htmlData.html), '>')
+	}
+
+	if closeEnd {
+		(*htmlData.html) = append((*htmlData.html), regex.JoinBytes('<', '/', htmlData.arguments.tag, '>')...)
 	}
 
 	(*htmlData.html)[0] = 1
