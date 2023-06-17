@@ -447,8 +447,16 @@ func (funcs *tagFuncs) If(opts *map[string]interface{}, args *htmlArgs, eachArgs
 					//todo: handle >=
 				}
 			}else if sign == 6 {
-				//todo: verify regex is safe
-				regex.Comp(string(arg)).Match(goutil.Conv.ToBytes(val1))
+				if regex.IsValidRef(&arg) {
+					rB := regex.Comp(string(arg)).Match(goutil.Conv.ToBytes(val1))
+					if (!inv && rB) || (inv && !rB) {
+						res = append(res, 1)
+					}else{
+						res = append(res, 0)
+					}
+				}else{
+					res = append(res, 0)
+				}
 			}
 		}
 	}

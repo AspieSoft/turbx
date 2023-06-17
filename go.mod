@@ -4,7 +4,7 @@ go 1.19
 
 require (
 	github.com/AspieSoft/go-liveread v1.2.4
-	github.com/AspieSoft/go-regex/v4 v4.1.2
+	github.com/AspieSoft/go-regex/v4 v4.2.0
 	github.com/AspieSoft/goutil/v4 v4.1.0
 	github.com/AspieSoft/goutil/v5 v5.2.1
 	github.com/alphadose/haxmap v1.2.0

@@ -29,8 +29,6 @@ func main(){
 		"@compress": []string{"br", "gz"},
 		"@cache": false,
 
-		"$TestXXS": `<script>alert('xxs')</script>`,
-
 		"key": "MyKey",
 		"name": "MyName",
 

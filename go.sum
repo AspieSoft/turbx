@@ -1,7 +1,7 @@
 github.com/AspieSoft/go-liveread v1.2.4 h1:a1Zz1/7Hd1e2IUrneoI08tJ8Cs/miVUVlP6PTYjjTL4=
 github.com/AspieSoft/go-liveread v1.2.4/go.mod h1:1UaE7/BtypznCUymTyWs4+PVM6kEyF6uHVJxzVlSQNw=
-github.com/AspieSoft/go-regex/v4 v4.1.2 h1:7RNJwKwL2HrWJtibpr4Br5w43/SG/RbexAQ9wLZpKSs=
-github.com/AspieSoft/go-regex/v4 v4.1.2/go.mod h1:vU1ZsmQXyVwM6zBrGwj0lL+kYZv/tnUP0ZZv9Wbh+qY=
+github.com/AspieSoft/go-regex/v4 v4.2.0 h1:BIRRipMmwAznFJNuRzmyHpWVit+HzZAzpkbntfw8BfM=
+github.com/AspieSoft/go-regex/v4 v4.2.0/go.mod h1:oyCQKSFphxJFMz435qregfmvzaj0SPC99g2eUFEJDxg=
 github.com/AspieSoft/go-syncterval v1.0.5 h1:fzSNZofSX/7iBkLrWizMzGLGcBl3d+76cHyr8M9tjGg=
 github.com/AspieSoft/go-syncterval v1.0.5/go.mod h1:r+mTZPOWvfS0Y5YAxKINGNt8eX76i2Lib0VeqAw3SW4=
 github.com/AspieSoft/go-ttlcache v1.2.2 h1:U6MMYY5PKANsB4/vhTiQsQ2U/y1P1yqMCxLw+qFNmCo=
