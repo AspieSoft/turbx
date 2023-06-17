@@ -19,7 +19,7 @@ func main(){
 	compiler.SetConfig(compiler.Config{
 		Root: "node/test/views",
 		Static: "node/test/public",
-		DebugMode: true,
+		// DebugMode: true,
 	})
 
 
@@ -28,6 +28,8 @@ func main(){
 	html, path, comp, err := compiler.Compile("index", map[string]interface{}{
 		"@compress": []string{"br", "gz"},
 		"@cache": false,
+
+		"$TestXXS": `<script>alert('xxs')</script>`,
 
 		"key": "MyKey",
 		"name": "MyName",

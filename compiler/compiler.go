@@ -319,6 +319,9 @@ var imageRE *regex.Regexp = regex.Comp(`\.(png|jpe?g)$`)
 var videoRE *regex.Regexp = regex.Comp(`\.(mp4|mov)$`)
 var audioRE *regex.Regexp = regex.Comp(`\.(mp3|wav|ogg)$`)
 
+// regex to determine if a comment should be kept (for copyright or internet explore support)
+var keepCommentRE *regex.Regexp = regex.Comp(`(?i)(^\s*(?:\!|\([cr]\))|^\s*\[?[\w_\-\s]+]?\s*>.*<!\s*\[?[\w_\-\s]+\]?\s*$)`)
+
 
 var runningCompiler bool = true
 
@@ -1119,6 +1122,13 @@ func compile(path string, options *map[string]interface{}, compType uint8) ([]by
 							}
 							continue
 						}
+						
+						if varData[0] == '#' && (bytes.HasPrefix(varData, []byte("#error:")) || bytes.HasPrefix(varData, []byte("#warning:"))) {
+							if compilerConfig.DebugMode {
+								write(regex.JoinBytes([]byte("{{"), varData, []byte("}}")))
+							}
+							continue
+						}
 
 						if varData[0] == ':' {
 							val := GetOpt(varData[1:], options, &eachArgsList, 4, false, true)
@@ -1172,11 +1182,104 @@ func compile(path string, options *map[string]interface{}, compType uint8) ([]by
 					continue
 				}
 			}
-		}else if buf[0] == '\\' && (buf[1] == '{' || buf[1] == '}') {
+		}
+
+		if !compilerConfig.DebugMode && buf[0] == '{' && buf[1] == '\\' {
+			b, e := reader.Peek(4)
+			if e == nil && b[2] == '{' && b[3] == '#' {
+				ind := uint(4)
+				b, e := reader.Get(ind, 1)
+				tag := []byte{}
+				for e == nil && b[0] != ':' && b[0] != '}' {
+					tag = append(tag, b[0])
+					ind++
+					b, e = reader.Get(ind, 1)
+				}
+
+				if e == nil && (bytes.Equal(tag, []byte("error")) || bytes.Equal(tag, []byte("warning"))) {
+					b, e := reader.Get(ind, 3)
+					for e == nil && !(b[0] == '}' && b[1] == '\\' && b[2] == '}') {
+						tag = append(tag, b[0])
+						ind++
+						b, e = reader.Get(ind, 3)
+					}
+
+					if e == nil {
+						reader.Discard(ind+3)
+						continue
+					}
+				}
+			}
+		}
+
+		if buf[0] == '\\' && (buf[1] == '{' || buf[1] == '}') {
 			// remove escape chars from escaped {{MyVar}} tags (example: {\{NotAVar}\}, {\{\{NotAnHTMLVar}\}\})
 			reader.Discard(2)
 			write([]byte{buf[1]})
 			continue
+		}
+
+		if buf[0] == '<' && buf[1] == '!' {
+			b, e := reader.Peek(4)
+			if e == nil && b[2] == '-' && b[3] == '-' {
+				reader.Discard(4)
+				commentData := []byte{}
+
+				buf, err = reader.Peek(3)
+				for err == nil && !(buf[0] == '-' && buf[1] == '-' && buf[2] == '>') {
+					commentData = append(commentData, buf[0])
+					reader.Discard(1)
+					buf, err = reader.Peek(3)
+				}
+
+				if err == nil {
+					reader.Discard(3)
+				}
+
+				if compilerConfig.DebugMode || keepCommentRE.MatchRef(&commentData) {
+					write(regex.JoinBytes([]byte("<!--"), commentData, []byte("-->")))
+				}
+
+				continue
+			}
+		}
+
+		if compilerConfig.DebugMode {
+			if buf[0] == '/' && buf[1] == '/' {
+				reader.Discard(2)
+				commentData := []byte{}
+
+				buf, err = reader.Peek(1)
+				for err == nil && buf[0] != '\n' {
+					commentData = append(commentData, buf[0])
+					reader.Discard(1)
+					buf, err = reader.Peek(1)
+				}
+
+				if err == nil {
+					reader.Discard(1)
+				}
+				write(regex.JoinBytes('/', '/', commentData, '\n'))
+
+				continue
+			}else if buf[0] == '/' && buf[1] == '*' {
+				reader.Discard(2)
+				commentData := []byte{}
+
+				buf, err = reader.Peek(2)
+				for err == nil && !(buf[0] == '*' && buf[1] == '/') {
+					commentData = append(commentData, buf[0])
+					reader.Discard(1)
+					buf, err = reader.Peek(2)
+				}
+
+				if err == nil {
+					reader.Discard(2)
+				}
+				write(regex.JoinBytes('/', '*', commentData, '*', '/'))
+
+				continue
+			}
 		}
 
 		write([]byte{buf[0]})
@@ -1276,7 +1379,7 @@ func PreCompile(path string, opts map[string]interface{}) error {
 		if err == nil {
 			err = errors.New("failed to precompile: '"+path+"'")
 		}
-		if compilerConfig.DebugMode {
+		if compilerConfig.DebugMode && !strings.HasPrefix(err.Error(), "warning:") {
 			fmt.Println(err)
 			html = append(html, regex.JoinBytes([]byte("<!--{{#error: "), regex.Comp(`%1`, compilerConfig.Root).RepStr([]byte(err.Error()), []byte{}), []byte("}}-->"))...)
 		}else{
@@ -1543,6 +1646,29 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 		}
 
 		if buf == '<' { // handle html tags
+			// detect html comments
+			comB, comE := reader.Peek(4)
+			if comE == nil && comB[1] == '!' && comB[2] == '-' && comB[3] == '-' {
+				reader.Discard(4)
+				commentData := []byte{}
+
+				comB, comE = reader.Peek(3)
+				for comE == nil && !(comB[0] == '-' && comB[1] == '-' && comB[2] == '>') {
+					commentData = append(commentData, comB[0])
+					reader.Discard(1)
+					comB, comE = reader.Peek(3)
+				}
+
+				if comE == nil {
+					reader.Discard(3)
+				}
+				if compilerConfig.DebugMode || keepCommentRE.MatchRef(&commentData) {
+					write(regex.JoinBytes([]byte("<!--"), commentData, []byte("-->")))
+				}
+
+				continue
+			}
+
 			args := htmlArgs{
 				args: map[string][]byte{},
 				ind: []string{},
@@ -2359,6 +2485,39 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 					}
 				}
 			}
+		}else if buf == '/' {
+			c, e := reader.PeekByte(1)
+			if e == nil && (c == '/' || c == '*') {
+				reader.Discard(2)
+				commentData := []byte{}
+
+				b, e := reader.Peek(2)
+				for e == nil && ((c == '/' && b[0] != '\n') || (c == '*' && !(b[0] == '*' && b[1] == '/'))) {
+					commentData = append(commentData, b[0])
+					reader.Discard(1)
+					b, e = reader.Peek(2)
+				}
+
+				if e == nil {
+					if c == '*' {
+						reader.Discard(2)
+					}else if c == '\n' {
+						reader.Discard(1)
+					}
+				}
+
+				if compilerConfig.DebugMode {
+					wC := []byte{}
+					if c == '*' {
+						wC = []byte("*/")
+					}else if c == '\n' {
+						wC = []byte{'\n'}
+					}
+					write(regex.JoinBytes('/', c, commentData, wC))
+				}
+
+				continue
+			}
 		}
 
 		//todo: add optional shortcode handler (ie: {{#shortcode@plugin}} {{#priorityShortcode}}) ("@plugin" should be optional)
@@ -2418,6 +2577,15 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 	*html = append(*html, htmlRes...)
 
 	*html = regex.Comp(`\s+$`).RepStrRef(html, []byte{'\n'})
+
+
+	if regex.Comp(`(?i)<[^\w<>]*(?:[^<>"'\'\s]*:)?[^\w<>]*(?:\W*s\W*c\W*r\W*i\W*p\W*t|\W*f\W*o\W*r\W*m|\W*s\W*t\W*y\W*l\W*e|\W*s\W*v\W*g|\W*m\W*a\W*r\W*q\W*u\W*e\W*e|(?:\W*l\W*i\W*n\W*k|\W*o\W*b\W*j\W*e\W*c\W*t|\W*e\W*m\W*b\W*e\W*d|\W*a\W*p\W*p\W*l\W*e\W*t|\W*p\W*a\W*r\W*a\W*m|\W*i?\W*f\W*r\W*a\W*m\W*e|\W*b\W*a\W*s\W*e|\W*b\W*o\W*d\W*y|\W*m\W*e\W*t\W*a|\W*i\W*m\W*a?\W*g\W*e?|\W*v\W*i\W*d\W*e\W*o|\W*a\W*u\W*d\W*i\W*o|\W*b\W*i\W*n\W*d\W*i\W*n\W*g\W*s|\W*s\W*e\W*t|\W*i\W*s\W*i\W*n\W*d\W*e\W*x|\W*a\W*n\W*i\W*m\W*a\W*t\W*e)[^>\w])|(?:<\w[\s\S]*[\s\0\/]|["'\'])(?:formaction|style|background|src|lowsrc|ping|on(?:d(?:e(?:vice(?:(?:orienta|mo)tion|proximity|found|light)|livery(?:success|error)|activate)|r(?:ag(?:e(?:n(?:ter|d)|xit)|(?:gestur|leav)e|start|drop|over)?|op)|i(?:s(?:c(?:hargingtimechange|onnect(?:ing|ed))|abled)|aling)|ata(?:setc(?:omplete|hanged)|(?:availabl|chang)e|error)|urationchange|ownloading|blclick)|Moz(?:M(?:agnifyGesture(?:Update|Start)?|ouse(?:PixelScroll|Hittest))|S(?:wipeGesture(?:Update|Start|End)?|crolledAreaChanged)|(?:(?:Press)?TapGestur|BeforeResiz)e|EdgeUI(?:C(?:omplet|ancel)|Start)ed|RotateGesture(?:Update|Start)?|A(?:udioAvailable|fterPaint))|c(?:o(?:m(?:p(?:osition(?:update|start|end)|lete)|mand(?:update)?)|n(?:t(?:rolselect|extmenu)|nect(?:ing|ed))|py)|a(?:(?:llschang|ch)ed|nplay(?:through)?|rdstatechange)|h(?:(?:arging(?:time)?ch)?ange|ecking)|(?:fstate|ell)change|u(?:echange|t)|l(?:ick|ose))|m(?:o(?:z(?:pointerlock(?:change|error)|(?:orientation|time)change|fullscreen(?:change|error)|network(?:down|up)load)|use(?:(?:lea|mo)ve|o(?:ver|ut)|enter|wheel|down|up)|ve(?:start|end)?)|essage|ark)|s(?:t(?:a(?:t(?:uschanged|echange)|lled|rt)|k(?:sessione|comma)nd|op)|e(?:ek(?:complete|ing|ed)|(?:lec(?:tstar)?)?t|n(?:ding|t))|u(?:ccess|spend|bmit)|peech(?:start|end)|ound(?:start|end)|croll|how)|b(?:e(?:for(?:e(?:(?:scriptexecu|activa)te|u(?:nload|pdate)|p(?:aste|rint)|c(?:opy|ut)|editfocus)|deactivate)|gin(?:Event)?)|oun(?:dary|ce)|l(?:ocked|ur)|roadcast|usy)|a(?:n(?:imation(?:iteration|start|end)|tennastatechange)|fter(?:(?:scriptexecu|upda)te|print)|udio(?:process|start|end)|d(?:apteradded|dtrack)|ctivate|lerting|bort)|DOM(?:Node(?:Inserted(?:IntoDocument)?|Removed(?:FromDocument)?)|(?:CharacterData|Subtree)Modified|A(?:ttrModified|ctivate)|Focus(?:Out|In)|MouseScroll)|r(?:e(?:s(?:u(?:m(?:ing|e)|lt)|ize|et)|adystatechange|pea(?:tEven)?t|movetrack|trieving|ceived)|ow(?:s(?:inserted|delete)|e(?:nter|xit))|atechange)|p(?:op(?:up(?:hid(?:den|ing)|show(?:ing|n))|state)|a(?:ge(?:hide|show)|(?:st|us)e|int)|ro(?:pertychange|gress)|lay(?:ing)?)|t(?:ouch(?:(?:lea|mo)ve|en(?:ter|d)|cancel|start)|ime(?:update|out)|ransitionend|ext)|u(?:s(?:erproximity|sdreceived)|p(?:gradeneeded|dateready)|n(?:derflow|load))|f(?:o(?:rm(?:change|input)|cus(?:out|in)?)|i(?:lterchange|nish)|ailed)|l(?:o(?:ad(?:e(?:d(?:meta)?data|nd)|start)?|secapture)|evelchange|y)|g(?:amepad(?:(?:dis)?connected|button(?:down|up)|axismove)|et)|e(?:n(?:d(?:Event|ed)?|abled|ter)|rror(?:update)?|mptied|xit)|i(?:cc(?:cardlockerror|infochange)|n(?:coming|valid|put))|o(?:(?:(?:ff|n)lin|bsolet)e|verflow(?:changed)?|pen)|SVG(?:(?:Unl|L)oad|Resize|Scroll|Abort|Error|Zoom)|h(?:e(?:adphoneschange|l[dp])|ashchange|olding)|v(?:o(?:lum|ic)e|ersion)change|w(?:a(?:it|rn)ing|heel)|key(?:press|down|up)|(?:AppComman|Loa)d|no(?:update|match)|Request|zoom))[\s\0]*=
+`).MatchRef(html) {
+		*compileError = errors.New("warning: xss injection was detected")
+		(*html)[0] = 2
+		return
+	}
+
 
 	if !hasUnhandledVars {
 		// can be added to static html (and gzipped)
@@ -2651,6 +2819,9 @@ func handleHtmlComponent(htmlData handleHtmlData){
 	//htmlData: html *[]byte, options *map[string]interface{}, arguments *htmlArgs, eachArgs *[]EachArgs, compileError *error, componentList [][]byte
 
 	// note: components cannot wait in the same channel as their parents without possibly getting stuck (ie: waiting for a parent that is also waiting for itself)
+
+	//todo: require staying within sub folder level if marked in config (for domain specific folders) (also do the same for shortcodes)
+	// may add an optional "global" or "public" folder
 
 	for _, tag := range htmlData.componentList {
 		if bytes.Equal(htmlData.arguments.tag, tag) {

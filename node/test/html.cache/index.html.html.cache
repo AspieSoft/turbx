@@ -1,5 +1,7 @@
 start
 
+<div class="{\{#warning: xss injection was detected}\}"></div>
+
 {{%if test="'1'"}}
 test 1
 {{%else}}

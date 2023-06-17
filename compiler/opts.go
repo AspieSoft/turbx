@@ -273,8 +273,14 @@ func escapeVarVal(val interface{}, escape uint8) interface{} {
 	}else if escape == 2 {
 		return goutil.HTML.Escape(toBytesOrJson(val))
 	}else if escape == 3 {
-		//todo: sanitize arg from xss attacks (example: remove 'data:' from val)
-		return goutil.HTML.EscapeArgs(toBytesOrJson(val))
+		valB := goutil.HTML.EscapeArgs(toBytesOrJson(val), '"')
+
+		// prevent xss injection
+		if regex.Comp(`(?i)(\b)(on\S+)(\s*)=|(javascript|data|vbscript):|(<\s*)(\/*)script|style(\s*)=|(<\s*)meta|\*(.*?)[\r\n]*(.*?)\*`).MatchRef(&valB) {
+			return []byte("{{#warning: xss injection was detected}}")
+		}
+
+		return valB
 	}else if escape == 4 {
 		return regex.Comp(`[^\w_-]+`).RepStr(toBytesOrJson(val), []byte{})
 	}
