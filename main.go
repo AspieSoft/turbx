@@ -19,7 +19,7 @@ func main(){
 	compiler.SetConfig(compiler.Config{
 		Root: "node/test/views",
 		Static: "node/test/public",
-		// DebugMode: true,
+		DebugMode: true,
 	})
 
 
