@@ -19,6 +19,8 @@ func main(){
 	compiler.SetConfig(compiler.Config{
 		Root: "node/test/views",
 		Static: "node/test/public",
+		DomainFolder: 1,
+		IncludeMD: true,
 		DebugMode: true,
 	})
 

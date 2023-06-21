@@ -68,6 +68,14 @@ type Config struct {
 	// Cache Time In Minutes
 	CacheTime int
 
+	// Weather or not to include .md files along with the default Ext value.
+	//
+	// turbx will compile markdown regardless of whether or not it is in a .md file.
+	IncludeMD bool
+
+	// A folder level to consider a root domain, to prevent use of components outside a specific root folder
+	DomainFolder uint
+
 	// Debug Mode For Developers
 	DebugMode bool
 }
@@ -191,7 +199,11 @@ func SetConfig(config Config) error {
 	compilerConfig.DebugMode = config.DebugMode
 
 	compilerConfig.CompileMaxFlush = config.CompileMaxFlush
-	
+
+	compilerConfig.DomainFolder = config.DomainFolder
+
+	compilerConfig.IncludeMD = config.IncludeMD
+
 
 	// ensure directories exist
 	InitDefault()
@@ -213,13 +225,15 @@ func InitDefault(){
 				fileName := []byte(file.Name())
 				if regex.Comp(`\.(%1)\.html(?:\.br|\.gz|)$`, compilerConfig.Ext).MatchRef(&fileName) {
 					fileName = regex.Comp(`\.(%1)\.html(?:\.br|\.gz|)$`, compilerConfig.Ext).RepStrCompRef(&fileName, []byte(".$1"))
-					fileName = regex.Comp(`\.(?!%1$)`, compilerConfig.Ext).RepStrRef(&fileName, []byte{'/'})
+					origName := fileName
+					fileName = regex.Comp(`\._\.(?!%1$)`, compilerConfig.Ext).RepStrRef(&fileName, []byte{'/'})
+
 					if path, err := goutil.FS.JoinPath(compilerConfig.Root, string(fileName)); err == nil {
 						if _, ok := htmlPreCache.Get(path); ok {
 							continue
 						}
 						
-						if staticPath, err := goutil.FS.JoinPath(compilerConfig.StaticHTML, string(fileName)); err == nil {
+						if staticPath, err := goutil.FS.JoinPath(compilerConfig.StaticHTML, string(origName)); err == nil {
 							cachePath := []string{}
 							if stat, err := os.Stat(staticPath+".html.br"); err == nil && !stat.IsDir() {
 								cachePath = append(cachePath, staticPath+".html.br")
@@ -249,9 +263,15 @@ func InitDefault(){
 				fileName := []byte(file.Name())
 				if regex.Comp(`\.(%1)\.html\.cache$`, compilerConfig.Ext).MatchRef(&fileName) {
 					fileName = regex.Comp(`\.(%1)\.html\.cache$`, compilerConfig.Ext).RepStrCompRef(&fileName, []byte(".$1"))
-					fileName = regex.Comp(`\.(?!%1$)`, compilerConfig.Ext).RepStrRef(&fileName, []byte{'/'})
+					origName := fileName
+					fileName = regex.Comp(`\._\.(?!%1$)`, compilerConfig.Ext).RepStrRef(&fileName, []byte{'/'})
+
 					if path, err := goutil.FS.JoinPath(compilerConfig.Root, string(fileName)); err == nil {
-						if staticPath, err := goutil.FS.JoinPath(compilerConfig.CacheDir, string(fileName)); err == nil {
+						if _, ok := htmlPreCache.Get(path); ok {
+							continue
+						}
+
+						if staticPath, err := goutil.FS.JoinPath(compilerConfig.CacheDir, string(origName)); err == nil {
 							cachePath := []string{}
 							if stat, err := os.Stat(staticPath+".html.cache"); err == nil && !stat.IsDir() {
 								cachePath = append(cachePath, staticPath+".html.cache")
@@ -371,7 +391,6 @@ func init(){
 		return true
 	}
 
-
 	cacheWatcher.WatchDir(root)
 
 	compilerConfig = Config{
@@ -387,6 +406,7 @@ func init(){
 		gzipCompress: 5,
 		CompileMaxFlush: 100,
 		CacheTime: 120, // minutes: 2 hours
+		DomainFolder: 0,
 		DebugMode: false,
 	}
 
@@ -477,6 +497,8 @@ type handleHtmlData struct {
 	preComp bool
 
 	hasUnhandledVars *bool
+
+	localRoot *string
 
 	stopChan bool
 }
@@ -1363,12 +1385,30 @@ func PreCompile(path string, opts map[string]interface{}) error {
 		}
 		return err
 	}
+	origCachePath := path
 
 	if stat, err := os.Stat(path); err != nil || stat.IsDir() {
-		if compilerConfig.DebugMode {
-			fmt.Println(err)
+		if compilerConfig.IncludeMD {
+			path, err = goutil.FS.JoinPath(compilerConfig.Root, origPath + ".md")
+			if err != nil {
+				if compilerConfig.DebugMode {
+					fmt.Println(err)
+				}
+				return err
+			}
+
+			if stat, err := os.Stat(path); err != nil || stat.IsDir() {
+				if compilerConfig.DebugMode {
+					fmt.Println(err)
+				}
+				return err
+			}
+		}else{
+			if compilerConfig.DebugMode {
+				fmt.Println(err)
+			}
+			return err
 		}
-		return err
 	}
 
 	htmlChan := newPreCompileChan()
@@ -1387,7 +1427,7 @@ func PreCompile(path string, opts map[string]interface{}) error {
 		}
 	}
 
-	origPath = string(regex.Comp(`[\\\/]+`).RepStr([]byte(origPath), []byte{'.'}))
+	origPath = string(regex.Comp(`[\\\/]+`).RepStr([]byte(origPath), []byte{'.', '_', '.'}))
 
 	if html[0] == 3 {
 		// create static html file
@@ -1428,7 +1468,7 @@ func PreCompile(path string, opts map[string]interface{}) error {
 		}
 
 		if len(cachePath) != 0 {
-			if oldCache, ok := htmlPreCache.Get(path); ok {
+			if oldCache, ok := htmlPreCache.Get(origCachePath); ok {
 				for _, file := range oldCache.cachePath {
 					if !oldCache.static && strings.HasPrefix(file, compilerConfig.CacheDir) {
 						os.Remove(file)
@@ -1436,7 +1476,7 @@ func PreCompile(path string, opts map[string]interface{}) error {
 				}
 			}
 
-			htmlPreCache.Set(path, cacheObj{
+			htmlPreCache.Set(origCachePath, cacheObj{
 				cachePath: cachePath,
 				static: true,
 				accessed: int(time.Now().UnixMilli() / 60000),
@@ -1468,7 +1508,7 @@ func PreCompile(path string, opts map[string]interface{}) error {
 		}
 
 		if len(cachePath) != 0 {
-			if oldCache, ok := htmlPreCache.Get(path); ok {
+			if oldCache, ok := htmlPreCache.Get(origCachePath); ok {
 				for _, file := range oldCache.cachePath {
 					if oldCache.static && strings.HasPrefix(file, compilerConfig.StaticHTML) {
 						os.Remove(file)
@@ -1476,7 +1516,7 @@ func PreCompile(path string, opts map[string]interface{}) error {
 				}
 			}
 
-			htmlPreCache.Set(path, cacheObj{
+			htmlPreCache.Set(origCachePath, cacheObj{
 				cachePath: cachePath,
 				static: false,
 				accessed: int(time.Now().UnixMilli() / 60000),
@@ -1562,6 +1602,25 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 			}
 
 			options = &opts
+		}
+	}
+
+
+	localRoot := ""
+	if compilerConfig.DomainFolder != 0 {
+		for i := int(compilerConfig.DomainFolder); localRoot == "" && i > 0; i-- {
+			regex.Comp(`^((?:/[\w_\-\.]+){%1})`, strconv.Itoa(i)).RepFunc([]byte(strings.Replace(path, compilerConfig.Root, "", 1)), func(data func(int) []byte) []byte {
+				localRoot = string(data(1))
+
+				// verify root is dir
+				if lr, err := goutil.FS.JoinPath(compilerConfig.Root, localRoot); err == nil {
+					if stat, err := os.Stat(lr); err == nil && !stat.IsDir() {
+						localRoot = ""
+					}
+				}
+
+				return nil
+			}, true)
 		}
 	}
 
@@ -2370,9 +2429,9 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 								htmlTagsErr = append(htmlTagsErr, &compErr)
 
 								if htmlChan != nil {
-									htmlChan.comp <- handleHtmlData{html: &htmlCont, options: options, arguments: &args, eachArgs: cloneArr(eachArgsList), compileError: &compErr, componentList: componentList, hasUnhandledVars: &hasUnhandledVars}
+									htmlChan.comp <- handleHtmlData{html: &htmlCont, options: options, arguments: &args, eachArgs: cloneArr(eachArgsList), compileError: &compErr, componentList: componentList, hasUnhandledVars: &hasUnhandledVars, localRoot: &localRoot}
 								}else{
-									handleHtmlComponent(handleHtmlData{html: &htmlCont, options: options, arguments: &args, eachArgs: cloneArr(eachArgsList), compileError: &compErr, componentList: componentList, hasUnhandledVars: &hasUnhandledVars})
+									handleHtmlComponent(handleHtmlData{html: &htmlCont, options: options, arguments: &args, eachArgs: cloneArr(eachArgsList), compileError: &compErr, componentList: componentList, hasUnhandledVars: &hasUnhandledVars, localRoot: &localRoot})
 								}
 								write([]byte{0})
 							}else if args.close == 2 {
@@ -2382,9 +2441,9 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 								htmlTagsErr = append(htmlTagsErr, &compErr)
 
 								if htmlChan != nil {
-									htmlChan.comp <- handleHtmlData{html: &htmlCont, options: options, arguments: &args, eachArgs: cloneArr(eachArgsList), compileError: &compErr, componentList: componentList, hasUnhandledVars: &hasUnhandledVars}
+									htmlChan.comp <- handleHtmlData{html: &htmlCont, options: options, arguments: &args, eachArgs: cloneArr(eachArgsList), compileError: &compErr, componentList: componentList, hasUnhandledVars: &hasUnhandledVars, localRoot: &localRoot}
 								}else{
-									handleHtmlComponent(handleHtmlData{html: &htmlCont, options: options, arguments: &args, eachArgs: cloneArr(eachArgsList), compileError: &compErr, componentList: componentList, hasUnhandledVars: &hasUnhandledVars})
+									handleHtmlComponent(handleHtmlData{html: &htmlCont, options: options, arguments: &args, eachArgs: cloneArr(eachArgsList), compileError: &compErr, componentList: componentList, hasUnhandledVars: &hasUnhandledVars, localRoot: &localRoot})
 								}
 								write([]byte{0})
 							}
@@ -2820,9 +2879,6 @@ func handleHtmlComponent(htmlData handleHtmlData){
 
 	// note: components cannot wait in the same channel as their parents without possibly getting stuck (ie: waiting for a parent that is also waiting for itself)
 
-	//todo: require staying within sub folder level if marked in config (for domain specific folders) (also do the same for shortcodes)
-	// may add an optional "global" or "public" folder
-
 	for _, tag := range htmlData.componentList {
 		if bytes.Equal(htmlData.arguments.tag, tag) {
 			*htmlData.compileError = errors.New("recursion detected in component:\n  in: '"+string(htmlData.componentList[len(htmlData.componentList)-1])+"'\n  with: '"+string(htmlData.arguments.tag)+"'\n  contains:\n    '"+string(bytes.Join(htmlData.componentList, []byte("'\n    '")))+"'\n")
@@ -2833,8 +2889,15 @@ func handleHtmlComponent(htmlData handleHtmlData){
 
 	// get component filepath
 	path := string(regex.Comp(`\.`).RepStr(regex.Comp(`[^\w_\-\.]`).RepStrRef(&htmlData.arguments.tag, []byte{}), []byte{'/'}))
+	oPath := path
+	
+	var err error
+	if *htmlData.localRoot != "" {
+		path, err = goutil.FS.JoinPath(compilerConfig.Root, *htmlData.localRoot, path + "." + compilerConfig.Ext)
+	}else{
+		path, err = goutil.FS.JoinPath(compilerConfig.Root, path + "." + compilerConfig.Ext)
+	}
 
-	path, err := goutil.FS.JoinPath(compilerConfig.Root, path + "." + compilerConfig.Ext)
 	if err != nil {
 		*htmlData.compileError = err
 		(*htmlData.html)[0] = 2
@@ -2842,9 +2905,29 @@ func handleHtmlComponent(htmlData handleHtmlData){
 	}
 
 	if stat, err := os.Stat(path); err != nil || stat.IsDir() {
-		*htmlData.compileError = errors.New("component not found: '"+string(htmlData.arguments.tag)+"'")
-		(*htmlData.html)[0] = 2
-		return
+		if compilerConfig.IncludeMD {
+			if *htmlData.localRoot != "" {
+				path, err = goutil.FS.JoinPath(compilerConfig.Root, *htmlData.localRoot, oPath + ".md")
+			}else{
+				path, err = goutil.FS.JoinPath(compilerConfig.Root, oPath + ".md")
+			}
+
+			if err != nil {
+				*htmlData.compileError = err
+				(*htmlData.html)[0] = 2
+				return
+			}
+
+			if stat, err := os.Stat(path); err != nil || stat.IsDir() {
+				*htmlData.compileError = errors.New("component not found: '"+string(htmlData.arguments.tag)+"'")
+				(*htmlData.html)[0] = 2
+				return
+			}
+		}else{
+			*htmlData.compileError = errors.New("component not found: '"+string(htmlData.arguments.tag)+"'")
+			(*htmlData.html)[0] = 2
+			return
+		}
 	}
 
 	// merge options with html args
