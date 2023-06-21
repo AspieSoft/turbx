@@ -1420,7 +1420,7 @@ func getStaticPath(cache cacheObj, compressRes []string) ([]byte, string, uint8,
 }
 
 
-// HasPreCompile returns weather or not a file has been PreCompiled and exists in the cache
+// HasPreCompile returns true if a file has been PreCompiled and exists in the cache
 func HasPreCompile(path string) (bool, error) {
 	path, err := goutil.FS.JoinPath(compilerConfig.Root, path + "." + compilerConfig.Ext)
 	if err != nil {
@@ -1432,6 +1432,27 @@ func HasPreCompile(path string) (bool, error) {
 
 	_, ok := htmlPreCache.Get(path)
 	return ok, nil
+}
+
+// HasStaticCompile returns true if a file has been PreCompiled and is static (and does not need to be compiled)
+//
+// note: the Compile method will automatically detect this and pull from the cache when available
+func HasStaticCompile(path string) (bool, error) {
+	path, err := goutil.FS.JoinPath(compilerConfig.Root, path + "." + compilerConfig.Ext)
+	if err != nil {
+		if compilerConfig.DebugMode {
+			fmt.Println(err)
+		}
+		return false, err
+	}
+
+	if cache, ok := htmlPreCache.Get(path); ok {
+		if len(cache.cachePath) == 0 {
+			return false, errors.New("cache does not contain any paths for this file")
+		}
+		return cache.static, nil
+	}
+	return false, nil
 }
 
 
