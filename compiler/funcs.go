@@ -394,6 +394,11 @@ func (funcs *tagFuncs) If(opts *map[string]interface{}, args *htmlArgs, eachArgs
 					}
 				}else{
 					//todo: handle <
+					if goutil.ToType[int](val1) < goutil.ToType[int](val2) {
+						res = append(res, 1)
+					}else{
+						res = append(res, 0)
+					}
 				}
 			}else if sign == 3 {
 				val2 = goutil.ToVarTypeInterface(val2, val1)
@@ -411,6 +416,11 @@ func (funcs *tagFuncs) If(opts *map[string]interface{}, args *htmlArgs, eachArgs
 					}
 				}else{
 					//todo: handle <=
+					if goutil.ToType[int](val1) <= goutil.ToType[int](val2) {
+						res = append(res, 1)
+					}else{
+						res = append(res, 0)
+					}
 				}
 			}else if sign == 4 {
 				val2 = goutil.ToVarTypeInterface(val2, val1)
@@ -428,6 +438,11 @@ func (funcs *tagFuncs) If(opts *map[string]interface{}, args *htmlArgs, eachArgs
 					}
 				}else{
 					//todo: handle >
+					if goutil.ToType[int](val1) > goutil.ToType[int](val2) {
+						res = append(res, 1)
+					}else{
+						res = append(res, 0)
+					}
 				}
 			}else if sign == 5 {
 				val2 = goutil.ToVarTypeInterface(val2, val1)
@@ -445,6 +460,11 @@ func (funcs *tagFuncs) If(opts *map[string]interface{}, args *htmlArgs, eachArgs
 					}
 				}else{
 					//todo: handle >=
+					if goutil.ToType[int](val1) >= goutil.ToType[int](val2) {
+						res = append(res, 1)
+					}else{
+						res = append(res, 0)
+					}
 				}
 			}else if sign == 6 {
 				if regex.IsValidRef(&arg) {

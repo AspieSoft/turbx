@@ -1420,6 +1420,21 @@ func getStaticPath(cache cacheObj, compressRes []string) ([]byte, string, uint8,
 }
 
 
+// HasPreCompile returns weather or not a file has been PreCompiled and exists in the cache
+func HasPreCompile(path string) (bool, error) {
+	path, err := goutil.FS.JoinPath(compilerConfig.Root, path + "." + compilerConfig.Ext)
+	if err != nil {
+		if compilerConfig.DebugMode {
+			fmt.Println(err)
+		}
+		return false, err
+	}
+
+	_, ok := htmlPreCache.Get(path)
+	return ok, nil
+}
+
+
 // PreCompile will generate a new file for the cache (or a static file when possible)
 //
 // note: putting any extra '.' in a filename (apart from the extention name) may cause conflicts with restoring old cache files
