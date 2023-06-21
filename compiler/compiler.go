@@ -20,6 +20,10 @@ import (
 	"github.com/AspieSoft/goutil/v5"
 	"github.com/alphadose/haxmap"
 	"github.com/andybalholm/brotli"
+	"github.com/bep/golibsass/libsass"
+	"github.com/kib357/less-go"
+	"github.com/tdewolff/minify/v2/minify"
+	ffmpeg "github.com/u2takey/ffmpeg-go"
 )
 
 type Config struct {
@@ -91,6 +95,11 @@ var compilerConfig Config
 var htmlPreCache *haxmap.Map[string, cacheObj] = haxmap.New[string, cacheObj]()
 var htmlCacheDel *haxmap.Map[string, int] = haxmap.New[string, int]()
 
+var staticChangeQueue *haxmap.Map[string, int64] = haxmap.New[string, int64]()
+
+var cacheWatcher *goutil.FileWatcher
+var staticWatcher *goutil.FileWatcher
+
 func SetConfig(config Config) error {
 	if config.Root != "" {
 		path, err := filepath.Abs(config.Root)
@@ -105,6 +114,7 @@ func SetConfig(config Config) error {
 
 	rootDir := string(regex.Comp(`\/[\w_\-\.]+\/?$`).RepStr([]byte(compilerConfig.Root), []byte{}))
 
+	staticWatcher.CloseWatcher(compilerConfig.Static)
 	if config.Static != "" {
 		if path, err := filepath.Abs(config.Static); err == nil {
 			compilerConfig.Static = path
@@ -114,6 +124,7 @@ func SetConfig(config Config) error {
 	}else if path, err := goutil.FS.JoinPath(rootDir, "public"); err == nil {
 		compilerConfig.Static = path
 	}
+	staticWatcher.WatchDir(compilerConfig.Static)
 
 	if config.StaticHTML != "" {
 		if path, err := filepath.Abs(config.StaticHTML); err == nil {
@@ -296,6 +307,8 @@ func InitDefault(){
 			}
 		}
 	}
+
+	tryMinifyDir(compilerConfig.Static)
 }
 
 
@@ -345,8 +358,6 @@ var keepCommentRE *regex.Regexp = regex.Comp(`(?i)(^\s*(?:\!|\([cr]\))|^\s*\[?[\
 
 var runningCompiler bool = true
 
-var cacheWatcher *goutil.FileWatcher
-
 func init(){
 	root, err := filepath.Abs("views")
 	if err != nil {
@@ -392,6 +403,25 @@ func init(){
 	}
 
 	cacheWatcher.WatchDir(root)
+
+	staticWatcher = goutil.FS.FileWatcher()
+	staticWatcher.OnFileChange = func(path, op string) {
+		if regex.Comp(`(?<!\.min)\.([jt]s|css|less|s[ac]ss)$`).Match([]byte(path)) || imageRE.Match([]byte(path)) || videoRE.Match([]byte(path)) || audioRE.Match([]byte(path)) {
+			staticChangeQueue.Set(path, time.Now().UnixMilli())
+		}
+	}
+	staticWatcher.OnRemove = func(path, op string) (removeWatcher bool) {
+		if regex.Comp(`(?<!\.min)\.([jt]s|css|less|s[ac]ss)$`).Match([]byte(path)) {
+			staticChangeQueue.Del(path)
+			os.Remove(string(regex.Comp(`(?<!\.min)\.([jt]s|css|less|s[ac]ss)$`).RepStrComp([]byte(path), []byte(".min.$1"))))
+		}else if imageRE.Match([]byte(path)) || videoRE.Match([]byte(path)) || audioRE.Match([]byte(path)) {
+			staticChangeQueue.Del(path)
+		}
+		return true
+	}
+
+	staticWatcher.WatchDir(static)
+
 
 	compilerConfig = Config{
 		Root: root,
@@ -446,15 +476,33 @@ func init(){
 		}
 	}()
 
-	//todo: auto minify local js and css files
+	// handle static change queue
+	go func(){
+		for {
+			time.Sleep(100 * time.Nanosecond)
 
-	//todo: auto compress images, videos, and audio to webp, webm, and weba formats
+			if !runningCompiler {
+				break
+			}
+
+			now := time.Now().UnixMilli()
+			staticChangeQueue.ForEach(func(path string, modified int64) bool {
+				if now - modified > 1000 {
+					staticChangeQueue.Del(path)
+					tryMinifyFile(path)
+				}
+				return true
+			})
+		}
+	}()
 }
 
 func Close(){
 	runningCompiler = false
 	cacheWatcher.CloseWatcher("*")
+	staticWatcher.CloseWatcher("*")
 }
+
 
 
 type htmlArgs struct {
@@ -3036,6 +3084,90 @@ func getCoreTagFunc(name []byte) (func(opts *map[string]interface{}, args *htmlA
 	}
 
 	return nil, false, errors.New("method '"+nameStr+"' does not return the expected args")
+}
+
+
+// tryMinifyFile attempts to minify files
+//
+// example: .js -> .min.js, .less -> .min.css, .png -> .webp
+func tryMinifyFile(path string){
+	if imageRE.Match([]byte(path)) {
+		resPath := string(regex.Comp(`\.([\w_-]+)$`).RepStr([]byte(path), []byte(".webp")))
+		if err := ffmpeg.Input(path).Output(resPath).OverWriteOutput().Run(); err != nil {
+			os.Remove(resPath)
+		}
+		return
+	}else if videoRE.Match([]byte(path)) {
+		resPath := string(regex.Comp(`\.([\w_-]+)$`).RepStr([]byte(path), []byte(".webm")))
+		if err := ffmpeg.Input(path).Output(resPath).OverWriteOutput().Run(); err != nil {
+			os.Remove(resPath)
+		}
+		return
+	}else if audioRE.Match([]byte(path)) {
+		resPath := string(regex.Comp(`\.([\w_-]+)$`).RepStr([]byte(path), []byte(".weba")))
+		if err := ffmpeg.Input(path).Output(resPath).OverWriteOutput().Run(); err != nil {
+			os.Remove(resPath)
+		}
+		return
+	}
+
+	resPath := string(regex.Comp(`(?<!\.min)\.([jt]s|css|less|s[ac]ss)$`).RepFunc([]byte(path), func(data func(int) []byte) []byte {
+		ext := data(1)
+		if regex.Comp(`^([jt]s)$`).MatchRef(&ext) {
+			return []byte(".min.js")
+		}else if regex.Comp(`^(css|less|s[ac]ss)$`).MatchRef(&ext) {
+			return []byte(".min.css")
+		}
+		return regex.JoinBytes([]byte(".min"), ext)
+	}))
+	if code, err := os.ReadFile(path); err == nil {
+		if strings.HasSuffix(path, ".js") {
+			if res, err := minify.JS(string(code)); err == nil {
+				os.WriteFile(resPath, []byte(";"+res+";"), 0775)
+			}
+		}else if strings.HasSuffix(path, ".css") {
+			if res, err := minify.CSS(string(code)); err == nil {
+				os.WriteFile(resPath, []byte(res), 0775)
+			}
+		}else if strings.HasSuffix(path, ".ts") {
+			//todo: compile typescript
+		}else if strings.HasSuffix(path, ".less") {
+			if err := less.RenderFile(path, resPath, map[string]interface{}{"compress": true}); err != nil {
+				os.Remove(resPath)
+			}
+		}else if strings.HasSuffix(path, ".sass") || strings.HasSuffix(path, ".scss") {
+			// prevent import paths from leaking outside the static root
+			code = regex.Comp(`@((?:import|use)\s*)(["'\'])((?:\\[\\"'\']|.)*?)\2;?`).RepFuncRef(&code, func(data func(int) []byte) []byte {
+				if path, err := goutil.FS.JoinPath(compilerConfig.Static, string(data(3))); err == nil {
+					return regex.JoinBytes('@', data(1), data(2), path, data(2), ';')
+				}
+				return []byte{}
+			})
+
+			if transpiler, err := libsass.New(libsass.Options{OutputStyle: libsass.CompressedStyle, IncludePaths: []string{compilerConfig.Static}, SassSyntax: strings.HasSuffix(path, ".sass")}); err == nil {
+				if res, err := transpiler.Execute(string(code)); err == nil {
+					os.WriteFile(resPath, []byte(res.CSS), 0775)
+				}
+			}
+		}
+	}
+}
+
+// tryMinifyDir runs tryMinifyFile recursively on a directory
+func tryMinifyDir(dirPath string){
+	if files, err := os.ReadDir(dirPath); err == nil {
+		for _, file := range files {
+			if path, err := goutil.FS.JoinPath(dirPath, file.Name()); err == nil {
+				if file.IsDir() {
+					tryMinifyDir(path)
+				}else{
+					if regex.Comp(`(?<!\.min)\.([jt]s|css|less|s[ac]ss)$`).Match([]byte(path)) || imageRE.Match([]byte(path)) || videoRE.Match([]byte(path)) || audioRE.Match([]byte(path)) {
+						tryMinifyFile(path)
+					}
+				}
+			}
+		}
+	}
 }
 
 
