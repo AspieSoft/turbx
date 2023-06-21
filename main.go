@@ -11,6 +11,6 @@ var encKey []byte
 func main(){
 	defer compiler.Close()
 
-	//todo: build js handler (may also move this to a test file)
+	//todo: build js handler
 
 }
