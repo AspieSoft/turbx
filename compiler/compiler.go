@@ -2583,8 +2583,6 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 								htmlTags = append(htmlTags, &htmlCont)
 								htmlTagsErr = append(htmlTagsErr, &compErr)
 
-								//todo: fix bug with component content
-
 								if htmlChan != nil {
 									htmlChan.comp <- handleHtmlData{html: &htmlCont, options: options, arguments: &args, eachArgs: cloneArr(eachArgsList), compileError: &compErr, componentList: componentList, hasUnhandledVars: &hasUnhandledVars, localRoot: &localRoot}
 								}else{
@@ -2612,16 +2610,27 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 
 							htmlCont := []byte{0}
 							var compErr error
-							htmlTags = append(htmlTags, &htmlCont)
-							htmlTagsErr = append(htmlTagsErr, &compErr)
-
-							// pass through channel instead of a goroutine (like a queue)
-							if htmlChan != nil {
-								htmlChan.tag <- handleHtmlData{html: &htmlCont, options: options, arguments: &args, eachArgs: cloneArr(eachArgsList), compileError: &compErr, hasUnhandledVars: &hasUnhandledVars}
-							}else{
+							if len(htmlContTemp) != 0 { // fix for weird issue with components and async html tags
 								handleHtmlTag(handleHtmlData{html: &htmlCont, options: options, arguments: &args, eachArgs: cloneArr(eachArgsList), compileError: &compErr, hasUnhandledVars: &hasUnhandledVars})
+								if htmlCont[0] == 2 {
+									*compileError = compErr
+									(*html)[0] = 2
+									return
+								}
+
+								write(htmlCont[1:])
+							}else{
+								htmlTags = append(htmlTags, &htmlCont)
+								htmlTagsErr = append(htmlTagsErr, &compErr)
+	
+								// pass through channel instead of a goroutine (like a queue)
+								if htmlChan != nil {
+									htmlChan.tag <- handleHtmlData{html: &htmlCont, options: options, arguments: &args, eachArgs: cloneArr(eachArgsList), compileError: &compErr, hasUnhandledVars: &hasUnhandledVars}
+								}else{
+									handleHtmlTag(handleHtmlData{html: &htmlCont, options: options, arguments: &args, eachArgs: cloneArr(eachArgsList), compileError: &compErr, hasUnhandledVars: &hasUnhandledVars})
+								}
+								write([]byte{0})
 							}
-							write([]byte{0})
 						}
 
 						continue
