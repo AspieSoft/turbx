@@ -1511,6 +1511,8 @@ func PreCompile(path string, opts map[string]interface{}) error {
 		}
 	}
 
+	//todo: get layout and merge with html (also respect compilerConfig.DomainFolder local sub root)
+
 	origPath = string(regex.Comp(`[\\\/]+`).RepStr([]byte(origPath), []byte{'.', '_', '.'}))
 
 	if html[0] == 3 {
