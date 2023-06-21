@@ -1511,14 +1511,84 @@ func PreCompile(path string, opts map[string]interface{}) error {
 		}
 	}
 
-	//todo: get layout and merge with html (also respect compilerConfig.DomainFolder local sub root)
+	resType := html[0]
+	html = html[1:]
+
+
+	// get layout and merge with html
+	layoutPath := "layout"
+	if lp, ok := opts["@layout"]; ok {
+		if str, ok := lp.(string); ok && str != "" {
+			layoutPath = str
+		}
+	}
+
+	localRoot := ""
+	if compilerConfig.DomainFolder != 0 {
+		for i := int(compilerConfig.DomainFolder); localRoot == "" && i > 0; i-- {
+			regex.Comp(`^((?:/[\w_\-\.]+){%1})`, strconv.Itoa(i)).RepFunc([]byte(strings.Replace(path, compilerConfig.Root, "", 1)), func(data func(int) []byte) []byte {
+				localRoot = string(data(1))
+
+				// verify root is dir
+				if lr, err := goutil.FS.JoinPath(compilerConfig.Root, localRoot); err == nil {
+					if stat, err := os.Stat(lr); err == nil && !stat.IsDir() {
+						localRoot = ""
+					}
+				}
+
+				return nil
+			}, true)
+		}
+	}
+
+	if localRoot != "" {
+		if path, err := goutil.FS.JoinPath(compilerConfig.Root, localRoot, layoutPath + "." + compilerConfig.Ext); err == nil {
+			layoutPath = path
+		}else{
+			layoutPath = ""
+		}
+	}else if path, err := goutil.FS.JoinPath(compilerConfig.Root, layoutPath + "." + compilerConfig.Ext); err == nil {
+		layoutPath = path
+	}else{
+		layoutPath = ""
+	}
+
+	if layoutPath != "" {
+		if localRoot != "" {
+			if stat, err := os.Stat(layoutPath); err != nil || stat.IsDir() {
+				layoutPath = string(regex.Comp(`^(%1)%2`, compilerConfig.Root, localRoot).RepStrComp([]byte(layoutPath), []byte("$1")))
+			}
+		}
+
+		if stat, err := os.Stat(layoutPath); err == nil && !stat.IsDir() {
+			opts["$body"] = html
+			html = []byte{0}
+			preCompile(layoutPath, &opts, &htmlArgs{}, &html, &err, nil, nil, nil)
+			if err != nil || len(html) == 0 || html[0] == 2 {
+				if err == nil {
+					err = errors.New("layout - failed to precompile: '"+path+"'")
+				}
+				if compilerConfig.DebugMode && !strings.HasPrefix(err.Error(), "warning:") {
+					fmt.Println(err)
+					html = append(html, regex.JoinBytes([]byte("<!--{{#error: layout - "), regex.Comp(`%1`, compilerConfig.Root).RepStr([]byte(err.Error()), []byte{}), []byte("}}-->"))...)
+				}else{
+					return errors.Join(errors.New("layout - "), err)
+				}
+			}
+
+			// disable static mode if layout is not static
+			if html[0] != 3 {
+				resType = 1
+			}
+			html = html[1:]
+		}
+	}
+
 
 	origPath = string(regex.Comp(`[\\\/]+`).RepStr([]byte(origPath), []byte{'.', '_', '.'}))
 
-	if html[0] == 3 {
+	if resType == 3 {
 		// create static html file
-		html = html[1:]
-
 		staticPath, err := goutil.FS.JoinPath(compilerConfig.StaticHTML, origPath + "." + compilerConfig.Ext)
 		if err != nil {
 			if compilerConfig.DebugMode {
@@ -1570,8 +1640,6 @@ func PreCompile(path string, opts map[string]interface{}) error {
 		}
 	}else{
 		// cache dynamic html file
-		html = html[1:]
-
 		staticPath, err := goutil.FS.JoinPath(compilerConfig.CacheDir, origPath + "." + compilerConfig.Ext)
 		if err != nil {
 			if compilerConfig.DebugMode {
@@ -1637,6 +1705,7 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 				if !strings.HasPrefix(k, "$") {
 					k = "$"+k
 				}
+
 				
 				if k == "$body" {
 					opts[k] = v
@@ -2545,7 +2614,7 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 							htmlTagsErr = append(htmlTagsErr, &compErr)
 
 							// pass through channel instead of a goroutine (like a queue)
-							if htmlChan != nil {
+							if htmlChan != nil && false {
 								htmlChan.tag <- handleHtmlData{html: &htmlCont, options: options, arguments: &args, eachArgs: cloneArr(eachArgsList), compileError: &compErr, hasUnhandledVars: &hasUnhandledVars}
 							}else{
 								handleHtmlTag(handleHtmlData{html: &htmlCont, options: options, arguments: &args, eachArgs: cloneArr(eachArgsList), compileError: &compErr, hasUnhandledVars: &hasUnhandledVars})
@@ -2724,12 +2793,12 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 	*html = regex.Comp(`\s+$`).RepStrRef(html, []byte{'\n'})
 
 
-	if regex.Comp(`(?i)<[^\w<>]*(?:[^<>"'\'\s]*:)?[^\w<>]*(?:\W*s\W*c\W*r\W*i\W*p\W*t|\W*f\W*o\W*r\W*m|\W*s\W*t\W*y\W*l\W*e|\W*s\W*v\W*g|\W*m\W*a\W*r\W*q\W*u\W*e\W*e|(?:\W*l\W*i\W*n\W*k|\W*o\W*b\W*j\W*e\W*c\W*t|\W*e\W*m\W*b\W*e\W*d|\W*a\W*p\W*p\W*l\W*e\W*t|\W*p\W*a\W*r\W*a\W*m|\W*i?\W*f\W*r\W*a\W*m\W*e|\W*b\W*a\W*s\W*e|\W*b\W*o\W*d\W*y|\W*m\W*e\W*t\W*a|\W*i\W*m\W*a?\W*g\W*e?|\W*v\W*i\W*d\W*e\W*o|\W*a\W*u\W*d\W*i\W*o|\W*b\W*i\W*n\W*d\W*i\W*n\W*g\W*s|\W*s\W*e\W*t|\W*i\W*s\W*i\W*n\W*d\W*e\W*x|\W*a\W*n\W*i\W*m\W*a\W*t\W*e)[^>\w])|(?:<\w[\s\S]*[\s\0\/]|["'\'])(?:formaction|style|background|src|lowsrc|ping|on(?:d(?:e(?:vice(?:(?:orienta|mo)tion|proximity|found|light)|livery(?:success|error)|activate)|r(?:ag(?:e(?:n(?:ter|d)|xit)|(?:gestur|leav)e|start|drop|over)?|op)|i(?:s(?:c(?:hargingtimechange|onnect(?:ing|ed))|abled)|aling)|ata(?:setc(?:omplete|hanged)|(?:availabl|chang)e|error)|urationchange|ownloading|blclick)|Moz(?:M(?:agnifyGesture(?:Update|Start)?|ouse(?:PixelScroll|Hittest))|S(?:wipeGesture(?:Update|Start|End)?|crolledAreaChanged)|(?:(?:Press)?TapGestur|BeforeResiz)e|EdgeUI(?:C(?:omplet|ancel)|Start)ed|RotateGesture(?:Update|Start)?|A(?:udioAvailable|fterPaint))|c(?:o(?:m(?:p(?:osition(?:update|start|end)|lete)|mand(?:update)?)|n(?:t(?:rolselect|extmenu)|nect(?:ing|ed))|py)|a(?:(?:llschang|ch)ed|nplay(?:through)?|rdstatechange)|h(?:(?:arging(?:time)?ch)?ange|ecking)|(?:fstate|ell)change|u(?:echange|t)|l(?:ick|ose))|m(?:o(?:z(?:pointerlock(?:change|error)|(?:orientation|time)change|fullscreen(?:change|error)|network(?:down|up)load)|use(?:(?:lea|mo)ve|o(?:ver|ut)|enter|wheel|down|up)|ve(?:start|end)?)|essage|ark)|s(?:t(?:a(?:t(?:uschanged|echange)|lled|rt)|k(?:sessione|comma)nd|op)|e(?:ek(?:complete|ing|ed)|(?:lec(?:tstar)?)?t|n(?:ding|t))|u(?:ccess|spend|bmit)|peech(?:start|end)|ound(?:start|end)|croll|how)|b(?:e(?:for(?:e(?:(?:scriptexecu|activa)te|u(?:nload|pdate)|p(?:aste|rint)|c(?:opy|ut)|editfocus)|deactivate)|gin(?:Event)?)|oun(?:dary|ce)|l(?:ocked|ur)|roadcast|usy)|a(?:n(?:imation(?:iteration|start|end)|tennastatechange)|fter(?:(?:scriptexecu|upda)te|print)|udio(?:process|start|end)|d(?:apteradded|dtrack)|ctivate|lerting|bort)|DOM(?:Node(?:Inserted(?:IntoDocument)?|Removed(?:FromDocument)?)|(?:CharacterData|Subtree)Modified|A(?:ttrModified|ctivate)|Focus(?:Out|In)|MouseScroll)|r(?:e(?:s(?:u(?:m(?:ing|e)|lt)|ize|et)|adystatechange|pea(?:tEven)?t|movetrack|trieving|ceived)|ow(?:s(?:inserted|delete)|e(?:nter|xit))|atechange)|p(?:op(?:up(?:hid(?:den|ing)|show(?:ing|n))|state)|a(?:ge(?:hide|show)|(?:st|us)e|int)|ro(?:pertychange|gress)|lay(?:ing)?)|t(?:ouch(?:(?:lea|mo)ve|en(?:ter|d)|cancel|start)|ime(?:update|out)|ransitionend|ext)|u(?:s(?:erproximity|sdreceived)|p(?:gradeneeded|dateready)|n(?:derflow|load))|f(?:o(?:rm(?:change|input)|cus(?:out|in)?)|i(?:lterchange|nish)|ailed)|l(?:o(?:ad(?:e(?:d(?:meta)?data|nd)|start)?|secapture)|evelchange|y)|g(?:amepad(?:(?:dis)?connected|button(?:down|up)|axismove)|et)|e(?:n(?:d(?:Event|ed)?|abled|ter)|rror(?:update)?|mptied|xit)|i(?:cc(?:cardlockerror|infochange)|n(?:coming|valid|put))|o(?:(?:(?:ff|n)lin|bsolet)e|verflow(?:changed)?|pen)|SVG(?:(?:Unl|L)oad|Resize|Scroll|Abort|Error|Zoom)|h(?:e(?:adphoneschange|l[dp])|ashchange|olding)|v(?:o(?:lum|ic)e|ersion)change|w(?:a(?:it|rn)ing|heel)|key(?:press|down|up)|(?:AppComman|Loa)d|no(?:update|match)|Request|zoom))[\s\0]*=
+	/* if regex.Comp(`(?i)<[^\w<>]*(?:[^<>"'\'\s]*:)?[^\w<>]*(?:\W*s\W*c\W*r\W*i\W*p\W*t|\W*f\W*o\W*r\W*m|\W*s\W*t\W*y\W*l\W*e|\W*s\W*v\W*g|\W*m\W*a\W*r\W*q\W*u\W*e\W*e|(?:\W*l\W*i\W*n\W*k|\W*o\W*b\W*j\W*e\W*c\W*t|\W*e\W*m\W*b\W*e\W*d|\W*a\W*p\W*p\W*l\W*e\W*t|\W*p\W*a\W*r\W*a\W*m|\W*i?\W*f\W*r\W*a\W*m\W*e|\W*b\W*a\W*s\W*e|\W*b\W*o\W*d\W*y|\W*m\W*e\W*t\W*a|\W*i\W*m\W*a?\W*g\W*e?|\W*v\W*i\W*d\W*e\W*o|\W*a\W*u\W*d\W*i\W*o|\W*b\W*i\W*n\W*d\W*i\W*n\W*g\W*s|\W*s\W*e\W*t|\W*i\W*s\W*i\W*n\W*d\W*e\W*x|\W*a\W*n\W*i\W*m\W*a\W*t\W*e)[^>\w])|(?:<\w[\s\S]*[\s\0\/]|["'\'])(?:formaction|style|background|src|lowsrc|ping|on(?:d(?:e(?:vice(?:(?:orienta|mo)tion|proximity|found|light)|livery(?:success|error)|activate)|r(?:ag(?:e(?:n(?:ter|d)|xit)|(?:gestur|leav)e|start|drop|over)?|op)|i(?:s(?:c(?:hargingtimechange|onnect(?:ing|ed))|abled)|aling)|ata(?:setc(?:omplete|hanged)|(?:availabl|chang)e|error)|urationchange|ownloading|blclick)|Moz(?:M(?:agnifyGesture(?:Update|Start)?|ouse(?:PixelScroll|Hittest))|S(?:wipeGesture(?:Update|Start|End)?|crolledAreaChanged)|(?:(?:Press)?TapGestur|BeforeResiz)e|EdgeUI(?:C(?:omplet|ancel)|Start)ed|RotateGesture(?:Update|Start)?|A(?:udioAvailable|fterPaint))|c(?:o(?:m(?:p(?:osition(?:update|start|end)|lete)|mand(?:update)?)|n(?:t(?:rolselect|extmenu)|nect(?:ing|ed))|py)|a(?:(?:llschang|ch)ed|nplay(?:through)?|rdstatechange)|h(?:(?:arging(?:time)?ch)?ange|ecking)|(?:fstate|ell)change|u(?:echange|t)|l(?:ick|ose))|m(?:o(?:z(?:pointerlock(?:change|error)|(?:orientation|time)change|fullscreen(?:change|error)|network(?:down|up)load)|use(?:(?:lea|mo)ve|o(?:ver|ut)|enter|wheel|down|up)|ve(?:start|end)?)|essage|ark)|s(?:t(?:a(?:t(?:uschanged|echange)|lled|rt)|k(?:sessione|comma)nd|op)|e(?:ek(?:complete|ing|ed)|(?:lec(?:tstar)?)?t|n(?:ding|t))|u(?:ccess|spend|bmit)|peech(?:start|end)|ound(?:start|end)|croll|how)|b(?:e(?:for(?:e(?:(?:scriptexecu|activa)te|u(?:nload|pdate)|p(?:aste|rint)|c(?:opy|ut)|editfocus)|deactivate)|gin(?:Event)?)|oun(?:dary|ce)|l(?:ocked|ur)|roadcast|usy)|a(?:n(?:imation(?:iteration|start|end)|tennastatechange)|fter(?:(?:scriptexecu|upda)te|print)|udio(?:process|start|end)|d(?:apteradded|dtrack)|ctivate|lerting|bort)|DOM(?:Node(?:Inserted(?:IntoDocument)?|Removed(?:FromDocument)?)|(?:CharacterData|Subtree)Modified|A(?:ttrModified|ctivate)|Focus(?:Out|In)|MouseScroll)|r(?:e(?:s(?:u(?:m(?:ing|e)|lt)|ize|et)|adystatechange|pea(?:tEven)?t|movetrack|trieving|ceived)|ow(?:s(?:inserted|delete)|e(?:nter|xit))|atechange)|p(?:op(?:up(?:hid(?:den|ing)|show(?:ing|n))|state)|a(?:ge(?:hide|show)|(?:st|us)e|int)|ro(?:pertychange|gress)|lay(?:ing)?)|t(?:ouch(?:(?:lea|mo)ve|en(?:ter|d)|cancel|start)|ime(?:update|out)|ransitionend|ext)|u(?:s(?:erproximity|sdreceived)|p(?:gradeneeded|dateready)|n(?:derflow|load))|f(?:o(?:rm(?:change|input)|cus(?:out|in)?)|i(?:lterchange|nish)|ailed)|l(?:o(?:ad(?:e(?:d(?:meta)?data|nd)|start)?|secapture)|evelchange|y)|g(?:amepad(?:(?:dis)?connected|button(?:down|up)|axismove)|et)|e(?:n(?:d(?:Event|ed)?|abled|ter)|rror(?:update)?|mptied|xit)|i(?:cc(?:cardlockerror|infochange)|n(?:coming|valid|put))|o(?:(?:(?:ff|n)lin|bsolet)e|verflow(?:changed)?|pen)|SVG(?:(?:Unl|L)oad|Resize|Scroll|Abort|Error|Zoom)|h(?:e(?:adphoneschange|l[dp])|ashchange|olding)|v(?:o(?:lum|ic)e|ersion)change|w(?:a(?:it|rn)ing|heel)|key(?:press|down|up)|(?:AppComman|Loa)d|no(?:update|match)|Request|zoom))[\s\0]*=
 `).MatchRef(html) {
 		*compileError = errors.New("warning: xss injection was detected")
 		(*html)[0] = 2
 		return
-	}
+	} */
 
 
 	if !hasUnhandledVars {
@@ -3027,6 +3096,7 @@ func handleHtmlComponent(htmlData handleHtmlData){
 	}
 
 	htmlData.componentList = append(htmlData.componentList, htmlData.arguments.tag)
+
 
 	// precompile component
 	preCompile(path, &opts, htmlData.arguments, htmlData.html, htmlData.compileError, nil, htmlData.eachArgs, htmlData.componentList)
