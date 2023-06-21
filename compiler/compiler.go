@@ -2812,7 +2812,11 @@ func handleHtmlTag(htmlData handleHtmlData){
 						if regex.Comp(`(\.min|)\.([jt]s|css|less|s[ac]ss)$`).MatchRef(&link) {
 							link = regex.Comp(`(\.min|)\.([jt]s|css|less|s[ac]ss)$`).RepFuncRef(&link, func(data func(int) []byte) []byte {
 								ext := data(2)
-								if regex.Comp(`([jt]s)`).MatchRef(&ext) {
+								if bytes.Equal(ext, []byte("ts")) {
+									//todo: add support for auto compiling typescript to javascript
+									// remove this first if condition when done (and let the extension be updated to js)
+									htmlData.arguments.args["type"] = []byte("text/typescript")
+								}else if regex.Comp(`([jt]s)`).MatchRef(&ext) {
 									ext = []byte("js")
 								}else if regex.Comp(`(css|less|s[ac]ss)`).MatchRef(&ext) {
 									ext = []byte("css")
@@ -3087,6 +3091,8 @@ func getCoreTagFunc(name []byte) (func(opts *map[string]interface{}, args *htmlA
 }
 
 
+var ranTypeScriptNotice bool = false
+
 // tryMinifyFile attempts to minify files
 //
 // example: .js -> .min.js, .less -> .min.css, .png -> .webp
@@ -3130,7 +3136,12 @@ func tryMinifyFile(path string){
 				os.WriteFile(resPath, []byte(res), 0775)
 			}
 		}else if strings.HasSuffix(path, ".ts") {
-			//todo: compile typescript
+			//todo: add support for auto compiling typescript to javascript
+			// compile typescript here
+			if compilerConfig.DebugMode && !ranTypeScriptNotice {
+				ranTypeScriptNotice = true
+				fmt.Println(errors.New("notice: turbx compiler does not currently support auto compiling typescript to javascript in static files. (maybe this feature will be available in a future update)"))
+			}
 		}else if strings.HasSuffix(path, ".less") {
 			if err := less.RenderFile(path, resPath, map[string]interface{}{"compress": true}); err != nil {
 				os.Remove(resPath)
