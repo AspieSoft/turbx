@@ -2583,6 +2583,8 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 								htmlTags = append(htmlTags, &htmlCont)
 								htmlTagsErr = append(htmlTagsErr, &compErr)
 
+								//todo: fix bug with component content
+
 								if htmlChan != nil {
 									htmlChan.comp <- handleHtmlData{html: &htmlCont, options: options, arguments: &args, eachArgs: cloneArr(eachArgsList), compileError: &compErr, componentList: componentList, hasUnhandledVars: &hasUnhandledVars, localRoot: &localRoot}
 								}else{
@@ -2614,7 +2616,7 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 							htmlTagsErr = append(htmlTagsErr, &compErr)
 
 							// pass through channel instead of a goroutine (like a queue)
-							if htmlChan != nil && false {
+							if htmlChan != nil {
 								htmlChan.tag <- handleHtmlData{html: &htmlCont, options: options, arguments: &args, eachArgs: cloneArr(eachArgsList), compileError: &compErr, hasUnhandledVars: &hasUnhandledVars}
 							}else{
 								handleHtmlTag(handleHtmlData{html: &htmlCont, options: options, arguments: &args, eachArgs: cloneArr(eachArgsList), compileError: &compErr, hasUnhandledVars: &hasUnhandledVars})
