@@ -3,6 +3,7 @@ package compiler
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"reflect"
 	"strconv"
 
@@ -573,6 +574,68 @@ func (funcs *tagFuncs) If(opts *map[string]interface{}, args *htmlArgs, eachArgs
 	// @[]byte: precomp result, @bool: if true
 	return nil, r
 }
+
+
+// Rand sets a var option to crypto random bytes
+//
+// note: this method needs to be in sync
+func (funcs *tagFuncs) Rand_SYNC(opts *map[string]interface{}, args *htmlArgs, eachArgs *[]EachArgs, precomp bool) []byte {
+	//todo: fix rand function to work with seperate compiled and precompiled args
+	
+	if len(args.args["0"]) != 0 && args.args["0"][0] == 0 {
+		varName := args.args["0"][1:]
+
+		size := 64
+		if len(args.args["size"]) != 0 && args.args["size"][0] == 0 {
+			size = goutil.Conv.ToInt(args.args["size"][1:])
+			if size == 0 {
+				size = 64
+			}
+		}
+
+		var exclude []byte = nil
+		if len(args.args["exclude"]) != 0 && args.args["exclude"][0] == 0 {
+			exclude = goutil.Conv.ToBytes(args.args["exclude"][1:])
+		}
+
+		var r []byte
+		if exclude != nil {
+			r = goutil.Crypt.RandBytes(size, exclude)
+		}else{
+			r = goutil.Crypt.RandBytes(size)
+		}
+
+		(*opts)[string(varName)] = r
+	}
+
+	return nil
+}
+
+func (funcs *tagFuncs) Json(opts *map[string]interface{}, args *htmlArgs, eachArgs *[]EachArgs, precomp bool) []byte {
+	//todo: get compiler to return args with 0 char in front (or remove from precompiler args)
+	// may likely add to compiler
+	fmt.Println(args.args)
+
+	if len(args.args["0"]) != 0 && args.args["0"][0] == 0 {
+		//todo: fix not working in main compiler
+		if hasVarOpt(args.args["0"][1:], opts, eachArgs, 0, precomp) {
+			val := GetOpt(args.args["0"][1:], opts, eachArgs, 0, precomp, false)
+			if b, ok := val.([]byte); ok && len(b) != 0 {
+				if b[0] == 0 {
+					b = b[1:]
+				}
+				return b
+			}else if !goutil.IsZeroOfUnderlyingType(val) {
+				return toBytesOrJson(val)
+			}
+		}else{
+			return append([]byte{0}, regex.JoinBytes('0', '=', '"', args.args["0"][1:], '"')...)
+		}
+	}
+
+	return nil
+}
+
 
 //todo: add other functions from old compiler
 

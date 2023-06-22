@@ -19,6 +19,56 @@ type mdListData struct {
 func compileMarkdown(reader *liveread.Reader[uint8], write *func(b []byte, raw ...bool), firstChar *bool, spaces *uint, mdStore *map[string]interface{}) bool {
 	buf, err := reader.Peek(1)
 	if err == nil {
+
+		// note: when another markdown selector shares common chars with a `*firstChar` selector, it may need to be run ahead of time, and set `*firstChar = false` before returning
+		if buf[0] == '*' || buf[0] == '_' || buf[0] == '~' || buf[0] == '-' {
+			firstByte := buf[0]
+			
+			ind := uint(1)
+			level := []byte{buf[0]}
+			buf, err = reader.Get(ind, 1)
+			for err == nil && (buf[0] == '*' || buf[0] == '_' || buf[0] == '~' || buf[0] == '-') {
+				level = append(level, buf[0])
+				ind++
+				buf, err = reader.Get(ind, 1)
+			}
+
+			if firstByte == '*' || len(level) > 1 {
+				*firstChar = false
+
+				buf, err = reader.Get(ind, 1)
+	
+				levelEnd := level
+				cont := []byte{}
+				for err == nil && buf[0] != '\n' {
+					if len(levelEnd) == 0 {
+						break
+					}else if buf[0] == levelEnd[len(levelEnd)-1] {
+						levelEnd = levelEnd[:len(levelEnd)-1]
+					}
+	
+					cont = append(cont, buf[0])
+					ind++
+					buf, err = reader.Get(ind, 1)
+				}
+	
+				(*write)(levelEnd)
+				reader.Discard(uint(len(levelEnd)))
+	
+				if len(levelEnd) != len(level) {
+					level = level[len(levelEnd):]
+	
+					(*write)(mdHandleFonts(append(level, cont...)))
+	
+					reader.Discard(uint(len(cont) + len(level)))
+					return true
+				}
+				return false
+			}else{
+				buf, err = reader.Peek(1)
+			}
+		}
+
 		if *firstChar {
 			if buf[0] == '#' {
 				level := uint(1)
@@ -63,7 +113,6 @@ func compileMarkdown(reader *liveread.Reader[uint8], write *func(b []byte, raw .
 			}
 
 			// handle list
-			buf, err = reader.Peek(1)
 			if buf[0] == '-' || buf[0] == '*' || buf[0] == '~' || regex.Comp(`^[0-9]`).MatchRef(&buf) {
 				ind := uint(1)
 
@@ -228,9 +277,10 @@ func compileMarkdown(reader *liveread.Reader[uint8], write *func(b []byte, raw .
 				buf, err = reader.Peek(1)
 			}
 
-
 			//todo: handle tables
-
+			if buf[0] == '|' {
+				
+			}
 
 			// handle blockquotes
 			if buf[0] == '>' {
@@ -270,56 +320,6 @@ func compileMarkdown(reader *liveread.Reader[uint8], write *func(b []byte, raw .
 		}
 
 		*firstChar = false
-
-		if buf[0] == '*' || buf[0] == '_' || buf[0] == '~' || buf[0] == '-' {
-			firstByte := buf[0]
-			
-			ind := uint(1)
-			level := []byte{buf[0]}
-			buf, err = reader.Get(ind, 1)
-			for err == nil && (buf[0] == '*' || buf[0] == '_' || buf[0] == '~' || buf[0] == '-') {
-				level = append(level, buf[0])
-				ind++
-				buf, err = reader.Get(ind, 1)
-			}
-
-			if firstByte == '*' || len(level) > 1 {
-				buf, err = reader.Get(ind, 1)
-				if err == nil && buf[0] == ' ' {
-					ind++
-					buf, err = reader.Get(ind, 1)
-				}
-	
-				levelEnd := level
-				cont := []byte{}
-				for err == nil && buf[0] != '\n' {
-					if len(levelEnd) == 0 {
-						break
-					}else if buf[0] == levelEnd[len(levelEnd)-1] {
-						levelEnd = levelEnd[:len(levelEnd)-1]
-					}
-	
-					cont = append(cont, buf[0])
-					ind++
-					buf, err = reader.Get(ind, 1)
-				}
-	
-				(*write)(levelEnd)
-				reader.Discard(uint(len(levelEnd)))
-	
-				if len(levelEnd) != len(level) {
-					level = level[len(levelEnd):]
-	
-					(*write)(mdHandleFonts(append(level, cont...)))
-	
-					reader.Discard(uint(len(cont) + len(level)))
-					return true
-				}
-				return false
-			}else{
-				buf, err = reader.Peek(1)
-			}
-		}
 
 		if buf[0] == '`' {
 			buf, err := reader.Peek(3)
@@ -731,7 +731,7 @@ func mdHandleInput(data *[]byte, htmlArgs *[]byte) []byte {
 }
 
 func mdHandleFonts(data []byte) []byte {
-	data = regex.Comp(`(\*{1,3})(.*?)\1`).RepFuncRef(&data, func(data func(int) []byte) []byte {
+	data = regex.Comp(`(\*{1,3})(?![\s*])([^\r\n]+?)(?<![\s*])\1`).RepFuncRef(&data, func(data func(int) []byte) []byte {
 		if len(data(1)) == 3 {
 			return regex.JoinBytes([]byte("<strong><em>"), data(2), []byte("</em></strong>"))
 		}else if len(data(1)) == 2 {
@@ -743,11 +743,11 @@ func mdHandleFonts(data []byte) []byte {
 		return data(0)
 	})
 
-	data = regex.Comp(`(__)(.*?)\1`).RepFuncRef(&data, func(data func(int) []byte) []byte {
+	data = regex.Comp(`(__)(?![\s_])([^\r\n]+?)(?<![\s_])\1`).RepFuncRef(&data, func(data func(int) []byte) []byte {
 		return regex.JoinBytes([]byte("<u>"), data(2), []byte("</u>"))
 	})
 
-	data = regex.Comp(`(--|~~)(.*?)\1`).RepFuncRef(&data, func(data func(int) []byte) []byte {
+	data = regex.Comp(`(--|~~)(?![\s\-~])([^\r\n]+?)(?<![\s\-~])\1`).RepFuncRef(&data, func(data func(int) []byte) []byte {
 		if data(1)[0] == '-' {
 			return regex.JoinBytes([]byte("<del>"), data(2), []byte("</del>"))
 		}
