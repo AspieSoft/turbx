@@ -19,30 +19,6 @@ type mdListData struct {
 	initCont []byte
 }
 
-func compileMarkdownBlankLine(reader *liveread.Reader[uint8], write *func(b []byte), firstChar *bool, spaces *uint, mdStore *map[string]interface{}) {
-	if (*mdStore)["listTab"] != nil && len((*mdStore)["listTab"].([]mdListData)) != 0 {
-		for len((*mdStore)["listTab"].([]mdListData)) != 0 {
-			if (*mdStore)["listTab"].([]mdListData)[len((*mdStore)["listTab"].([]mdListData))-1].initCont != nil {
-				if (*mdStore)["listTab"].([]mdListData)[len((*mdStore)["listTab"].([]mdListData))-1].listType == 1 {
-					(*write)([]byte("<ol>"))
-				}else{
-					(*write)([]byte("<ul>"))
-				}
-
-				(*write)(regex.JoinBytes([]byte("<li>"), (*mdStore)["listTab"].([]mdListData)[len((*mdStore)["listTab"].([]mdListData))-1].initCont, []byte("</li>")))
-				(*mdStore)["listTab"].([]mdListData)[len((*mdStore)["listTab"].([]mdListData))-1].initCont = nil
-			}
-			
-			if (*mdStore)["listTab"].([]mdListData)[len((*mdStore)["listTab"].([]mdListData))-1].listType == 1 {
-				(*write)([]byte("</ol>"))
-			}else{
-				(*write)([]byte("</ul>"))
-			}
-			(*mdStore)["listTab"] = (*mdStore)["listTab"].([]mdListData)[:len((*mdStore)["listTab"].([]mdListData))-1]
-		}
-	}
-}
-
 func compileMarkdown(reader *liveread.Reader[uint8], write *func(b []byte), firstChar *bool, spaces *uint, mdStore *map[string]interface{}) bool {
 
 	//todo: handle markdown
@@ -146,7 +122,7 @@ func compileMarkdown(reader *liveread.Reader[uint8], write *func(b []byte), firs
 		}
 
 
-		//todo: handle list
+		// handle list
 		buf, err = reader.Peek(1)
 		if buf[0] == '-' || buf[0] == '*' || buf[0] == '~' || regex.Comp(`^[0-9]`).MatchRef(&buf) {
 			ind := uint(1)
@@ -238,12 +214,13 @@ func compileMarkdown(reader *liveread.Reader[uint8], write *func(b []byte), firs
 
 					(*write)(regex.JoinBytes([]byte("<li>"), cont, []byte("</li>")))
 				}
-	
-				//temp: discard list item
+
 				reader.Discard(ind)
 				return true
 			}
 		}
+
+		//todo: handle tables
 
 
 		ind := uint(0)
@@ -617,4 +594,31 @@ func mdHandleFonts(data []byte) []byte {
 	})
 
 	return data
+}
+
+
+// compileMarkdownBlankLine runs when there is more than one line break detected by the compiler
+func compileMarkdownBlankLine(reader *liveread.Reader[uint8], write *func(b []byte), firstChar *bool, spaces *uint, mdStore *map[string]interface{}) {
+	// close markdown list
+	if (*mdStore)["listTab"] != nil && len((*mdStore)["listTab"].([]mdListData)) != 0 {
+		for len((*mdStore)["listTab"].([]mdListData)) != 0 {
+			if (*mdStore)["listTab"].([]mdListData)[len((*mdStore)["listTab"].([]mdListData))-1].initCont != nil {
+				if (*mdStore)["listTab"].([]mdListData)[len((*mdStore)["listTab"].([]mdListData))-1].listType == 1 {
+					(*write)([]byte("<ol>"))
+				}else{
+					(*write)([]byte("<ul>"))
+				}
+
+				(*write)(regex.JoinBytes([]byte("<li>"), (*mdStore)["listTab"].([]mdListData)[len((*mdStore)["listTab"].([]mdListData))-1].initCont, []byte("</li>")))
+				(*mdStore)["listTab"].([]mdListData)[len((*mdStore)["listTab"].([]mdListData))-1].initCont = nil
+			}
+			
+			if (*mdStore)["listTab"].([]mdListData)[len((*mdStore)["listTab"].([]mdListData))-1].listType == 1 {
+				(*write)([]byte("</ol>"))
+			}else{
+				(*write)([]byte("</ul>"))
+			}
+			(*mdStore)["listTab"] = (*mdStore)["listTab"].([]mdListData)[:len((*mdStore)["listTab"].([]mdListData))-1]
+		}
+	}
 }
