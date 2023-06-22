@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/AspieSoft/goutil/v5"
-	"github.com/AspieSoft/turbx/compiler"
+	"github.com/AspieSoft/turbx/v2/compiler"
 )
 
 func Test(t *testing.T){

@@ -1792,7 +1792,7 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 
 	endLineBreak := uint(0)
 	firstWrite := true
-	write := func(b []byte){
+	write := func(b []byte, raw ...bool){
 		if len(b) == 0 {
 			return
 		}
@@ -1805,39 +1805,43 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 			firstWrite = false
 		}
 
-		b = regex.Comp(`\r+`).RepStrRef(&b, []byte{})
-		if len(b) == 0 {
-			return
-		}
-
-		b = regex.Comp(`(\n{2})\n+`).RepStrCompRef(&b, []byte("$1"))
-		if len(b) == 0 {
-			return
-		}
-
-		if endLineBreak >= 2 {
-			b = regex.Comp(`^\n+`).RepStrRef(&b, []byte{})
+		if len(raw) == 0 || raw[0] == false {
+			b = regex.Comp(`\r+`).RepStrRef(&b, []byte{})
 			if len(b) == 0 {
 				return
 			}
-		}else if endLineBreak == 1 {
-			b = regex.Comp(`^\n+`).RepStrRef(&b, []byte{'\n'})
+	
+			b = regex.Comp(`(\n{2})\n+`).RepStrCompRef(&b, []byte("$1"))
 			if len(b) == 0 {
 				return
 			}
-		}
-
-		if endLineBreak != 0 {
-			b = regex.Comp(`^[\t ]$`).RepStrRef(&b, []byte{})
-			if len(b) == 0 {
-				return
+	
+			if endLineBreak >= 2 {
+				b = regex.Comp(`^\n+`).RepStrRef(&b, []byte{})
+				if len(b) == 0 {
+					return
+				}
+			}else if endLineBreak == 1 {
+				b = regex.Comp(`^\n+`).RepStrRef(&b, []byte{'\n'})
+				if len(b) == 0 {
+					return
+				}
 			}
-		}
-
-		if b[len(b)-1] == '\n' {
-			endLineBreak++
-			if len(b) > 1 && b[len(b)-2] == '\n' {
+	
+			if endLineBreak != 0 {
+				b = regex.Comp(`^[\t ]$`).RepStrRef(&b, []byte{})
+				if len(b) == 0 {
+					return
+				}
+			}
+	
+			if b[len(b)-1] == '\n' {
 				endLineBreak++
+				if len(b) > 1 && b[len(b)-2] == '\n' {
+					endLineBreak++
+				}
+			}else{
+				endLineBreak = 0
 			}
 		}else{
 			endLineBreak = 0
@@ -1872,17 +1876,17 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 		}
 
 		if buf == '\n' {
+			if !firstChar {
+				compileMarkdownNextLine(reader, &write, &firstChar, &spaces, &mdStore)
+			}
+
 			write([]byte{'\n'})
-			wasFirstChar := firstChar
 			firstChar = true
 			spaces = 0
 
+
 			reader.Discard(1)
 			buf, err = reader.PeekByte(0)
-
-			if wasFirstChar {
-				compileMarkdownBlankLine(reader, &write, &firstChar, &spaces, &mdStore)
-			}
 			continue
 		}else if firstChar && regex.Comp(`^\s`).MatchRef(&[]byte{buf}) {
 			if buf == ' ' {
@@ -1895,8 +1899,6 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 
 			reader.Discard(1)
 			buf, err = reader.PeekByte(0)
-
-			// compileMarkdownBlankLine(reader, &write, &firstChar, &spaces, &mdStore)
 			continue
 		}
 

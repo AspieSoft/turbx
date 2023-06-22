@@ -2,7 +2,6 @@ package compiler
 
 import (
 	"bytes"
-	"fmt"
 	"strconv"
 
 	"github.com/AspieSoft/go-liveread"
@@ -15,11 +14,9 @@ var reLinkMD *regex.Regexp = regex.Comp(`(\!|)\[((?:"(?:\\[\\"'\']|\.)*"|'(?:\\[
 type mdListData struct {
 	tab uint
 	listType byte
-	listInitInd uint
-	initCont []byte
 }
 
-func compileMarkdown(reader *liveread.Reader[uint8], write *func(b []byte), firstChar *bool, spaces *uint, mdStore *map[string]interface{}) bool {
+func compileMarkdown(reader *liveread.Reader[uint8], write *func(b []byte, raw ...bool), firstChar *bool, spaces *uint, mdStore *map[string]interface{}) bool {
 
 	//todo: handle markdown
 
@@ -66,6 +63,211 @@ func compileMarkdown(reader *liveread.Reader[uint8], write *func(b []byte), firs
 				}
 
 				buf, err = reader.Peek(1)
+			}
+
+			// handle list
+			buf, err = reader.Peek(1)
+			if buf[0] == '-' || buf[0] == '*' || buf[0] == '~' || regex.Comp(`^[0-9]`).MatchRef(&buf) {
+				ind := uint(1)
+
+				skipList := false
+				listType := uint8(0)
+				listInd := 1
+				if regex.Comp(`^[0-9]`).MatchRef(&buf) {
+					listType = 1
+
+					listKey := []byte{buf[0]}
+					buf, err = reader.Get(ind, 1)
+					for err == nil && regex.Comp(`^[0-9]`).MatchRef(&buf) {
+						listKey = append(listKey, buf[0])
+						ind++
+						buf, err = reader.Get(ind, 1)
+					}
+
+					if buf[0] != '.' {
+						skipList = true
+						buf, err = reader.Peek(1)
+					}else{
+						ind++
+						buf, err = reader.Get(ind, 1)
+
+						if i, e := strconv.Atoi(string(listKey)); e == nil {
+							listInd = i
+						}
+					}
+				}
+
+				if !skipList {
+					reader.Discard(ind)
+					buf, err = reader.Peek(1)
+		
+					if buf[0] == ' ' {
+						reader.Discard(1)
+						buf, err = reader.Peek(1)
+					}
+		
+					cont := []byte{}
+					for err == nil && buf[0] != '\n' {
+						cont = append(cont, buf[0])
+						reader.Discard(1)
+						buf, err = reader.Peek(1)
+					}
+
+					cont = mdHandleFonts(cont)
+
+					closing := uint8(0)
+					ind = 1
+					buf, err = reader.Get(ind, 1)
+
+					/* for regex.Comp(`^[ \t]`).MatchRef(&buf) {
+						ind++
+						buf, err = reader.Get(ind, 1)
+					} */
+
+					if err != nil || buf[0] == '\n' {
+						closing = 1
+					}
+
+					if (*mdStore)["listTab"] == nil {
+						(*mdStore)["listTab"] = []mdListData{}
+					}
+
+					if len((*mdStore)["listTab"].([]mdListData)) == 0 || (*mdStore)["listTab"].([]mdListData)[len((*mdStore)["listTab"].([]mdListData))-1].tab < *spaces {
+						if closing == 0 && listType == 1 {
+							sp := uint(0)
+							for err == nil && buf[0] != '\n' {
+								if sp > *spaces {
+									for err == nil && buf[0] != '\n' {
+										ind++
+										buf, err = reader.Get(ind, 1)
+									}
+									ind++
+									buf, err = reader.Get(ind, 1)
+									if err != nil {
+										closing = 1
+										break
+									}
+
+									sp = 0
+									continue
+								}else if regex.Comp(`^[0-9]`).MatchRef(&buf) {
+									break
+								}
+
+								sp++
+								ind++
+								buf, err = reader.Get(ind, 1)
+							}
+
+							if closing == 0 {
+								if err != nil || buf[0] == '\n' {
+									closing = 1
+								}else if sp < *spaces {
+									closing = 2
+								}else{
+									key := []byte{}
+									for err == nil && regex.Comp(`^[0-9]`).MatchRef(&buf) {
+										key = append(key, buf[0])
+										ind++
+										buf, err = reader.Get(ind, 1)
+									}
+									if err == nil {
+										if i, e := strconv.Atoi(string(key)); e == nil && i < listInd {
+											listType = 2
+										}
+									}
+								}
+							}
+						}
+						
+						(*mdStore)["listTab"] = append((*mdStore)["listTab"].([]mdListData), mdListData{
+							tab: *spaces,
+							listType: listType,
+						})
+
+						if listType == 0 {
+							(*write)([]byte("<ul>"))
+						}else if listType == 1 {
+							(*write)([]byte("<ol>"))
+						}else if listType == 0 {
+							(*write)([]byte("<ol reversed>"))
+						}
+
+						(*write)(regex.JoinBytes([]byte("<li>"), cont, []byte("</li>")))
+					}else{
+						for (*mdStore)["listTab"].([]mdListData)[len((*mdStore)["listTab"].([]mdListData))-1].tab > *spaces {
+							if (*mdStore)["listTab"].([]mdListData)[len((*mdStore)["listTab"].([]mdListData))-1].listType == 0 {
+								(*write)([]byte("</ul>"))
+							}else{
+								(*write)([]byte("</ol>"))
+							}
+							(*mdStore)["listTab"] = (*mdStore)["listTab"].([]mdListData)[:len((*mdStore)["listTab"].([]mdListData))-1]
+						}
+
+						(*write)(regex.JoinBytes([]byte("<li>"), cont, []byte("</li>")))
+					}
+
+					if closing == 1 {
+						for len((*mdStore)["listTab"].([]mdListData)) != 0 {
+							if (*mdStore)["listTab"].([]mdListData)[len((*mdStore)["listTab"].([]mdListData))-1].listType == 0 {
+								(*write)([]byte("</ul>"))
+							}else{
+								(*write)([]byte("</ol>"))
+							}
+							(*mdStore)["listTab"] = (*mdStore)["listTab"].([]mdListData)[:len((*mdStore)["listTab"].([]mdListData))-1]
+						}
+					}else if closing == 2 {
+						if (*mdStore)["listTab"].([]mdListData)[len((*mdStore)["listTab"].([]mdListData))-1].listType == 0 {
+							(*write)([]byte("</ul>"))
+						}else{
+							(*write)([]byte("</ol>"))
+						}
+						(*mdStore)["listTab"] = (*mdStore)["listTab"].([]mdListData)[:len((*mdStore)["listTab"].([]mdListData))-1]
+					}
+
+					return true
+				}
+
+				buf, err = reader.Peek(1)
+			}
+
+			//todo: handle tables
+
+
+			//todo: handle blockquotes
+			if buf[0] == '>' {
+				*firstChar = false
+
+				if (*mdStore)["inBlockquote"] == nil || (*mdStore)["inBlockquote"] == 0 {
+					(*mdStore)["inBlockquote"] = 1
+					(*write)([]byte("<blockquote>"))
+				}
+
+				reader.Discard(1)
+				buf, err = reader.Peek(1)
+				if buf[0] == ' ' {
+					reader.Discard(1)
+					buf, err = reader.Peek(1)
+				}
+
+				ind := uint(0)
+				for err == nil && buf[0] != '\n' {
+					ind++
+					buf, err = reader.Get(ind, 1)
+				}
+				ind++
+				buf, err = reader.Get(ind, 1)
+
+				for regex.Comp(`^[ \t]`).MatchRef(&buf) {
+					ind++
+					buf, err = reader.Get(ind, 1)
+				}
+				
+				if buf[0] != '>' {
+					(*mdStore)["inBlockquote"] = 2
+				}
+
+				return true
 			}
 		}
 
@@ -121,110 +323,60 @@ func compileMarkdown(reader *liveread.Reader[uint8], write *func(b []byte), firs
 			}
 		}
 
+		if buf[0] == '`' {
+			buf, err := reader.Peek(3)
+			if err == nil && buf[1] == '`' && buf[2] == '`' {
+				reader.Discard(3)
 
-		// handle list
-		buf, err = reader.Peek(1)
-		if buf[0] == '-' || buf[0] == '*' || buf[0] == '~' || regex.Comp(`^[0-9]`).MatchRef(&buf) {
-			ind := uint(1)
-
-			skipList := false
-			listType := byte(0)
-			listInd := uint(1)
-			if regex.Comp(`^[0-9]`).MatchRef(&buf) {
-				listType = 1
-
-				listKey := []byte{buf[0]}
-				buf, err = reader.Get(ind, 1)
-				for err == nil && regex.Comp(`^[0-9]`).MatchRef(&buf) {
-					listKey = append(listKey, buf[0])
-					ind++
-					buf, err = reader.Get(ind, 1)
-				}
-
-				if buf[0] != '.' {
-					skipList = true
+				buf, err = reader.Peek(1)
+				lang := []byte{}
+				for err == nil && regex.Comp(`^[\w_\- ]`).MatchRef(&buf) {
+					lang = append(lang, buf[0])
+					reader.Discard(1)
 					buf, err = reader.Peek(1)
-				}else{
-					ind++
-					buf, err = reader.Get(ind, 1)
-
-					if i, e := strconv.Atoi(string(listKey)); e == nil {
-						listInd = uint(i)
-					}
 				}
-			}
 
-			if !skipList {
-				buf, err = reader.Get(ind, 1)
-	
 				cont := []byte{}
-	
-				if buf[0] == ' ' {
-					ind++
-					buf, err = reader.Get(ind, 1)
+				buf, err = reader.Peek(3)
+				for err == nil && !(buf[0] == '`' && buf[1] == '`' && buf[2] == '`') {
+					cont = append(cont, buf[0])
+					reader.Discard(1)
+					buf, err = reader.Peek(3)
 				}
-	
-				for err == nil && buf[0] != '\n' {
+
+				if err == nil {
+					reader.Discard(3)
+				}
+
+				if len(lang) == 0 {
+					(*write)(regex.JoinBytes([]byte("<pre>"), cont, []byte("</pre>")), true)
+				}else{
+					(*write)(regex.JoinBytes([]byte("<code lang=\""), lang, []byte("\">"), cont, []byte("</code>")), true)
+				}
+
+				return true
+			}else{
+				ind := uint(1)
+				buf, err = reader.Get(ind, 1)
+				cont := []byte{}
+				for err == nil && !(buf[0] == '`' || buf[0] == '\n') {
 					cont = append(cont, buf[0])
 					ind++
 					buf, err = reader.Get(ind, 1)
 				}
 
-				if (*mdStore)["listTab"] == nil {
-					(*mdStore)["listTab"] = []mdListData{}
+				if err == nil && buf[0] == '`' {
+					(*write)(regex.JoinBytes([]byte("<pre>"), cont, []byte("</pre>")))
+
+					reader.Discard(ind+1)
+					return true
 				}
-
-				if len((*mdStore)["listTab"].([]mdListData)) == 0 || (*mdStore)["listTab"].([]mdListData)[len((*mdStore)["listTab"].([]mdListData))-1].tab < *spaces {
-					listData := mdListData{
-						tab: *spaces,
-						listType: listType,
-						initCont: cont,
-					}
-
-					if listType == 1 {
-						listData.listInitInd = listInd
-					}
-
-					(*mdStore)["listTab"] = append((*mdStore)["listTab"].([]mdListData), listData)
-				}else{
-					if (*mdStore)["listTab"].([]mdListData)[len((*mdStore)["listTab"].([]mdListData))-1].initCont != nil {
-						if (*mdStore)["listTab"].([]mdListData)[len((*mdStore)["listTab"].([]mdListData))-1].listType == 1 {
-							fmt.Println((*mdStore)["listTab"].([]mdListData)[len((*mdStore)["listTab"].([]mdListData))-1].listInitInd, listInd)
-							if (*mdStore)["listTab"].([]mdListData)[len((*mdStore)["listTab"].([]mdListData))-1].listInitInd > listInd {
-								(*write)([]byte("<ol reversed>"))
-							}else{
-								(*write)([]byte("<ol>"))
-							}
-						}else{
-							(*write)([]byte("<ul>"))
-						}
-
-						(*write)(regex.JoinBytes([]byte("<li>"), (*mdStore)["listTab"].([]mdListData)[len((*mdStore)["listTab"].([]mdListData))-1].initCont, []byte("</li>")))
-						(*mdStore)["listTab"].([]mdListData)[len((*mdStore)["listTab"].([]mdListData))-1].initCont = nil
-					}
-
-					for (*mdStore)["listTab"].([]mdListData)[len((*mdStore)["listTab"].([]mdListData))-1].tab > *spaces {
-						if (*mdStore)["listTab"].([]mdListData)[len((*mdStore)["listTab"].([]mdListData))-1].listType == 1 {
-							(*write)([]byte("</ol>"))
-						}else{
-							(*write)([]byte("</ul>"))
-						}
-						(*mdStore)["listTab"] = (*mdStore)["listTab"].([]mdListData)[:len((*mdStore)["listTab"].([]mdListData))-1]
-					}
-
-					(*write)(regex.JoinBytes([]byte("<li>"), cont, []byte("</li>")))
-				}
-
-				reader.Discard(ind)
-				return true
 			}
+
+			return false
 		}
 
-		//todo: handle tables
-
-
 		ind := uint(0)
-
 		isEmbed := false
 		if buf[0] == '!' {
 			isEmbed = true
@@ -553,6 +705,17 @@ func compileMarkdown(reader *liveread.Reader[uint8], write *func(b []byte), firs
 	return false
 }
 
+// markdownCompilerNextLine runs when the main compiler finds a line break
+//
+// note: this method only runs if this is not already set to the firstChar, but is transitioning to the firstChar
+func compileMarkdownNextLine(reader *liveread.Reader[uint8], write *func(b []byte, raw ...bool), firstChar *bool, spaces *uint, mdStore *map[string]interface{}){
+	if (*mdStore)["inBlockquote"] == 2 {
+		(*mdStore)["inBlockquote"] = 0
+		(*write)([]byte("</blockquote>"))
+	}
+}
+
+
 func mdHandleLink(name *[]byte, url *[]byte, htmlArgs *[]byte) []byte {
 	return regex.JoinBytes([]byte("<a href=\""), goutil.HTML.EscapeArgs(*url, '"'), '"', *htmlArgs, '>', *name, []byte("</a>"))
 }
@@ -594,31 +757,4 @@ func mdHandleFonts(data []byte) []byte {
 	})
 
 	return data
-}
-
-
-// compileMarkdownBlankLine runs when there is more than one line break detected by the compiler
-func compileMarkdownBlankLine(reader *liveread.Reader[uint8], write *func(b []byte), firstChar *bool, spaces *uint, mdStore *map[string]interface{}) {
-	// close markdown list
-	if (*mdStore)["listTab"] != nil && len((*mdStore)["listTab"].([]mdListData)) != 0 {
-		for len((*mdStore)["listTab"].([]mdListData)) != 0 {
-			if (*mdStore)["listTab"].([]mdListData)[len((*mdStore)["listTab"].([]mdListData))-1].initCont != nil {
-				if (*mdStore)["listTab"].([]mdListData)[len((*mdStore)["listTab"].([]mdListData))-1].listType == 1 {
-					(*write)([]byte("<ol>"))
-				}else{
-					(*write)([]byte("<ul>"))
-				}
-
-				(*write)(regex.JoinBytes([]byte("<li>"), (*mdStore)["listTab"].([]mdListData)[len((*mdStore)["listTab"].([]mdListData))-1].initCont, []byte("</li>")))
-				(*mdStore)["listTab"].([]mdListData)[len((*mdStore)["listTab"].([]mdListData))-1].initCont = nil
-			}
-			
-			if (*mdStore)["listTab"].([]mdListData)[len((*mdStore)["listTab"].([]mdListData))-1].listType == 1 {
-				(*write)([]byte("</ol>"))
-			}else{
-				(*write)([]byte("</ul>"))
-			}
-			(*mdStore)["listTab"] = (*mdStore)["listTab"].([]mdListData)[:len((*mdStore)["listTab"].([]mdListData))-1]
-		}
-	}
 }

@@ -1,12 +1,13 @@
-module github.com/AspieSoft/turbx
+module github.com/AspieSoft/turbx/v2
 
-go 1.19
+go 1.20
 
 require (
 	github.com/AspieSoft/go-liveread v1.2.4
 	github.com/AspieSoft/go-regex/v4 v4.2.0
-	github.com/AspieSoft/goutil/v4 v4.1.0
+	github.com/AspieSoft/goutil/v4 v4.1.1
 	github.com/AspieSoft/goutil/v5 v5.2.1
+	github.com/AspieSoft/turbx v1.5.0
 	github.com/alphadose/haxmap v1.2.0
 	github.com/andybalholm/brotli v1.0.5
 	github.com/bep/golibsass v1.1.1
