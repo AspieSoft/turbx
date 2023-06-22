@@ -26,6 +26,7 @@ func Test(t *testing.T){
 	html, path, comp, err := compiler.Compile("index", map[string]interface{}{
 		"@compress": []string{"br", "gz"},
 		"@cache": false,
+		"@tab": 4, // how many spaces does a tab equal (for markdown)
 
 		"key": "MyKey",
 		"name": "MyName",

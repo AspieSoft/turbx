@@ -1,9 +1,0 @@
-start
-
-{{%if test="'1'"}}
-test 1
-{{%else}}
-test 0
-{{%/if}}
-
-end

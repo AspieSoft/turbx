@@ -1852,11 +1852,52 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 
 	ifTagLevel := []uint8{}
 
+	firstChar := true
+	spaces := uint(0)
+	mdStore := map[string]interface{}{}
+
+	tabSize := uint(4)
+	if i, ok := (*options)["@tab"]; ok {
+		tabSize = goutil.Conv.ToUint(i)
+		if tabSize == 0 {
+			tabSize = 4
+		}
+	}
+
 	var buf byte
 	for err == nil {
 		buf, err = reader.PeekByte(0)
 		if buf == 0 {
 			break
+		}
+
+		if buf == '\n' {
+			write([]byte{'\n'})
+			wasFirstChar := firstChar
+			firstChar = true
+			spaces = 0
+
+			reader.Discard(1)
+			buf, err = reader.PeekByte(0)
+
+			if wasFirstChar {
+				compileMarkdownBlankLine(reader, &write, &firstChar, &spaces, &mdStore)
+			}
+			continue
+		}else if firstChar && regex.Comp(`^\s`).MatchRef(&[]byte{buf}) {
+			if buf == ' ' {
+				spaces++
+			}else if regex.Comp(`^\t`).MatchRef(&[]byte{buf}) {
+				spaces += tabSize
+			}else{
+				spaces = 0
+			}
+
+			reader.Discard(1)
+			buf, err = reader.PeekByte(0)
+
+			// compileMarkdownBlankLine(reader, &write, &firstChar, &spaces, &mdStore)
+			continue
 		}
 
 		if buf == '<' { // handle html tags
@@ -2798,10 +2839,11 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 		//todo: consider using 'AspieSoft/go-memshare' module if a funcs.go file is detected in the $PWD directory and link it to the TagFuncs.AddFN method
 
 		// handle markdown
-		if compileMarkdown(reader, &write) {
+		if compileMarkdown(reader, &write, &firstChar, &spaces, &mdStore) {
 			continue
 		}
 
+		firstChar = false
 		write([]byte{buf})
 		reader.Discard(1)
 	}
