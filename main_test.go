@@ -30,7 +30,7 @@ func Test(t *testing.T){
 		"key": "MyKey",
 		"name": "MyName",
 
-		"$test": 1,
+		"test": 1,
 		"var": "MyVar",
 		"list": map[string]interface{}{
 			"key1": "value1",

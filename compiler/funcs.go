@@ -574,6 +574,7 @@ func (funcs *tagFuncs) If(opts *map[string]interface{}, args *htmlArgs, eachArgs
 	return nil, r
 }
 
+//todo: add other functions from old compiler
 
 func (funcs *tagFuncs) Myfn(opts *map[string]interface{}, args *htmlArgs, eachArgs *[]EachArgs, precomp bool) []byte {
 	// do stuff concurrently

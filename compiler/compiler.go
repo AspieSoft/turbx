@@ -2574,7 +2574,7 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 									args.args[k] = v
 								}
 
-								// handle component body
+								// merge html tags to component body
 								if len(htmlContTemp[len(htmlContTempTag)-1]) != 0 {
 									args.args["body"] = []byte{}
 									body := htmlContTemp[len(htmlContTempTag)-1]
@@ -2585,6 +2585,10 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 									for i != -1 {
 										args.args["body"] = append(args.args["body"], body[:i]...)
 										body = body[i+1:]
+
+										if ind >= count {
+											break
+										}
 	
 										cont := htmlTags[len(htmlTags)-(count-ind)]
 										if len(*cont) == 0 {
@@ -2608,6 +2612,9 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 										i = bytes.IndexByte(body, 0)
 										ind++
 									}
+
+									args.args["body"] = append(args.args["body"], body...)
+
 									htmlTags = htmlTags[:len(htmlTags)-count]
 									htmlTagsErr = htmlTagsErr[:len(htmlTagsErr)-count]
 								}
@@ -2648,7 +2655,7 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 
 							htmlCont := []byte{0}
 							var compErr error
-							if len(htmlContTemp) != 0 && false { // fix for weird issue with components and async html tags
+							if len(htmlContTemp) != 0 {
 								handleHtmlTag(handleHtmlData{html: &htmlCont, options: options, arguments: &args, eachArgs: cloneArr(eachArgsList), compileError: &compErr, hasUnhandledVars: &hasUnhandledVars})
 								if htmlCont[0] == 2 {
 									*compileError = compErr
@@ -2807,13 +2814,13 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 	}
 
 	// merge html tags when done
-	htmlTagsInd := uint(0)
+	htmlTagsInd := 0
 	i := bytes.IndexByte(htmlRes, 0)
 	for i != -1 {
 		*html = append(*html, htmlRes[:i]...)
 		htmlRes = htmlRes[i+1:]
 
-		if htmlTagsInd >= uint(len(htmlTags)) {
+		if htmlTagsInd >= len(htmlTags) {
 			break
 		}
 
@@ -2829,6 +2836,10 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 			*compileError = *htmlTagsErr[htmlTagsInd]
 			(*html)[0] = 2
 			return
+		}
+
+		if (*htmlCont)[0] == 4 {
+			hasUnhandledVars = true
 		}
 
 		*html = append(*html, (*htmlCont)[1:]...)
@@ -3155,7 +3166,11 @@ func handleHtmlComponent(htmlData handleHtmlData){
 	}
 
 	// set first index to 1 to mark as ready
-	(*htmlData.html)[0] = 1
+	if (*htmlData.html)[0] == 1 {
+		(*htmlData.html)[0] = 4
+	}else{
+		(*htmlData.html)[0] = 1
+	}
 }
 
 func newPreCompileChan() htmlChanList {
