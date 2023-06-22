@@ -20,7 +20,7 @@ require (
 	github.com/AspieSoft/go-syncterval v1.0.5 // indirect
 	github.com/AspieSoft/go-ttlcache v1.2.2 // indirect
 	github.com/GRbit/go-pcre v1.0.0 // indirect
-	github.com/aws/aws-sdk-go v1.38.20 // indirect
+	github.com/aws/aws-sdk-go v1.44.287 // indirect
 	github.com/cespare/go-smaz v1.0.0 // indirect
 	github.com/frankban/quicktest v1.14.2 // indirect
 	github.com/fsnotify/fsnotify v1.6.0 // indirect
