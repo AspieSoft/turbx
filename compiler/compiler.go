@@ -2573,7 +2573,45 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 								for k, v := range htmlContTempTag[len(htmlContTemp)-1].args {
 									args.args[k] = v
 								}
-								args.args["body"] = htmlContTemp[len(htmlContTempTag)-1]
+
+								// handle component body
+								if len(htmlContTemp[len(htmlContTempTag)-1]) != 0 {
+									args.args["body"] = []byte{}
+									body := htmlContTemp[len(htmlContTempTag)-1]
+	
+									count := bytes.Count(htmlContTemp[len(htmlContTempTag)-1], []byte{0})
+									ind := 0
+									i := bytes.IndexByte(body, 0)
+									for i != -1 {
+										args.args["body"] = append(args.args["body"], body[:i]...)
+										body = body[i+1:]
+	
+										cont := htmlTags[len(htmlTags)-(count-ind)]
+										if len(*cont) == 0 {
+											i = bytes.IndexByte(body, 0)
+											ind++
+											continue
+										}
+	
+										for (*cont)[0] == 0 {
+											time.Sleep(1 * time.Nanosecond)
+										}
+	
+										if (*cont)[0] == 2 {
+											*compileError = *htmlTagsErr[len(htmlTagsErr)-(count-ind)]
+											(*html)[0] = 2
+											return
+										}
+	
+										args.args["body"] = append(args.args["body"], (*cont)[1:]...)
+	
+										i = bytes.IndexByte(body, 0)
+										ind++
+									}
+									htmlTags = htmlTags[:len(htmlTags)-count]
+									htmlTagsErr = htmlTagsErr[:len(htmlTagsErr)-count]
+								}
+
 
 								htmlContTemp = htmlContTemp[:len(htmlContTempTag)-1]
 								htmlContTempTag = htmlContTempTag[:len(htmlContTempTag)-1]
@@ -2610,7 +2648,7 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 
 							htmlCont := []byte{0}
 							var compErr error
-							if len(htmlContTemp) != 0 { // fix for weird issue with components and async html tags
+							if len(htmlContTemp) != 0 && false { // fix for weird issue with components and async html tags
 								handleHtmlTag(handleHtmlData{html: &htmlCont, options: options, arguments: &args, eachArgs: cloneArr(eachArgsList), compileError: &compErr, hasUnhandledVars: &hasUnhandledVars})
 								if htmlCont[0] == 2 {
 									*compileError = compErr
