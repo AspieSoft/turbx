@@ -1,5 +1,9 @@
 > blockquote
 
+- item1
+- item2
+- item3
+
 |    table    |
 | ----------- |
 | row1 | row2 |

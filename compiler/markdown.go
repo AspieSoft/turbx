@@ -17,9 +17,6 @@ type mdListData struct {
 }
 
 func compileMarkdown(reader *liveread.Reader[uint8], write *func(b []byte, raw ...bool), firstChar *bool, spaces *uint, mdStore *map[string]interface{}) bool {
-
-	//todo: handle markdown
-
 	buf, err := reader.Peek(1)
 	if err == nil {
 		if *firstChar {
@@ -119,12 +116,12 @@ func compileMarkdown(reader *liveread.Reader[uint8], write *func(b []byte, raw .
 					ind = 1
 					buf, err = reader.Get(ind, 1)
 
-					/* for regex.Comp(`^[ \t]`).MatchRef(&buf) {
+					for regex.Comp(`^[ \t]`).MatchRef(&buf) {
 						ind++
 						buf, err = reader.Get(ind, 1)
-					} */
+					}
 
-					if err != nil || buf[0] == '\n' {
+					if err != nil || !(buf[0] == '-' || buf[0] == '*' || buf[0] == '~' || regex.Comp(`^[0-9]`).MatchRef(&buf)) {
 						closing = 1
 					}
 
@@ -231,10 +228,11 @@ func compileMarkdown(reader *liveread.Reader[uint8], write *func(b []byte, raw .
 				buf, err = reader.Peek(1)
 			}
 
+
 			//todo: handle tables
 
 
-			//todo: handle blockquotes
+			// handle blockquotes
 			if buf[0] == '>' {
 				*firstChar = false
 

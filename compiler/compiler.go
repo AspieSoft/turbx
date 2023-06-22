@@ -3025,7 +3025,7 @@ func handleHtmlTag(htmlData handleHtmlData){
 								ext := data(2)
 								if bytes.Equal(ext, []byte("ts")) {
 									//todo: add support for auto compiling typescript to javascript
-									// remove this first if condition when done (and let the extension be updated to js)
+									// remove this first if condition when done (and let the file extension be updated to js)
 									htmlData.arguments.args["type"] = []byte("text/typescript")
 								}else if regex.Comp(`([jt]s)`).MatchRef(&ext) {
 									ext = []byte("js")
