@@ -2905,6 +2905,7 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 		htmlChan.fn <- handleHtmlData{stopChan: true}
 	}
 
+	//todo: consider streaming the tag merge to a file for performance
 	// merge html tags when done
 	htmlTagsInd := 0
 	i := bytes.IndexByte(htmlRes, 0)
