@@ -5,7 +5,6 @@ go 1.20
 require (
 	github.com/AspieSoft/go-liveread v1.2.4
 	github.com/AspieSoft/go-regex/v4 v4.2.0
-	github.com/AspieSoft/goutil/v4 v4.1.1
 	github.com/AspieSoft/goutil/v5 v5.2.1
 	github.com/AspieSoft/turbx v1.5.0
 	github.com/alphadose/haxmap v1.2.0
@@ -20,6 +19,7 @@ require (
 require (
 	github.com/AspieSoft/go-syncterval v1.0.5 // indirect
 	github.com/AspieSoft/go-ttlcache v1.2.2 // indirect
+	github.com/AspieSoft/goutil/v4 v4.1.1 // indirect
 	github.com/GRbit/go-pcre v1.0.0 // indirect
 	github.com/aws/aws-sdk-go v1.44.287 // indirect
 	github.com/cespare/go-smaz v1.0.0 // indirect

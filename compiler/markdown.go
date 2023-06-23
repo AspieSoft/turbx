@@ -96,8 +96,11 @@ func compileMarkdown(reader *liveread.Reader[uint8], write *func(b []byte, raw .
 
 				return true
 			}else if buf[0] == '-' {
-				level := uint(1)
-				buf, err = reader.Get(level, 1)
+				//todo: fix <hr/> not being seen as a first char bu the compiler
+
+				level := uint(0)
+				buf, err = reader.Get(level, 10)
+
 				for err == nil && buf[0] == '-' {
 					level++
 					buf, err = reader.Get(level, 1)
@@ -144,20 +147,28 @@ func compileMarkdown(reader *liveread.Reader[uint8], write *func(b []byte, raw .
 				}
 
 				if !skipList {
-					reader.Discard(ind)
-					buf, err = reader.Peek(1)
+					// reader.Discard(ind)
+					ind++
+					buf, err = reader.Get(ind, 1)
 		
 					if buf[0] == ' ' {
-						reader.Discard(1)
-						buf, err = reader.Peek(1)
+						// reader.Discard(1)
+						ind++
+						buf, err = reader.Get(ind, 1)
 					}
 		
 					cont := []byte{}
 					for err == nil && buf[0] != '\n' {
 						cont = append(cont, buf[0])
-						reader.Discard(1)
-						buf, err = reader.Peek(1)
+						// reader.Discard(1)
+						ind++
+						buf, err = reader.Get(ind, 1)
 					}
+
+					if len(bytes.TrimSpace(cont)) == 0 {
+						return false
+					}
+					reader.Discard(ind)
 
 					cont = mdHandleFonts(cont)
 
@@ -320,6 +331,7 @@ func compileMarkdown(reader *liveread.Reader[uint8], write *func(b []byte, raw .
 		}
 
 		*firstChar = false
+		*spaces = 0
 
 		if buf[0] == '`' {
 			buf, err := reader.Peek(3)
@@ -373,6 +385,39 @@ func compileMarkdown(reader *liveread.Reader[uint8], write *func(b []byte, raw .
 
 			return false
 		}
+
+		// handle links
+		if buf[0] == 'h' {
+			buf, err = reader.Peek(8)
+			if err == nil && regex.Compile(`^https?://`).MatchRef(&buf) {
+				link := []byte("http")
+				if buf[4] == 's' {
+					link = append(link, 's')
+				}
+				link = append(link, ':', '/', '/')
+				reader.Discard(uint(len(link)))
+				buf, err = reader.Peek(1)
+
+				for err == nil && !regex.Compile(`[\s\r\n<]|[^\w_\-\.~:/?#\[\]@!$&"'\'\(\)\*\+,;%=]`).MatchRef(&buf) {
+					link = append(link, buf[0])
+					reader.Discard(1)
+					buf, err = reader.Peek(1)
+				}
+
+				// check for xss
+				if regex.Comp(`(?i)(\b)(on\S+)(\s*)=|(javascript|data|vbscript):|(<\s*)(\/*)script|style(\s*)=|(<\s*)meta|\*(.*?)[\r\n]*(.*?)\*`).MatchRef(&link) {
+					(*write)([]byte("<!--{{#warning: xss injection was detected}}-->"))
+					return true
+				}
+
+				(*write)(regex.JoinBytes([]byte("<a href=\""), goutil.HTML.EscapeArgs(link, '"'), []byte("\">"), link, []byte("</a>")))
+
+				return true
+			}
+
+			buf, err = reader.Peek(1)
+		}
+
 
 		ind := uint(0)
 		isEmbed := false
@@ -707,6 +752,9 @@ func compileMarkdown(reader *liveread.Reader[uint8], write *func(b []byte, raw .
 //
 // note: this method only runs if this is not already set to the firstChar, but is transitioning to the firstChar
 func compileMarkdownNextLine(reader *liveread.Reader[uint8], write *func(b []byte, raw ...bool), firstChar *bool, spaces *uint, mdStore *map[string]interface{}){
+	*firstChar = false
+	*spaces = 0
+	
 	if (*mdStore)["inBlockquote"] == 2 {
 		(*mdStore)["inBlockquote"] = 0
 		(*write)([]byte("</blockquote>"))

@@ -504,6 +504,13 @@ func Close(){
 }
 
 
+func LogErr(err error){
+	if compilerConfig.DebugMode {
+		// fmt.Println(smartErr.New(err).ErrorStack())
+		fmt.Println(err)
+	}
+}
+
 
 type htmlArgs struct {
 	args map[string][]byte
@@ -551,6 +558,7 @@ type handleHtmlData struct {
 	stopChan bool
 }
 
+
 // Compile will return html content, (or a static path when possible)
 //
 // this method will automatically run the PreCompile method as needed
@@ -575,9 +583,7 @@ func Compile(path string, opts map[string]interface{}) ([]byte, string, uint8, e
 
 	path, err := goutil.FS.JoinPath(compilerConfig.Root, path + "." + compilerConfig.Ext)
 	if err != nil {
-		if compilerConfig.DebugMode {
-			fmt.Println(err)
-		}
+		LogErr(err)
 		return []byte{}, "", 0, err
 	}
 
@@ -836,6 +842,17 @@ func compile(path string, options *map[string]interface{}, compType uint8) ([]by
 													args.args[tName] = append(args.args[tName], varData[i])
 												}
 											}
+										}
+									}
+
+									// fix args for functions
+									for k, v := range args.args {
+										if regex.Comp(`^\{\{\{(.*)\}\}\}$`).MatchRef(&v) {
+											args.args[k] = append([]byte{2}, regex.Comp(`^\{\{\{(.*)\}\}\}$`).RepStrCompRef(&v, []byte("$1"))...)
+										}else if regex.Comp(`^\{\{\{?(.*)\}\}\}?$`).MatchRef(&v) {
+											args.args[k] = append([]byte{1}, regex.Comp(`^\{\{\{?(.*)\}\}\}?$`).RepStrCompRef(&v, []byte("$1"))...)
+										}else{
+											args.args[k] = append([]byte{0}, v...)
 										}
 									}
 
@@ -1142,7 +1159,7 @@ func compile(path string, options *map[string]interface{}, compType uint8) ([]by
 														if compErr == nil {
 															write(htmlCont[1:])
 														}else if compilerConfig.DebugMode {
-															fmt.Println(compErr)
+															LogErr(compErr)
 															write(regex.JoinBytes([]byte("<!--{{error: "), compErr, []byte("}}-->")))
 														}
 													}else{
@@ -1181,7 +1198,7 @@ func compile(path string, options *map[string]interface{}, compType uint8) ([]by
 													if compErr == nil {
 														write(htmlCont[1:])
 													}else if compilerConfig.DebugMode {
-														fmt.Println(compErr)
+														LogErr(compErr)
 														write(regex.JoinBytes([]byte("<!--{{error: "), compErr, []byte("}}-->")))
 													}
 												}
@@ -1192,7 +1209,7 @@ func compile(path string, options *map[string]interface{}, compType uint8) ([]by
 							}
 							continue
 						}
-						
+
 						if varData[0] == '#' && (bytes.HasPrefix(varData, []byte("#error:")) || bytes.HasPrefix(varData, []byte("#warning:"))) {
 							if compilerConfig.DebugMode {
 								write(regex.JoinBytes([]byte("{{"), varData, []byte("}}")))
@@ -1356,6 +1373,9 @@ func compile(path string, options *map[string]interface{}, compType uint8) ([]by
 		reader.Discard(1)
 	}
 
+	//todo: add public js can css options (may use @js and @css arrays in options)
+	// may also handle css maps with '-' seperators
+
 	if compType == 1 {
 		writerBr.Flush()
 		writerBr.Close()
@@ -1424,9 +1444,7 @@ func getStaticPath(cache cacheObj, compressRes []string) ([]byte, string, uint8,
 func HasPreCompile(path string) (bool, error) {
 	path, err := goutil.FS.JoinPath(compilerConfig.Root, path + "." + compilerConfig.Ext)
 	if err != nil {
-		if compilerConfig.DebugMode {
-			fmt.Println(err)
-		}
+		LogErr(err)
 		return false, err
 	}
 
@@ -1440,9 +1458,7 @@ func HasPreCompile(path string) (bool, error) {
 func HasStaticCompile(path string) (bool, error) {
 	path, err := goutil.FS.JoinPath(compilerConfig.Root, path + "." + compilerConfig.Ext)
 	if err != nil {
-		if compilerConfig.DebugMode {
-			fmt.Println(err)
-		}
+		LogErr(err)
 		return false, err
 	}
 
@@ -1464,9 +1480,7 @@ func PreCompile(path string, opts map[string]interface{}) error {
 
 	path, err := goutil.FS.JoinPath(compilerConfig.Root, path + "." + compilerConfig.Ext)
 	if err != nil {
-		if compilerConfig.DebugMode {
-			fmt.Println(err)
-		}
+		LogErr(err)
 		return err
 	}
 	origCachePath := path
@@ -1475,22 +1489,18 @@ func PreCompile(path string, opts map[string]interface{}) error {
 		if compilerConfig.IncludeMD {
 			path, err = goutil.FS.JoinPath(compilerConfig.Root, origPath + ".md")
 			if err != nil {
-				if compilerConfig.DebugMode {
-					fmt.Println(err)
-				}
+				err = errors.New(string(regex.Comp(`\.md:`).RepStr([]byte(err.Error()), []byte("."+compilerConfig.Ext))))
+				LogErr(err)
 				return err
 			}
 
 			if stat, err := os.Stat(path); err != nil || stat.IsDir() {
-				if compilerConfig.DebugMode {
-					fmt.Println(err)
-				}
+				err = errors.New(string(regex.Comp(`\.md:`).RepStr([]byte(err.Error()), []byte("."+compilerConfig.Ext))))
+				LogErr(err)
 				return err
 			}
 		}else{
-			if compilerConfig.DebugMode {
-				fmt.Println(err)
-			}
+			LogErr(err)
 			return err
 		}
 	}
@@ -1504,7 +1514,7 @@ func PreCompile(path string, opts map[string]interface{}) error {
 			err = errors.New("failed to precompile: '"+path+"'")
 		}
 		if compilerConfig.DebugMode && !strings.HasPrefix(err.Error(), "warning:") {
-			fmt.Println(err)
+			LogErr(err)
 			html = append(html, regex.JoinBytes([]byte("<!--{{#error: "), regex.Comp(`%1`, compilerConfig.Root).RepStr([]byte(err.Error()), []byte{}), []byte("}}-->"))...)
 		}else{
 			return err
@@ -1569,7 +1579,7 @@ func PreCompile(path string, opts map[string]interface{}) error {
 					err = errors.New("layout - failed to precompile: '"+path+"'")
 				}
 				if compilerConfig.DebugMode && !strings.HasPrefix(err.Error(), "warning:") {
-					fmt.Println(err)
+					LogErr(err)
 					html = append(html, regex.JoinBytes([]byte("<!--{{#error: layout - "), regex.Comp(`%1`, compilerConfig.Root).RepStr([]byte(err.Error()), []byte{}), []byte("}}-->"))...)
 				}else{
 					return errors.Join(errors.New("layout - "), err)
@@ -1592,7 +1602,7 @@ func PreCompile(path string, opts map[string]interface{}) error {
 		staticPath, err := goutil.FS.JoinPath(compilerConfig.StaticHTML, origPath + "." + compilerConfig.Ext)
 		if err != nil {
 			if compilerConfig.DebugMode {
-				fmt.Println(err)
+				LogErr(err)
 				html = append(html, regex.JoinBytes([]byte("<!--{{#error: "), regex.Comp(`%1`, compilerConfig.Root).RepStr([]byte(err.Error()), []byte{}), []byte("}}-->"))...)
 			}
 			return err
@@ -1614,7 +1624,7 @@ func PreCompile(path string, opts map[string]interface{}) error {
 		if len(cachePath) == 0 {
 			if err = os.WriteFile(staticPath+".html", html, 0775); err != nil {
 				if compilerConfig.DebugMode {
-					fmt.Println(err)
+					LogErr(err)
 					html = append(html, regex.JoinBytes([]byte("<!--{{#error: "), regex.Comp(`%1`, compilerConfig.Root).RepStr([]byte(err.Error()), []byte{}), []byte("}}-->"))...)
 				}
 				return err
@@ -1643,7 +1653,7 @@ func PreCompile(path string, opts map[string]interface{}) error {
 		staticPath, err := goutil.FS.JoinPath(compilerConfig.CacheDir, origPath + "." + compilerConfig.Ext)
 		if err != nil {
 			if compilerConfig.DebugMode {
-				fmt.Println(err)
+				LogErr(err)
 				html = append(html, regex.JoinBytes([]byte("<!--{{#error: "), regex.Comp(`%1`, compilerConfig.Root).RepStr([]byte(err.Error()), []byte{}), []byte("}}-->"))...)
 			}
 			return err
@@ -1653,7 +1663,7 @@ func PreCompile(path string, opts map[string]interface{}) error {
 
 		if err = os.WriteFile(staticPath+".html.cache", html, 0775); err != nil {
 			if compilerConfig.DebugMode {
-				fmt.Println(err)
+				LogErr(err)
 				html = append(html, regex.JoinBytes([]byte("<!--{{#error: "), regex.Comp(`%1`, compilerConfig.Root).RepStr([]byte(err.Error()), []byte{}), []byte("}}-->"))...)
 			}
 			return err
@@ -3176,7 +3186,7 @@ func handleHtmlComponent(htmlData handleHtmlData){
 			}
 
 			if err != nil {
-				*htmlData.compileError = err
+				*htmlData.compileError = errors.New(string(regex.Comp(`\.md:`).RepStr([]byte(err.Error()), []byte("."+compilerConfig.Ext))))
 				(*htmlData.html)[0] = 2
 				return
 			}
@@ -3356,7 +3366,7 @@ func tryMinifyFile(path string){
 			// compile typescript here
 			if compilerConfig.DebugMode && !ranTypeScriptNotice {
 				ranTypeScriptNotice = true
-				fmt.Println(errors.New("notice: turbx compiler does not currently support auto compiling typescript to javascript in static files. (maybe this feature will be available in a future update)"))
+				LogErr(errors.New("notice: turbx compiler does not currently support auto compiling typescript to javascript in static files. (maybe this feature will be available in a future update)"))
 			}
 		}else if strings.HasSuffix(path, ".less") {
 			if err := less.RenderFile(path, resPath, map[string]interface{}{"compress": true}); err != nil {

@@ -3,12 +3,12 @@ package compiler
 import (
 	"bytes"
 	"errors"
-	"fmt"
 	"reflect"
 	"strconv"
 
 	"github.com/AspieSoft/go-regex/v4"
 	"github.com/AspieSoft/goutil/v5"
+	lorem "github.com/drhodes/golorem"
 )
 
 type tagFuncs struct {
@@ -60,7 +60,7 @@ func (funcs *tagFuncs) AddFN(name string, cb func(opts *map[string]interface{}, 
 }
 
 
-// note: the method 'If', is a unique tag func, with different args and return values
+// note: the method 'If', is a unique tag func, with different args and return values than normal tag funcs
 func (funcs *tagFuncs) If(opts *map[string]interface{}, args *htmlArgs, eachArgs *[]EachArgs, precomp bool) ([]byte, bool) {
 	passCompArgs := map[int][]byte{}
 
@@ -395,7 +395,7 @@ func (funcs *tagFuncs) If(opts *map[string]interface{}, args *htmlArgs, eachArgs
 					}
 				}else{
 					//todo: handle <
-					if goutil.ToType[int](val1) < goutil.ToType[int](val2) {
+					if goutil.Conv.ToFloat(val1) < goutil.Conv.ToFloat(val2) {
 						res = append(res, 1)
 					}else{
 						res = append(res, 0)
@@ -417,7 +417,7 @@ func (funcs *tagFuncs) If(opts *map[string]interface{}, args *htmlArgs, eachArgs
 					}
 				}else{
 					//todo: handle <=
-					if goutil.ToType[int](val1) <= goutil.ToType[int](val2) {
+					if goutil.Conv.ToFloat(val1) <= goutil.Conv.ToFloat(val2) {
 						res = append(res, 1)
 					}else{
 						res = append(res, 0)
@@ -439,7 +439,7 @@ func (funcs *tagFuncs) If(opts *map[string]interface{}, args *htmlArgs, eachArgs
 					}
 				}else{
 					//todo: handle >
-					if goutil.ToType[int](val1) > goutil.ToType[int](val2) {
+					if goutil.Conv.ToFloat(val1) > goutil.Conv.ToFloat(val2) {
 						res = append(res, 1)
 					}else{
 						res = append(res, 0)
@@ -461,7 +461,7 @@ func (funcs *tagFuncs) If(opts *map[string]interface{}, args *htmlArgs, eachArgs
 					}
 				}else{
 					//todo: handle >=
-					if goutil.ToType[int](val1) >= goutil.ToType[int](val2) {
+					if goutil.Conv.ToFloat(val1) >= goutil.Conv.ToFloat(val2) {
 						res = append(res, 1)
 					}else{
 						res = append(res, 0)
@@ -579,11 +579,24 @@ func (funcs *tagFuncs) If(opts *map[string]interface{}, args *htmlArgs, eachArgs
 // Rand sets a var option to crypto random bytes
 //
 // note: this method needs to be in sync
+//
+// add "_SYNC" if this function should run in sync, rather than running async on a seperate channel
 func (funcs *tagFuncs) Rand_SYNC(opts *map[string]interface{}, args *htmlArgs, eachArgs *[]EachArgs, precomp bool) []byte {
-	//todo: fix rand function to work with seperate compiled and precompiled args
+	// args.args first byte:
+	// 0 = normal arg "arg"
+	// 1 = escaped option {{arg}}
+	// 2 = raw option {{{arg}}}
 	
 	if len(args.args["0"]) != 0 && args.args["0"][0] == 0 {
 		varName := args.args["0"][1:]
+
+		if !regex.Comp(`^[\w_\-\$]+$`).MatchRef(&varName) {
+			return nil
+		}
+
+		if precomp && varName[0] != '$' {
+			return append([]byte{0}, regex.JoinBytes('0', '=', '"', varName, '"')...)
+		}
 
 		size := 64
 		if len(args.args["size"]) != 0 && args.args["size"][0] == 0 {
@@ -608,39 +621,44 @@ func (funcs *tagFuncs) Rand_SYNC(opts *map[string]interface{}, args *htmlArgs, e
 		(*opts)[string(varName)] = r
 	}
 
+	// return nil = return nothing
+	// []byte("result html") = return basic html
+	// append([]byte{0}, []byte("args")...) = pass function to compiler
+	// append([]byte{1}, []byte("error message")...) = return error
 	return nil
 }
 
+// Json returns an option as a json string
 func (funcs *tagFuncs) Json(opts *map[string]interface{}, args *htmlArgs, eachArgs *[]EachArgs, precomp bool) []byte {
-	//todo: get compiler to return args with 0 char in front (or remove from precompiler args)
-	// may likely add to compiler
-	fmt.Println(args.args)
-
+	// args.args first byte:
+	// 0 = normal arg "arg"
+	// 1 = escaped option {{arg}}
+	// 2 = raw option {{{arg}}}
+	
 	if len(args.args["0"]) != 0 && args.args["0"][0] == 0 {
-		//todo: fix not working in main compiler
-		if hasVarOpt(args.args["0"][1:], opts, eachArgs, 0, precomp) {
-			val := GetOpt(args.args["0"][1:], opts, eachArgs, 0, precomp, false)
+		varName := args.args["0"][1:]
+
+		if !regex.Comp(`^[\w_\-\$]+$`).MatchRef(&varName) {
+			return nil
+		}
+		
+		if hasVarOpt(varName, opts, eachArgs, 0, precomp) {
+			val := GetOpt(varName, opts, eachArgs, 0, precomp, false)
 			if b, ok := val.([]byte); ok && len(b) != 0 {
 				if b[0] == 0 {
 					b = b[1:]
 				}
 				return b
 			}else if !goutil.IsZeroOfUnderlyingType(val) {
+				if v, ok := val.(string); ok {
+					return regex.JoinBytes('"', goutil.HTML.EscapeArgs([]byte(v), '"'), '"')
+				}
 				return toBytesOrJson(val)
 			}
 		}else{
-			return append([]byte{0}, regex.JoinBytes('0', '=', '"', args.args["0"][1:], '"')...)
+			return append([]byte{0}, regex.JoinBytes('0', '=', '"', varName, '"')...)
 		}
 	}
-
-	return nil
-}
-
-
-//todo: add other functions from old compiler
-
-func (funcs *tagFuncs) Myfn(opts *map[string]interface{}, args *htmlArgs, eachArgs *[]EachArgs, precomp bool) []byte {
-	// do stuff concurrently
 
 	// return nil = return nothing
 	// []byte("result html") = return basic html
@@ -649,9 +667,92 @@ func (funcs *tagFuncs) Myfn(opts *map[string]interface{}, args *htmlArgs, eachAr
 	return nil
 }
 
-// add "_SYNC" if this function should run in sync, rather than running async on a seperate channel
-func (funcs *tagFuncs) Myfn_SYNC(opts *map[string]interface{}, args *htmlArgs, eachArgs *[]EachArgs, precomp bool) []byte {
-	// do stuff in sync
+func (funcs *tagFuncs) Lorem(opts *map[string]interface{}, args *htmlArgs, eachArgs *[]EachArgs, precomp bool) []byte {
+	// args.args first byte:
+	// 0 = normal arg "arg"
+	// 1 = escaped option {{arg}}
+	// 2 = raw option {{{arg}}}
+	
+	argInd := 0
+
+	wType := byte('p')
+	if len(args.args["type"]) != 0 && args.args["type"][0] == 0 {
+		wType = goutil.ToType[byte](args.args["type"][1:])
+		if wType == 0 {
+			wType = 'p'
+		}
+	}else if strI := strconv.Itoa(argInd); len(args.args[strI]) != 0 && args.args[strI][0] == 0 && !regex.Compile(`^[0-9]+$`).Match(args.args[strI][1:]) {
+		wType = goutil.ToType[byte](args.args[strI][1:])
+		if wType == 0 {
+			wType = 'p'
+		}else{
+			argInd++
+		}
+	}
+
+	rep := 1
+	minLen := 2
+	maxLen := 10
+	minSet := false
+
+	if len(args.args["rep"]) != 0 && args.args["rep"][0] == 0 {
+		rep = goutil.Conv.ToInt(args.args["rep"][1:])
+	}else if strI := strconv.Itoa(argInd); len(args.args[strI]) != 0 && args.args[strI][0] == 0 && regex.Comp(`^[0-9]+$`).Match(args.args[strI][1:]) {
+		rep = goutil.Conv.ToInt(args.args[strI][1:])
+		argInd++
+	}
+
+	if len(args.args["min"]) != 0 && args.args["min"][0] == 0 {
+		minLen = goutil.Conv.ToInt(args.args["min"][1:])
+	}else if strI := strconv.Itoa(argInd); len(args.args[strI]) != 0 && args.args[strI][0] == 0 && regex.Comp(`^[0-9]+$`).Match(args.args[strI][1:]) {
+		minLen = goutil.Conv.ToInt(args.args[strI][1:])
+		argInd++
+		minSet = true
+	}
+
+	if len(args.args["max"]) != 0 && args.args["max"][0] == 0 {
+		maxLen = goutil.Conv.ToInt(args.args["max"][1:])
+	}else if strI := strconv.Itoa(argInd); len(args.args[strI]) != 0 && args.args[strI][0] == 0 && regex.Comp(`^[0-9]+$`).Match(args.args[strI][1:]) {
+		maxLen = goutil.Conv.ToInt(args.args[strI][1:])
+		argInd++
+	}else if minSet {
+		maxLen = minLen
+	}
+
+	if minLen > maxLen {
+		minLen, maxLen = maxLen, minLen
+	}
+
+	res := []byte{}
+	if wType == 'p' {
+		resList := [][]byte{}
+		for i := 0; i < rep; i++ {
+			resList = append(resList, []byte("<p>"+lorem.Paragraph(minLen, maxLen)+"</p>"))
+		}
+		res = bytes.Join(resList, []byte("\n\n"))
+	} else if wType == 'w' {
+		resList := [][]byte{}
+		for i := 0; i < rep; i++ {
+			resList = append(resList, []byte(lorem.Word(minLen, maxLen)))
+		}
+		res = bytes.Join(resList, []byte(" "))
+	} else if wType == 's' {
+		resList := [][]byte{}
+		for i := 0; i < rep; i++ {
+			resList = append(resList, []byte(lorem.Sentence(minLen, maxLen)))
+		}
+		res = bytes.Join(resList, []byte(" "))
+	} else if wType == 'h' {
+		res = []byte(lorem.Host())
+	} else if wType == 'e' {
+		res = []byte(lorem.Email())
+	} else if wType == 'u' {
+		res = []byte(lorem.Url())
+	}
+
+	if len(res) != 0 {
+		return res
+	}
 
 	// return nil = return nothing
 	// []byte("result html") = return basic html

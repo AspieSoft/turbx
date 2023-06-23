@@ -41,7 +41,7 @@ func Test(t *testing.T){
 	})
 
 	if err != nil {
-		fmt.Println(err)
+		compiler.LogErr(err)
 		return
 	}
 
@@ -51,19 +51,19 @@ func Test(t *testing.T){
 	if path != "" {
 		html, err = os.ReadFile(path)
 		if err != nil {
-			fmt.Println(err)
+			compiler.LogErr(err)
 			return
 		}
 	}
 
 	if comp == 1 {
 		if html, err = goutil.BROTLI.UnZip(html); err != nil {
-			fmt.Println(err)
+			compiler.LogErr(err)
 			return
 		}
 	}else if comp == 2 {
 		if html, err = goutil.GZIP.UnZip(html); err != nil {
-			fmt.Println(err)
+			compiler.LogErr(err)
 			return
 		}
 	}

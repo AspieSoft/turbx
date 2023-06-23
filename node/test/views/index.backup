@@ -59,7 +59,7 @@ https://www.aspiesoft.com
 
 <Component test=8 {{a="b"}}/>
 
-<!-- import test.xhtml -->
+<!-- import test.html -->
 <Test/>
 
 <Tests.Test1/>
