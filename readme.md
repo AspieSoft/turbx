@@ -24,7 +24,7 @@ A Fast and Easy To Use View Engine, Compiled In Go.
 
 ## Whats New
 
-- Rebuild to module to replace my old spaghetti code (and created new spaghetti code)
+- New rebuild of the compiler to replace my old spaghetti code (and create new spaghetti code)
 - Performance and Stability improvements.
 
 ## Installation
