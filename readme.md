@@ -33,7 +33,7 @@ A Fast and Easy To Use View Engine, Compiled In Go.
 
 sudo apt-get install libpcre3-dev
 
-go get github.com/AspieSoft/turbx
+go get github.com/AspieSoft/turbx/v2
 
 ```
 
