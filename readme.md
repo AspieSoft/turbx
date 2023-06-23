@@ -12,12 +12,13 @@
 
 A Fast and Easy To Use View Engine, Compiled In Go.
 
-> Note: this is the info for the NodeJS module.
-> Click [here](https://github.com/AspieSoft/turbx) to find info on the Go module.
+> Note: this is the info for the Go module.
+> Click [here](https://github.com/AspieSoft/turbx/tree/master/node) to find info on the NodeJS module.
 
 ## Whats New
 
-- Compiler will auto compress to gzip or brotli if the browser supports it
+- Rebuild to module to replace my old spaghetti code (and created new spaghetti code)
+- Performance and Stability improvements.
 
 ## Installation
 
@@ -25,79 +26,95 @@ A Fast and Easy To Use View Engine, Compiled In Go.
 
 sudo apt-get install libpcre3-dev
 
-npm install turbx
+go get github.com/AspieSoft/turbx
 
 ```
 
 ## Setup
 
-```js
+```go
 
-const express = require('express');
-const {join} = require('path');
-const turbx = require('turbx');
+package main
 
-const app = express();
+import (
+  "github.com/AspieSoft/turbx/v2/compiler"
+)
 
-app.engine('xhtml', turbx({
-  /* global options */
-  template: 'layout',
-  opts: {default: 'some default options for res.render'},
-  before: function(opts){
-    // do stuff before res.render
-  },
-  after: function(opts, html /* html string containing the compiled output */){
-    // do stuff after res.render
-  },
-}));
-app.set('views', join(__dirname, 'views'));
-app.set('view engine', 'md');
+func Test(t *testing.T){
+  defer compiler.Close()
 
-app.use(function(req, res, next){
-  res.render('index', {
-    title: 'example',
-    content: '<h2>Hello, World!</h2>',
+  compiler.SetConfig(compiler.Config{
+    Root: "views",
+    Static: "public",
+    Ext: "html",
+    IncludeMD: true,
+    DebugMode: true,
+  })
 
-    // const vars can be used to precompile a var, and not need to compile it again
-    // a const var is defined by starting with a '$' in the key name
-    $GoogleAuthToken: 'This Value Will Never Change',
-  });
-});
+  startTime := time.Now().UnixNano()
 
-// pre compiling constant vars
-app.use(async function(req, res, next){
-  let preCompiled = await res.inCache('index');
-  if(!preCompiled){
-    const SomethingConsistant = await someLongProcess();
+  html, path, comp, err := compiler.Compile("index", map[string]interface{}{
+    "@compress": []string{"br", "gz"}, // pass the browser compression options from the client
+    "@cache": true,
 
-    await res.preRender('index', {
-      $myConstVar: SomethingConsistant,
-    });
+    "key": "MyKey",
+    "name": "MyName",
+
+    "$myConstantVar": "this var will run in the precompiler",
+
+    "test": 1,
+    "var": "MyVar",
+    "list": map[string]interface{}{
+      "key1": "value1",
+      "key2": "value2",
+      "key3": "value3",
+    },
+  })
+
+  if err != nil {
+    // this method will only log errors if debug mode is enabled
+    compiler.LogErr(err)
+    return
   }
 
-  res.render('index', {
-    title: 'example',
-    content: '<h2>Hello, World!</h2>',
-  });
-});
+  endTime := time.Now().UnixNano()
 
-// pre compiling and overriding the cache
-app.use('/fix-cache', async function(req, res, next){
-  turbx.preCompile('index', {
-    $MyConstOpts: 'new constant option',
-  });
 
-  res.render('index', {
-    title: 'example',
-    content: '<h2>Hello, World!</h2>',
-  });
-});
+  // a path will be provided if we precompiled a static file
+  // you can send this file directly to the user (it will automatically choose a compressed file as needed)
+  // if there is no path (path == ""), we will have an html output instead (which will also be compressed as needed)
+  if path != "" {
+    html, err = os.ReadFile(path)
+    if err != nil {
+      compiler.LogErr(err)
+      return
+    }
+  }
+
+  if comp == 1 {
+    if html, err = goutil.BROTLI.UnZip(html); err != nil {
+      compiler.LogErr(err)
+      return
+    }
+  }else if comp == 2 {
+    if html, err = goutil.GZIP.UnZip(html); err != nil {
+      compiler.LogErr(err)
+      return
+    }
+  }
+
+  fmt.Println("----------")
+  fmt.Println(string(html))
+  fmt.Println("----------")
+
+  fmt.Println(float64(endTime - startTime) / float64(time.Millisecond), "ms")
+}
 
 ```
 
 ## Usage
 
-```xhtml
+```html
 
 <!-- this is a comment -->
 /* this is also a comment */
@@ -149,6 +166,17 @@ app.use('/fix-cache', async function(req, res, next){
   {{key}}: {{value}}
 </_each>
 
+<!-- 'if/else' statements and 'each' loops are a special kind of function, and do not need the '_' prefix -->
+<if test>
+  {{test}}
+<else/>
+  no test
+</if>
+
+<each myObj as="value" of="key">
+  {{key}}: {{value}}
+</each>
+
 
 <!-- A component is imported by using a capital first letter -->
 <!-- The file should also be named with a capital first letter -->
@@ -160,21 +188,24 @@ app.use('/fix-cache', async function(req, res, next){
 <!-- component without a body -->
 <MyComponent arg1="value"/>
 
-<!-- file: MyComponent.xhtml -->
+<!-- file: MyComponent.html -->
 {{arg1}} - {{arg2}}
 <h1>
   {{{body}}}
+
+  <!-- escaped html body -->
+  {{body}}
 </h1>
 
 
-<!-- file: layout.xhtml -->
+<!-- file: layout.html -->
 <html>
   <head></head>
   <body>
     <header></header>
     <main>
       <!-- Insert Body -->
-      <Body/>
+      {{{body}}}
     </main>
     <footer>
   </body>
@@ -184,7 +215,15 @@ app.use('/fix-cache', async function(req, res, next){
 
 ## Other Functions
 
-```xhtml
+```html
+
+<!-- set a new variable to crypto random bytes -->
+<_rand randBytes/>
+{{randBytes}}
+
+<!-- define a size -->
+<_rand rand size="64"/>
+{{rand}}
 
 <!-- random paragraph of lorem ipsum text -->
 <_lorem/>
@@ -195,22 +234,7 @@ app.use('/fix-cache', async function(req, res, next){
 <!-- 1 word of lorem ipsum text with 5-10 letters -->
 <_lorem w 1 5 10/>
 
-<!-- embed a youtube video -->
+<!-- output json as a string -->
 <_json myList/>
-
-```
-
-## Additional Features
-
-```js
-
-// add basic rate limiting
-// this function uses the express-device-rate-limit module made my AspieSoft
-turbx.rateLimit(app, {opts /* for express-device-rate-limit module */});
-
-// auto render views as pages
-turbx.renderPages(app, {opts});
-// also recognizes folders with an index.xhtml file
-// ignores the components folder and tries to ignore root files named after error codes (or in an "error" folder)
 
 ```

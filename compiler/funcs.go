@@ -12,8 +12,9 @@ import (
 )
 
 type tagFuncs struct {
-	list map[string]func(opts *map[string]interface{}, args *htmlArgs, eachArgs *[]EachArgs, precomp bool)[]byte
+	list map[string]func(opts *map[string]interface{}, args *htmlArgs, eachArgs *[]EachArgs, precomp bool) []byte
 }
+
 var TagFuncs tagFuncs = tagFuncs{}
 
 // AddFN adds a new function to the compiler
@@ -39,15 +40,15 @@ var TagFuncs tagFuncs = tagFuncs{}
 // cb - @return: append([]byte{1}, []byte("error msg")...) = return error
 //
 // @useSync (optional): by default all functions run concurrently, if you need the compiler to wait for your function to finish, you can set this to `true`
-func (funcs *tagFuncs) AddFN(name string, cb func(opts *map[string]interface{}, args *htmlArgs, eachArgs *[]EachArgs, precomp bool)[]byte, useSync ...bool) error {
+func (funcs *tagFuncs) AddFN(name string, cb func(opts *map[string]interface{}, args *htmlArgs, eachArgs *[]EachArgs, precomp bool) []byte, useSync ...bool) error {
 	if _, _, err := getCoreTagFunc([]byte(name)); err != nil {
-		return errors.New("the method '"+name+"' is already in use by the core system")
+		return errors.New("the method '" + name + "' is already in use by the core system")
 	}
 
 	if _, ok := funcs.list[name]; ok {
-		return errors.New("the method '"+name+"' is already in use")
-	}else if _, ok := funcs.list[name+"_SYNC"]; ok {
-		return errors.New("the method '"+name+"' is already in use")
+		return errors.New("the method '" + name + "' is already in use")
+	} else if _, ok := funcs.list[name+"_SYNC"]; ok {
+		return errors.New("the method '" + name + "' is already in use")
 	}
 
 	if len(useSync) != 0 && useSync[0] {
@@ -58,7 +59,6 @@ func (funcs *tagFuncs) AddFN(name string, cb func(opts *map[string]interface{}, 
 
 	return nil
 }
-
 
 // note: the method 'If', is a unique tag func, with different args and return values than normal tag funcs
 func (funcs *tagFuncs) If(opts *map[string]interface{}, args *htmlArgs, eachArgs *[]EachArgs, precomp bool) ([]byte, bool) {
@@ -78,7 +78,7 @@ func (funcs *tagFuncs) If(opts *map[string]interface{}, args *htmlArgs, eachArgs
 		if len(arg) < 2 {
 			if len(arg) == 0 {
 				res = append(res, 0)
-			}else{
+			} else {
 				val := GetOpt(arg, opts, eachArgs, 0, precomp, false)
 				if reflect.TypeOf(val) == goutil.VarType["[]byte"] && len(val.([]byte)) != 0 && val.([]byte)[0] == 0 {
 					retArg := args.args[key]
@@ -88,7 +88,7 @@ func (funcs *tagFuncs) If(opts *map[string]interface{}, args *htmlArgs, eachArgs
 					passCompArgs[len(res)] = retArg
 					if (!inv && precomp) || (inv && !precomp) {
 						res = append(res, 5)
-					}else{
+					} else {
 						res = append(res, 4)
 					}
 					continue
@@ -96,7 +96,7 @@ func (funcs *tagFuncs) If(opts *map[string]interface{}, args *htmlArgs, eachArgs
 
 				if (!inv && !goutil.IsZeroOfUnderlyingType(val)) || (inv && goutil.IsZeroOfUnderlyingType(val)) {
 					res = append(res, 1)
-				}else{
+				} else {
 					res = append(res, 0)
 				}
 			}
@@ -111,7 +111,7 @@ func (funcs *tagFuncs) If(opts *map[string]interface{}, args *htmlArgs, eachArgs
 				ind++
 			}
 			grpLevel++
-		}else if grpLevel != 0 {
+		} else if grpLevel != 0 {
 			if arg[0] == 5 && arg[1] == ')' {
 				grpLevel--
 				if grpLevel != 0 {
@@ -119,12 +119,12 @@ func (funcs *tagFuncs) If(opts *map[string]interface{}, args *htmlArgs, eachArgs
 					newArgs[s] = arg
 					newArgsInd = append(newArgsInd, s)
 					ind++
-				}else{
+				} else {
 					passComp, ok := TagFuncs.If(opts, &htmlArgs{args: newArgs, ind: newArgsInd}, eachArgs, precomp)
-					
+
 					newArgs = map[string][]byte{}
 					newArgsInd = []string{}
-					
+
 					if inv {
 						res = append(res, 8)
 					}
@@ -134,49 +134,49 @@ func (funcs *tagFuncs) If(opts *map[string]interface{}, args *htmlArgs, eachArgs
 					if !precomp && passComp != nil && len(passComp) != 0 {
 						if !inv {
 							res = append(res, 6)
-						}else{
+						} else {
 							res = append(res, 7)
 						}
-					}else if (!inv && ok) || (inv && !ok) {
+					} else if (!inv && ok) || (inv && !ok) {
 						res = append(res, 7)
-					}else{
+					} else {
 						res = append(res, 6)
 					}
 				}
-			}else{
+			} else {
 				if _, err := strconv.Atoi(key); err == nil {
 					s := strconv.Itoa(ind)
 					newArgs[s] = arg
 					newArgsInd = append(newArgsInd, s)
 					ind++
-				}else{
+				} else {
 					newArgs[key] = arg
 					newArgsInd = append(newArgsInd, key)
 				}
 			}
-		}else if arg[0] == 5 && arg[1] == '!' {
+		} else if arg[0] == 5 && arg[1] == '!' {
 			inv = !inv
-		}else if arg[0] == 5 && arg[1] == '&' {
+		} else if arg[0] == 5 && arg[1] == '&' {
 			res = append(res, 2)
 			inv = false
-		}else if arg[0] == 5 && arg[1] == '|' {
+		} else if arg[0] == 5 && arg[1] == '|' {
 			res = append(res, 3)
 			inv = false
-		}else if arg[0] != 5 {
+		} else if arg[0] != 5 {
 			if arg[0] != 0 && arg[0] <= 5 {
 				arg = arg[1:]
 				arg = regex.Comp(`^\{\{\{?[=:]?(.*)\}\}\}?$`).RepStrCompRef(&arg, []byte("$1"))
-			}else if arg[0] == 0 {
+			} else if arg[0] == 0 {
 				arg = arg[1:]
 			}
 
 			sign := uint8(0)
 			if arg[0] == '=' {
 				arg = arg[1:]
-			}else if arg[0] == '!' {
+			} else if arg[0] == '!' {
 				sign = 1
 				arg = arg[1:]
-			}else if arg[0] == '<' {
+			} else if arg[0] == '<' {
 				sign = 2
 				arg = arg[1:]
 				if len(arg) != 0 {
@@ -185,7 +185,7 @@ func (funcs *tagFuncs) If(opts *map[string]interface{}, args *htmlArgs, eachArgs
 						arg = arg[1:]
 					}
 				}
-			}else if arg[0] == '>' {
+			} else if arg[0] == '>' {
 				sign = 4
 				arg = arg[1:]
 				if len(arg) != 0 {
@@ -194,7 +194,7 @@ func (funcs *tagFuncs) If(opts *map[string]interface{}, args *htmlArgs, eachArgs
 						arg = arg[1:]
 					}
 				}
-			}else if arg[0] == '/' && regex.Comp(`^/(.*)/([ismxISMX]*)$`).MatchRef(&arg) { // regex
+			} else if arg[0] == '/' && regex.Comp(`^/(.*)/([ismxISMX]*)$`).MatchRef(&arg) { // regex
 				sign = 6
 				arg = regex.Comp(`^/(.*)/([ismxISMX]*)$`).RepFuncRef(&arg, func(data func(int) []byte) []byte {
 					if len(data(2)) != 0 {
@@ -203,7 +203,7 @@ func (funcs *tagFuncs) If(opts *map[string]interface{}, args *htmlArgs, eachArgs
 							fl := bytes.ToLower([]byte{f})[0]
 							if f == fl {
 								flags = append(flags, f)
-							}else{
+							} else {
 								flags = append(flags, '-', f)
 							}
 						}
@@ -228,33 +228,33 @@ func (funcs *tagFuncs) If(opts *map[string]interface{}, args *htmlArgs, eachArgs
 				if isStr != 0 {
 					if (!t && len(arg) != 0) || (t && len(arg) == 0) {
 						res = append(res, 1)
-					}else{
+					} else {
 						res = append(res, 0)
 					}
-				}else{
+				} else {
 					val := GetOpt(arg, opts, eachArgs, 0, precomp, false)
 					if reflect.TypeOf(val) == goutil.VarType["[]byte"] && len(val.([]byte)) != 0 && val.([]byte)[0] == 0 {
 						retArg := args.args[key]
 						if t {
 							if sign == 2 {
 								retArg = append([]byte{'>'}, retArg...)
-							}else if sign == 3 {
+							} else if sign == 3 {
 								retArg = append([]byte{'>', '='}, retArg...)
-							}else if sign == 4 {
+							} else if sign == 4 {
 								retArg = append([]byte{'<'}, retArg...)
-							}else if sign == 5 {
+							} else if sign == 5 {
 								retArg = append([]byte{'<', '='}, retArg...)
-							}else{
+							} else {
 								retArg = append([]byte{'!', ' '}, retArg...)
 							}
-						}else{
+						} else {
 							if sign == 2 {
 								retArg = append([]byte{'<'}, retArg...)
-							}else if sign == 3 {
+							} else if sign == 3 {
 								retArg = append([]byte{'<', '='}, retArg...)
-							}else if sign == 4 {
+							} else if sign == 4 {
 								retArg = append([]byte{'>'}, retArg...)
-							}else if sign == 5 {
+							} else if sign == 5 {
 								retArg = append([]byte{'>', '='}, retArg...)
 							}
 						}
@@ -264,7 +264,7 @@ func (funcs *tagFuncs) If(opts *map[string]interface{}, args *htmlArgs, eachArgs
 						passCompArgs[len(res)] = retArg
 						if (!t && precomp) || (t && !precomp) {
 							res = append(res, 5)
-						}else{
+						} else {
 							res = append(res, 4)
 						}
 						continue
@@ -272,7 +272,7 @@ func (funcs *tagFuncs) If(opts *map[string]interface{}, args *htmlArgs, eachArgs
 
 					if (!t && !goutil.IsZeroOfUnderlyingType(val)) || (t && goutil.IsZeroOfUnderlyingType(val)) {
 						res = append(res, 1)
-					}else{
+					} else {
 						res = append(res, 0)
 					}
 				}
@@ -288,15 +288,15 @@ func (funcs *tagFuncs) If(opts *map[string]interface{}, args *htmlArgs, eachArgs
 				}
 				if sign == 1 {
 					retArg = append([]byte{'!'}, retArg...)
-				}else if sign == 2 {
+				} else if sign == 2 {
 					retArg = append([]byte{'<'}, retArg...)
-				}else if sign == 3 {
+				} else if sign == 3 {
 					retArg = append([]byte{'<', '='}, retArg...)
-				}else if sign == 4 {
+				} else if sign == 4 {
 					retArg = append([]byte{'>'}, retArg...)
-				}else if sign == 5 {
+				} else if sign == 5 {
 					retArg = append([]byte{'>', '='}, retArg...)
-				}else if sign == 6 {
+				} else if sign == 6 {
 					retArg = regex.JoinBytes('/', retArg, '/')
 				}
 				if inv {
@@ -304,7 +304,7 @@ func (funcs *tagFuncs) If(opts *map[string]interface{}, args *htmlArgs, eachArgs
 						if len(data(1)) != 0 {
 							if data(1)[0] == '<' {
 								return []byte{'>'}
-							}else if data(1)[0] == '>' {
+							} else if data(1)[0] == '>' {
 								return []byte{'<'}
 							}
 							return []byte{}
@@ -315,7 +315,7 @@ func (funcs *tagFuncs) If(opts *map[string]interface{}, args *htmlArgs, eachArgs
 				passCompArgs[len(res)] = regex.JoinBytes(key, '=', '"', goutil.HTML.EscapeArgs(retArg, '"'), '"')
 				if (!inv && precomp) || (inv && !precomp) {
 					res = append(res, 5)
-				}else{
+				} else {
 					res = append(res, 4)
 				}
 				continue
@@ -324,7 +324,7 @@ func (funcs *tagFuncs) If(opts *map[string]interface{}, args *htmlArgs, eachArgs
 			var val2 interface{}
 			if isStr != 0 || sign == 6 /* regex */ {
 				val2 = arg
-			}else{
+			} else {
 				val2 = GetOpt(arg, opts, eachArgs, 0, precomp, false)
 				if reflect.TypeOf(val2) == goutil.VarType["[]byte"] && len(val2.([]byte)) != 0 && val2.([]byte)[0] == 0 {
 					retArg := args.args[key]
@@ -333,15 +333,15 @@ func (funcs *tagFuncs) If(opts *map[string]interface{}, args *htmlArgs, eachArgs
 					}
 					if sign == 1 {
 						retArg = append([]byte{'!'}, retArg...)
-					}else if sign == 2 {
+					} else if sign == 2 {
 						retArg = append([]byte{'<'}, retArg...)
-					}else if sign == 3 {
+					} else if sign == 3 {
 						retArg = append([]byte{'<', '='}, retArg...)
-					}else if sign == 4 {
+					} else if sign == 4 {
 						retArg = append([]byte{'>'}, retArg...)
-					}else if sign == 5 {
+					} else if sign == 5 {
 						retArg = append([]byte{'>', '='}, retArg...)
-					}else if sign == 6 {
+					} else if sign == 6 {
 						retArg = regex.JoinBytes('/', retArg, '/')
 					}
 					if inv {
@@ -349,7 +349,7 @@ func (funcs *tagFuncs) If(opts *map[string]interface{}, args *htmlArgs, eachArgs
 							if len(data(1)) != 0 {
 								if data(1)[0] == '<' {
 									return []byte{'>'}
-								}else if data(1)[0] == '>' {
+								} else if data(1)[0] == '>' {
 									return []byte{'<'}
 								}
 								return []byte{}
@@ -360,7 +360,7 @@ func (funcs *tagFuncs) If(opts *map[string]interface{}, args *htmlArgs, eachArgs
 					passCompArgs[len(res)] = regex.JoinBytes(key, '=', '"', goutil.HTML.EscapeArgs(retArg, '"'), '"')
 					if (!inv && precomp) || (inv && !precomp) {
 						res = append(res, 5)
-					}else{
+					} else {
 						res = append(res, 4)
 					}
 					continue
@@ -370,112 +370,112 @@ func (funcs *tagFuncs) If(opts *map[string]interface{}, args *htmlArgs, eachArgs
 			if sign == 0 {
 				if (!inv && goutil.TypeEqual(val1, val2)) || (inv && !goutil.TypeEqual(val1, val2)) {
 					res = append(res, 1)
-				}else{
+				} else {
 					res = append(res, 0)
 				}
-			}else if sign == 1 {
+			} else if sign == 1 {
 				if (!inv && !goutil.TypeEqual(val1, val2)) || (inv && goutil.TypeEqual(val1, val2)) {
 					res = append(res, 1)
-				}else{
+				} else {
 					res = append(res, 0)
 				}
-			}else if sign == 2 {
+			} else if sign == 2 {
 				val2 = goutil.ToVarTypeInterface(val2, val1)
 				if val1 == nil {
 					if (!inv && val2 == nil) || (inv && val2 != nil) {
 						res = append(res, 0)
-					}else{
+					} else {
 						res = append(res, 1)
 					}
-				}else if val2 == nil {
+				} else if val2 == nil {
 					if (!inv && val1 == nil) || (inv && val1 != nil) {
 						res = append(res, 0)
-					}else{
+					} else {
 						res = append(res, 0)
 					}
-				}else{
+				} else {
 					//todo: handle <
 					if goutil.Conv.ToFloat(val1) < goutil.Conv.ToFloat(val2) {
 						res = append(res, 1)
-					}else{
+					} else {
 						res = append(res, 0)
 					}
 				}
-			}else if sign == 3 {
+			} else if sign == 3 {
 				val2 = goutil.ToVarTypeInterface(val2, val1)
 				if val1 == nil {
 					if (!inv && val2 == nil) || (inv && val2 != nil) {
 						res = append(res, 1)
-					}else{
+					} else {
 						res = append(res, 1)
 					}
-				}else if val2 == nil {
+				} else if val2 == nil {
 					if (!inv && val1 == nil) || (inv && val1 != nil) {
 						res = append(res, 1)
-					}else{
+					} else {
 						res = append(res, 0)
 					}
-				}else{
+				} else {
 					//todo: handle <=
 					if goutil.Conv.ToFloat(val1) <= goutil.Conv.ToFloat(val2) {
 						res = append(res, 1)
-					}else{
+					} else {
 						res = append(res, 0)
 					}
 				}
-			}else if sign == 4 {
+			} else if sign == 4 {
 				val2 = goutil.ToVarTypeInterface(val2, val1)
 				if val1 == nil {
 					if (!inv && val2 == nil) || (inv && val2 != nil) {
 						res = append(res, 0)
-					}else{
+					} else {
 						res = append(res, 0)
 					}
-				}else if val2 == nil {
+				} else if val2 == nil {
 					if (!inv && val1 == nil) || (inv && val1 != nil) {
 						res = append(res, 0)
-					}else{
+					} else {
 						res = append(res, 1)
 					}
-				}else{
+				} else {
 					//todo: handle >
 					if goutil.Conv.ToFloat(val1) > goutil.Conv.ToFloat(val2) {
 						res = append(res, 1)
-					}else{
+					} else {
 						res = append(res, 0)
 					}
 				}
-			}else if sign == 5 {
+			} else if sign == 5 {
 				val2 = goutil.ToVarTypeInterface(val2, val1)
 				if val1 == nil {
 					if (!inv && val2 == nil) || (inv && val2 != nil) {
 						res = append(res, 1)
-					}else{
+					} else {
 						res = append(res, 0)
 					}
-				}else if val2 == nil {
+				} else if val2 == nil {
 					if (!inv && val1 == nil) || (inv && val1 != nil) {
 						res = append(res, 1)
-					}else{
+					} else {
 						res = append(res, 1)
 					}
-				}else{
+				} else {
 					//todo: handle >=
 					if goutil.Conv.ToFloat(val1) >= goutil.Conv.ToFloat(val2) {
 						res = append(res, 1)
-					}else{
+					} else {
 						res = append(res, 0)
 					}
 				}
-			}else if sign == 6 {
+			} else if sign == 6 {
 				if regex.IsValidRef(&arg) {
 					rB := regex.Comp(string(arg)).Match(goutil.Conv.ToBytes(val1))
 					if (!inv && rB) || (inv && !rB) {
 						res = append(res, 1)
-					}else{
+					} else {
 						res = append(res, 0)
 					}
-				}else{
+				} else {
 					res = append(res, 0)
 				}
 			}
@@ -494,13 +494,13 @@ func (funcs *tagFuncs) If(opts *map[string]interface{}, args *htmlArgs, eachArgs
 					if i != 0 {
 						if res[i-1] == 2 {
 							preCompRes = append(preCompRes, ' ', '&')
-						}else if res[i-1] == 3 {
+						} else if res[i-1] == 3 {
 							preCompRes = append(preCompRes, ' ', '|')
-						}else if res[i-1] == 8 {
+						} else if res[i-1] == 8 {
 							if i > 1 {
 								if res[i-2] == 2 {
 									preCompRes = append(preCompRes, ' ', '&')
-								}else if res[i-2] == 3 {
+								} else if res[i-2] == 3 {
 									preCompRes = append(preCompRes, ' ', '|')
 								}
 							}
@@ -510,7 +510,7 @@ func (funcs *tagFuncs) If(opts *map[string]interface{}, args *htmlArgs, eachArgs
 							preCompRes = append(preCompRes, ' ', '(', ' ')
 						}
 						preCompRes = append(preCompRes, ' ')
-					}else if v == 7 {
+					} else if v == 7 {
 						preCompRes = append(preCompRes, '(', ' ')
 					}
 					preCompRes = append(preCompRes, a...)
@@ -522,20 +522,20 @@ func (funcs *tagFuncs) If(opts *map[string]interface{}, args *htmlArgs, eachArgs
 			if !modeAND && (!precomp || v == 1) {
 				break
 			}
-		}else if v == 0 || v == 4 || v == 6 {
+		} else if v == 0 || v == 4 || v == 6 {
 			r = false
 			if v == 4 || v == 6 {
 				if a, ok := passCompArgs[i]; ok {
 					if i != 0 {
 						if res[i-1] == 2 {
 							preCompRes = append(preCompRes, ' ', '&')
-						}else if res[i-1] == 3 {
+						} else if res[i-1] == 3 {
 							preCompRes = append(preCompRes, ' ', '|')
-						}else if res[i-1] == 8 {
+						} else if res[i-1] == 8 {
 							if i > 1 {
 								if res[i-2] == 2 {
 									preCompRes = append(preCompRes, ' ', '&')
-								}else if res[i-2] == 3 {
+								} else if res[i-2] == 3 {
 									preCompRes = append(preCompRes, ' ', '|')
 								}
 							}
@@ -545,7 +545,7 @@ func (funcs *tagFuncs) If(opts *map[string]interface{}, args *htmlArgs, eachArgs
 							preCompRes = append(preCompRes, ' ', '(', ' ')
 						}
 						preCompRes = append(preCompRes, ' ')
-					}else if v == 6 {
+					} else if v == 6 {
 						preCompRes = append(preCompRes, '(', ' ')
 					}
 					preCompRes = append(preCompRes, a...)
@@ -557,9 +557,9 @@ func (funcs *tagFuncs) If(opts *map[string]interface{}, args *htmlArgs, eachArgs
 			if modeAND && (!precomp || v == 0) {
 				break
 			}
-		}else if v == 2 {
+		} else if v == 2 {
 			modeAND = true
-		}else if v == 3 {
+		} else if v == 3 {
 			modeAND = false
 		}
 	}
@@ -575,7 +575,6 @@ func (funcs *tagFuncs) If(opts *map[string]interface{}, args *htmlArgs, eachArgs
 	return nil, r
 }
 
-
 // Rand sets a var option to crypto random bytes
 //
 // note: this method needs to be in sync
@@ -586,7 +585,7 @@ func (funcs *tagFuncs) Rand_SYNC(opts *map[string]interface{}, args *htmlArgs, e
 	// 0 = normal arg "arg"
 	// 1 = escaped option {{arg}}
 	// 2 = raw option {{{arg}}}
-	
+
 	if len(args.args["0"]) != 0 && args.args["0"][0] == 0 {
 		varName := args.args["0"][1:]
 
@@ -614,7 +613,7 @@ func (funcs *tagFuncs) Rand_SYNC(opts *map[string]interface{}, args *htmlArgs, e
 		var r []byte
 		if exclude != nil {
 			r = goutil.Crypt.RandBytes(size, exclude)
-		}else{
+		} else {
 			r = goutil.Crypt.RandBytes(size)
 		}
 
@@ -634,14 +633,14 @@ func (funcs *tagFuncs) Json(opts *map[string]interface{}, args *htmlArgs, eachAr
 	// 0 = normal arg "arg"
 	// 1 = escaped option {{arg}}
 	// 2 = raw option {{{arg}}}
-	
+
 	if len(args.args["0"]) != 0 && args.args["0"][0] == 0 {
 		varName := args.args["0"][1:]
 
 		if !regex.Comp(`^[\w_\-\$]+$`).MatchRef(&varName) {
 			return nil
 		}
-		
+
 		if hasVarOpt(varName, opts, eachArgs, 0, precomp) {
 			val := GetOpt(varName, opts, eachArgs, 0, precomp, false)
 			if b, ok := val.([]byte); ok && len(b) != 0 {
@@ -649,13 +648,13 @@ func (funcs *tagFuncs) Json(opts *map[string]interface{}, args *htmlArgs, eachAr
 					b = b[1:]
 				}
 				return b
-			}else if !goutil.IsZeroOfUnderlyingType(val) {
+			} else if !goutil.IsZeroOfUnderlyingType(val) {
 				if v, ok := val.(string); ok {
 					return regex.JoinBytes('"', goutil.HTML.EscapeArgs([]byte(v), '"'), '"')
 				}
 				return toBytesOrJson(val)
 			}
-		}else{
+		} else {
 			return append([]byte{0}, regex.JoinBytes('0', '=', '"', varName, '"')...)
 		}
 	}
@@ -672,7 +671,7 @@ func (funcs *tagFuncs) Lorem(opts *map[string]interface{}, args *htmlArgs, eachA
 	// 0 = normal arg "arg"
 	// 1 = escaped option {{arg}}
 	// 2 = raw option {{{arg}}}
-	
+
 	argInd := 0
 
 	wType := byte('p')
@@ -681,11 +680,11 @@ func (funcs *tagFuncs) Lorem(opts *map[string]interface{}, args *htmlArgs, eachA
 		if wType == 0 {
 			wType = 'p'
 		}
-	}else if strI := strconv.Itoa(argInd); len(args.args[strI]) != 0 && args.args[strI][0] == 0 && !regex.Compile(`^[0-9]+$`).Match(args.args[strI][1:]) {
+	} else if strI := strconv.Itoa(argInd); len(args.args[strI]) != 0 && args.args[strI][0] == 0 && !regex.Compile(`^[0-9]+$`).Match(args.args[strI][1:]) {
 		wType = goutil.ToType[byte](args.args[strI][1:])
 		if wType == 0 {
 			wType = 'p'
-		}else{
+		} else {
 			argInd++
 		}
 	}
@@ -697,14 +696,14 @@ func (funcs *tagFuncs) Lorem(opts *map[string]interface{}, args *htmlArgs, eachA
 
 	if len(args.args["rep"]) != 0 && args.args["rep"][0] == 0 {
 		rep = goutil.Conv.ToInt(args.args["rep"][1:])
-	}else if strI := strconv.Itoa(argInd); len(args.args[strI]) != 0 && args.args[strI][0] == 0 && regex.Comp(`^[0-9]+$`).Match(args.args[strI][1:]) {
+	} else if strI := strconv.Itoa(argInd); len(args.args[strI]) != 0 && args.args[strI][0] == 0 && regex.Comp(`^[0-9]+$`).Match(args.args[strI][1:]) {
 		rep = goutil.Conv.ToInt(args.args[strI][1:])
 		argInd++
 	}
 
 	if len(args.args["min"]) != 0 && args.args["min"][0] == 0 {
 		minLen = goutil.Conv.ToInt(args.args["min"][1:])
-	}else if strI := strconv.Itoa(argInd); len(args.args[strI]) != 0 && args.args[strI][0] == 0 && regex.Comp(`^[0-9]+$`).Match(args.args[strI][1:]) {
+	} else if strI := strconv.Itoa(argInd); len(args.args[strI]) != 0 && args.args[strI][0] == 0 && regex.Comp(`^[0-9]+$`).Match(args.args[strI][1:]) {
 		minLen = goutil.Conv.ToInt(args.args[strI][1:])
 		argInd++
 		minSet = true
@@ -712,10 +711,10 @@ func (funcs *tagFuncs) Lorem(opts *map[string]interface{}, args *htmlArgs, eachA
 
 	if len(args.args["max"]) != 0 && args.args["max"][0] == 0 {
 		maxLen = goutil.Conv.ToInt(args.args["max"][1:])
-	}else if strI := strconv.Itoa(argInd); len(args.args[strI]) != 0 && args.args[strI][0] == 0 && regex.Comp(`^[0-9]+$`).Match(args.args[strI][1:]) {
+	} else if strI := strconv.Itoa(argInd); len(args.args[strI]) != 0 && args.args[strI][0] == 0 && regex.Comp(`^[0-9]+$`).Match(args.args[strI][1:]) {
 		maxLen = goutil.Conv.ToInt(args.args[strI][1:])
 		argInd++
-	}else if minSet {
+	} else if minSet {
 		maxLen = minLen
 	}
 

@@ -13,7 +13,7 @@ import (
 // escape: 0 = raw, 1 = raw arg, 2 = html, 3 = arg, 4 = html arg key
 func GetOpt(name []byte, opts *map[string]interface{}, eachArgs *[]EachArgs, escape uint8, precomp bool, stringsOnly bool) interface{} {
 	regWord := `(?:[\w_\-$]+|'(?:\\[\\']|[^'])*'|"(?:\\[\\"]|[^"])*"|\'(?:\\[\\\']|[^\'])*\')+`
-	nameVars := regex.Comp(`((?:`+regWord+`|\.`+regWord+`|\[`+regWord+`\])+)`).SplitRef(&name)
+	nameVars := regex.Comp(`((?:` + regWord + `|\.` + regWord + `|\[` + regWord + `\])+)`).SplitRef(&name)
 
 	varList := [][]byte{}
 	newVar := []byte{}
@@ -21,7 +21,7 @@ func GetOpt(name []byte, opts *map[string]interface{}, eachArgs *[]EachArgs, esc
 		if len(v) == 1 && v[0] == '|' && len(newVar) != 0 {
 			varList = append(varList, newVar)
 			newVar = []byte{}
-		}else if len(v) != 0 {
+		} else if len(v) != 0 {
 			newVar = append(newVar, v...)
 		}
 	}
@@ -64,7 +64,7 @@ func GetOpt(name []byte, opts *map[string]interface{}, eachArgs *[]EachArgs, esc
 			continue
 		}
 
-		objNameList := regex.Comp(`(\[`+regWord+`\])|\.(`+regWord+`|)`).SplitRef(&varName)
+		objNameList := regex.Comp(`(\[` + regWord + `\])|\.(` + regWord + `|)`).SplitRef(&varName)
 
 		objList := [][]byte{}
 		for _, v := range objNameList {
@@ -87,7 +87,7 @@ func GetOpt(name []byte, opts *map[string]interface{}, eachArgs *[]EachArgs, esc
 		}
 
 		val = getVarOpt(objList[0], opts, eachArgs, escape, precomp)
-		
+
 		endLoop := false
 		for i := 1; i < len(objList); i++ {
 			t := reflect.TypeOf(val)
@@ -98,10 +98,10 @@ func GetOpt(name []byte, opts *map[string]interface{}, eachArgs *[]EachArgs, esc
 
 			n := objList[i]
 			if len(n) >= 2 && n[0] == '[' && n[len(n)-1] == ']' {
-				n = n[1:len(n)-1]
+				n = n[1 : len(n)-1]
 				if len(n) >= 2 && ((n[0] == '\'' && n[len(n)-1] == '\'') || (n[0] == '"' && n[len(n)-1] == '"') || (n[0] == '`' && n[len(n)-1] == '`')) {
 					n = regex.Comp(`\\([\\'"\'])`).RepStrComp(n[1:len(n)-1], []byte("$1"))
-				}else{
+				} else {
 					if !hasVarOpt(n, opts, eachArgs, escape, precomp) {
 						varComp = append(varComp, varName)
 						endLoop = true
@@ -119,17 +119,17 @@ func GetOpt(name []byte, opts *map[string]interface{}, eachArgs *[]EachArgs, esc
 			if t == goutil.VarType["map[string]interface{}"] {
 				if v, ok := val.(map[string]interface{})[string(n)]; ok {
 					val = v
-				}else if v, ok := val.(map[string]interface{})["$"+string(n)]; ok && n[0] != '$' {
+				} else if v, ok := val.(map[string]interface{})["$"+string(n)]; ok && n[0] != '$' {
 					val = v
-				}else{
+				} else {
 					endLoop = true
 					break
 				}
-			}else if t == goutil.VarType["[]interface{}"] {
+			} else if t == goutil.VarType["[]interface{}"] {
 				nI := goutil.Conv.ToInt(n)
 				if len(val.([]interface{})) > nI {
 					val = val.([]interface{})[nI]
-				}else{
+				} else {
 					endLoop = true
 					break
 				}
@@ -175,22 +175,22 @@ func getEachArg(name []byte, eachArgs *[]EachArgs) interface{} {
 
 	nameConst := append([]byte{'$'}, name...)
 
-	for i := len(*eachArgs)-1; i >= 0; i-- {
+	for i := len(*eachArgs) - 1; i >= 0; i-- {
 		if bytes.Equal(name, (*eachArgs)[i].key) || bytes.Equal(nameConst, (*eachArgs)[i].key) {
 			if (*eachArgs)[i].passToComp {
 				return []byte{0}
-			}else if (*eachArgs)[i].listMap != nil {
+			} else if (*eachArgs)[i].listMap != nil {
 				return (*eachArgs)[i].listArr[(*eachArgs)[i].ind]
-			}else{
+			} else {
 				return (*eachArgs)[i].ind
 			}
-		}else if bytes.Equal(name, (*eachArgs)[i].val) || bytes.Equal(nameConst, (*eachArgs)[i].val) {
+		} else if bytes.Equal(name, (*eachArgs)[i].val) || bytes.Equal(nameConst, (*eachArgs)[i].val) {
 			if (*eachArgs)[i].passToComp {
 				return []byte{0}
-			}else if (*eachArgs)[i].listMap != nil {
+			} else if (*eachArgs)[i].listMap != nil {
 				key := goutil.Conv.ToString((*eachArgs)[i].listArr[(*eachArgs)[i].ind])
 				return (*eachArgs)[i].listMap[key]
-			}else{
+			} else {
 				return (*eachArgs)[i].listArr[(*eachArgs)[i].ind]
 			}
 		}
@@ -251,16 +251,16 @@ func getVarOpt(name []byte, opts *map[string]interface{}, eachArgs *[]EachArgs, 
 func getVarStr(name []byte, escape uint8) []byte {
 	if bytes.HasPrefix(name, []byte{'$'}) {
 		return nil
-	}else if escape == 0 {
+	} else if escape == 0 {
 		// pass with fist byte as 0 to authorize passing a var
 		return regex.JoinBytes([]byte{0}, []byte("{{{"), name, []byte("}}}"))
-	}else if escape == 1 {
+	} else if escape == 1 {
 		return regex.JoinBytes([]byte{0}, []byte("{{{="), name, []byte("}}}"))
-	}else if escape == 2 {
+	} else if escape == 2 {
 		return regex.JoinBytes([]byte{0}, []byte("{{"), name, []byte("}}"))
-	}else if escape == 3 {
+	} else if escape == 3 {
 		return regex.JoinBytes([]byte{0}, []byte("{{="), name, []byte("}}"))
-	}else if escape == 4 {
+	} else if escape == 4 {
 		return regex.JoinBytes([]byte{0}, []byte("{{:"), name, []byte("}}"))
 	}
 
@@ -270,9 +270,9 @@ func getVarStr(name []byte, escape uint8) []byte {
 func escapeVarVal(val interface{}, escape uint8) interface{} {
 	if escape == 0 || escape == 1 {
 		return val
-	}else if escape == 2 {
+	} else if escape == 2 {
 		return goutil.HTML.Escape(toBytesOrJson(val))
-	}else if escape == 3 {
+	} else if escape == 3 {
 		valB := goutil.HTML.EscapeArgs(toBytesOrJson(val), '"')
 
 		// prevent xss injection
@@ -281,7 +281,7 @@ func escapeVarVal(val interface{}, escape uint8) interface{} {
 		}
 
 		return valB
-	}else if escape == 4 {
+	} else if escape == 4 {
 		return regex.Comp(`[^\w_-]+`).RepStr(toBytesOrJson(val), []byte{})
 	}
 
@@ -294,7 +294,7 @@ func toBytesOrJson(val interface{}) []byte {
 		if json, err := goutil.JSON.Stringify(val, 2); err == nil {
 			return json
 		}
-	}else{
+	} else {
 		return goutil.Conv.ToBytes(val)
 	}
 

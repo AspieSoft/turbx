@@ -12,7 +12,7 @@ import (
 var reLinkMD *regex.Regexp = regex.Comp(`(\!|)\[((?:"(?:\\[\\"'\']|\.)*"|'(?:\\[\\"'\']|\.)*'|\'(?:\\[\\"'\']|\.)*\'|.)*?)\]\(((?:"(?:\\[\\"'\']|\.)*"|'(?:\\[\\"'\']|\.)*'|\'(?:\\[\\"'\']|\.)*\'|.)*?)\)`)
 
 type mdListData struct {
-	tab uint
+	tab      uint
 	listType byte
 }
 
@@ -23,7 +23,7 @@ func compileMarkdown(reader *liveread.Reader[uint8], write *func(b []byte, raw .
 		// note: when another markdown selector shares common chars with a `*firstChar` selector, it may need to be run ahead of time, and set `*firstChar = false` before returning
 		if buf[0] == '*' || buf[0] == '_' || buf[0] == '~' || buf[0] == '-' {
 			firstByte := buf[0]
-			
+
 			ind := uint(1)
 			level := []byte{buf[0]}
 			buf, err = reader.Get(ind, 1)
@@ -37,34 +37,34 @@ func compileMarkdown(reader *liveread.Reader[uint8], write *func(b []byte, raw .
 				*firstChar = false
 
 				buf, err = reader.Get(ind, 1)
-	
+
 				levelEnd := level
 				cont := []byte{}
 				for err == nil && buf[0] != '\n' {
 					if len(levelEnd) == 0 {
 						break
-					}else if buf[0] == levelEnd[len(levelEnd)-1] {
+					} else if buf[0] == levelEnd[len(levelEnd)-1] {
 						levelEnd = levelEnd[:len(levelEnd)-1]
 					}
-	
+
 					cont = append(cont, buf[0])
 					ind++
 					buf, err = reader.Get(ind, 1)
 				}
-	
+
 				(*write)(levelEnd)
 				reader.Discard(uint(len(levelEnd)))
-	
+
 				if len(levelEnd) != len(level) {
 					level = level[len(levelEnd):]
-	
+
 					(*write)(mdHandleFonts(append(level, cont...)))
-	
+
 					reader.Discard(uint(len(cont) + len(level)))
 					return true
 				}
 				return false
-			}else{
+			} else {
 				buf, err = reader.Peek(1)
 			}
 		}
@@ -95,7 +95,7 @@ func compileMarkdown(reader *liveread.Reader[uint8], write *func(b []byte, raw .
 				(*write)(regex.JoinBytes([]byte("<h"), int(level), '>', mdHandleFonts(cont), []byte("</h"), int(level), '>'))
 
 				return true
-			}else if buf[0] == '-' {
+			} else if buf[0] == '-' {
 				//todo: fix <hr/> not being seen as a first char bu the compiler
 
 				level := uint(0)
@@ -136,7 +136,7 @@ func compileMarkdown(reader *liveread.Reader[uint8], write *func(b []byte, raw .
 					if buf[0] != '.' {
 						skipList = true
 						buf, err = reader.Peek(1)
-					}else{
+					} else {
 						ind++
 						buf, err = reader.Get(ind, 1)
 
@@ -150,13 +150,13 @@ func compileMarkdown(reader *liveread.Reader[uint8], write *func(b []byte, raw .
 					// reader.Discard(ind)
 					ind++
 					buf, err = reader.Get(ind, 1)
-		
+
 					if buf[0] == ' ' {
 						// reader.Discard(1)
 						ind++
 						buf, err = reader.Get(ind, 1)
 					}
-		
+
 					cont := []byte{}
 					for err == nil && buf[0] != '\n' {
 						cont = append(cont, buf[0])
@@ -207,7 +207,7 @@ func compileMarkdown(reader *liveread.Reader[uint8], write *func(b []byte, raw .
 
 									sp = 0
 									continue
-								}else if regex.Comp(`^[0-9]`).MatchRef(&buf) {
+								} else if regex.Comp(`^[0-9]`).MatchRef(&buf) {
 									break
 								}
 
@@ -219,9 +219,9 @@ func compileMarkdown(reader *liveread.Reader[uint8], write *func(b []byte, raw .
 							if closing == 0 {
 								if err != nil || buf[0] == '\n' {
 									closing = 1
-								}else if sp < *spaces {
+								} else if sp < *spaces {
 									closing = 2
-								}else{
+								} else {
 									key := []byte{}
 									for err == nil && regex.Comp(`^[0-9]`).MatchRef(&buf) {
 										key = append(key, buf[0])
@@ -236,26 +236,26 @@ func compileMarkdown(reader *liveread.Reader[uint8], write *func(b []byte, raw .
 								}
 							}
 						}
-						
+
 						(*mdStore)["listTab"] = append((*mdStore)["listTab"].([]mdListData), mdListData{
-							tab: *spaces,
+							tab:      *spaces,
 							listType: listType,
 						})
 
 						if listType == 0 {
 							(*write)([]byte("<ul>"))
-						}else if listType == 1 {
+						} else if listType == 1 {
 							(*write)([]byte("<ol>"))
-						}else if listType == 0 {
+						} else if listType == 0 {
 							(*write)([]byte("<ol reversed>"))
 						}
 
 						(*write)(regex.JoinBytes([]byte("<li>"), cont, []byte("</li>")))
-					}else{
+					} else {
 						for (*mdStore)["listTab"].([]mdListData)[len((*mdStore)["listTab"].([]mdListData))-1].tab > *spaces {
 							if (*mdStore)["listTab"].([]mdListData)[len((*mdStore)["listTab"].([]mdListData))-1].listType == 0 {
 								(*write)([]byte("</ul>"))
-							}else{
+							} else {
 								(*write)([]byte("</ol>"))
 							}
 							(*mdStore)["listTab"] = (*mdStore)["listTab"].([]mdListData)[:len((*mdStore)["listTab"].([]mdListData))-1]
@@ -268,15 +268,15 @@ func compileMarkdown(reader *liveread.Reader[uint8], write *func(b []byte, raw .
 						for len((*mdStore)["listTab"].([]mdListData)) != 0 {
 							if (*mdStore)["listTab"].([]mdListData)[len((*mdStore)["listTab"].([]mdListData))-1].listType == 0 {
 								(*write)([]byte("</ul>"))
-							}else{
+							} else {
 								(*write)([]byte("</ol>"))
 							}
 							(*mdStore)["listTab"] = (*mdStore)["listTab"].([]mdListData)[:len((*mdStore)["listTab"].([]mdListData))-1]
 						}
-					}else if closing == 2 {
+					} else if closing == 2 {
 						if (*mdStore)["listTab"].([]mdListData)[len((*mdStore)["listTab"].([]mdListData))-1].listType == 0 {
 							(*write)([]byte("</ul>"))
-						}else{
+						} else {
 							(*write)([]byte("</ol>"))
 						}
 						(*mdStore)["listTab"] = (*mdStore)["listTab"].([]mdListData)[:len((*mdStore)["listTab"].([]mdListData))-1]
@@ -290,7 +290,7 @@ func compileMarkdown(reader *liveread.Reader[uint8], write *func(b []byte, raw .
 
 			//todo: handle tables
 			if buf[0] == '|' {
-				
+
 			}
 
 			// handle blockquotes
@@ -321,7 +321,7 @@ func compileMarkdown(reader *liveread.Reader[uint8], write *func(b []byte, raw .
 					ind++
 					buf, err = reader.Get(ind, 1)
 				}
-				
+
 				if buf[0] != '>' {
 					(*mdStore)["inBlockquote"] = 2
 				}
@@ -360,12 +360,12 @@ func compileMarkdown(reader *liveread.Reader[uint8], write *func(b []byte, raw .
 
 				if len(lang) == 0 {
 					(*write)(regex.JoinBytes([]byte("<pre>"), cont, []byte("</pre>")), true)
-				}else{
+				} else {
 					(*write)(regex.JoinBytes([]byte("<code lang=\""), lang, []byte("\">"), cont, []byte("</code>")), true)
 				}
 
 				return true
-			}else{
+			} else {
 				ind := uint(1)
 				buf, err = reader.Get(ind, 1)
 				cont := []byte{}
@@ -378,7 +378,7 @@ func compileMarkdown(reader *liveread.Reader[uint8], write *func(b []byte, raw .
 				if err == nil && buf[0] == '`' {
 					(*write)(regex.JoinBytes([]byte("<pre>"), cont, []byte("</pre>")))
 
-					reader.Discard(ind+1)
+					reader.Discard(ind + 1)
 					return true
 				}
 			}
@@ -417,7 +417,6 @@ func compileMarkdown(reader *liveread.Reader[uint8], write *func(b []byte, raw .
 
 			buf, err = reader.Peek(1)
 		}
-
 
 		ind := uint(0)
 		isEmbed := false
@@ -460,9 +459,9 @@ func compileMarkdown(reader *liveread.Reader[uint8], write *func(b []byte, raw .
 					}
 
 					data1 = append(data1, q)
-				}else if buf[0] == '[' {
+				} else if buf[0] == '[' {
 					innerLink++
-				}else if innerLink != 0 && buf[0] == ']' {
+				} else if innerLink != 0 && buf[0] == ']' {
 					innerLink--
 				}
 
@@ -481,7 +480,7 @@ func compileMarkdown(reader *liveread.Reader[uint8], write *func(b []byte, raw .
 
 			ind++
 			buf, err = reader.Get(ind, 1)
-			
+
 			var data2 []byte = nil
 			if buf[0] == '(' {
 				back := ind
@@ -492,9 +491,9 @@ func compileMarkdown(reader *liveread.Reader[uint8], write *func(b []byte, raw .
 					if buf[0] == '\n' {
 						break
 					}
-	
+
 					data2 = append(data2, buf[0])
-	
+
 					// handle strings
 					if buf[0] == '"' || buf[0] == '\'' || buf[0] == '`' {
 						q := buf[0]
@@ -513,7 +512,7 @@ func compileMarkdown(reader *liveread.Reader[uint8], write *func(b []byte, raw .
 
 						data2 = append(data2, q)
 					}
-	
+
 					ind++
 					buf, err = reader.Get(ind, 1)
 				}
@@ -522,7 +521,7 @@ func compileMarkdown(reader *liveread.Reader[uint8], write *func(b []byte, raw .
 					data2 = nil
 					ind = back
 					buf, err = reader.Get(ind, 1)
-				}else{
+				} else {
 					ind++
 					buf, err = reader.Get(ind, 1)
 				}
@@ -559,7 +558,7 @@ func compileMarkdown(reader *liveread.Reader[uint8], write *func(b []byte, raw .
 						ind++
 						buf, err = reader.Get(ind, 1)
 						continue
-					}else if argMode == 0 && buf[0] == ':' {
+					} else if argMode == 0 && buf[0] == ':' {
 						key = string(nextArg)
 						nextArg = []byte{}
 						argMode = 2
@@ -577,7 +576,7 @@ func compileMarkdown(reader *liveread.Reader[uint8], write *func(b []byte, raw .
 							buf, err = reader.Get(ind, 1)
 						}
 						continue
-					}else if argMode == 0 && regex.Comp(`^[ \t]`).MatchRef(&buf) {
+					} else if argMode == 0 && regex.Comp(`^[ \t]`).MatchRef(&buf) {
 						key = strconv.Itoa(argInd)
 						argInd++
 
@@ -586,11 +585,11 @@ func compileMarkdown(reader *liveread.Reader[uint8], write *func(b []byte, raw .
 						key = ""
 						nextArg = []byte{}
 						argMode = 0
-						
+
 						ind++
 						buf, err = reader.Get(ind, 1)
 						continue
-					}else if argMode == 1 && regex.Comp(`^[\s;]`).MatchRef(&buf) {
+					} else if argMode == 1 && regex.Comp(`^[\s;]`).MatchRef(&buf) {
 						args[key] = nextArg
 						argKeys = append(argKeys, key)
 						key = ""
@@ -600,7 +599,7 @@ func compileMarkdown(reader *liveread.Reader[uint8], write *func(b []byte, raw .
 						ind++
 						buf, err = reader.Get(ind, 1)
 						continue
-					}else if argMode == 2 && buf[0] == ';' {
+					} else if argMode == 2 && buf[0] == ';' {
 						css[key] = nextArg
 						cssKeys = append(cssKeys, key)
 						key = ""
@@ -610,7 +609,7 @@ func compileMarkdown(reader *liveread.Reader[uint8], write *func(b []byte, raw .
 						ind++
 						buf, err = reader.Get(ind, 1)
 						continue
-					}else if argMode == 2 && regex.Comp(`^[\r\n]`).MatchRef(&buf) {
+					} else if argMode == 2 && regex.Comp(`^[\r\n]`).MatchRef(&buf) {
 						if buf[0] != '\r' {
 							nextArg = append(nextArg, ' ')
 						}
@@ -620,7 +619,7 @@ func compileMarkdown(reader *liveread.Reader[uint8], write *func(b []byte, raw .
 					}
 
 					nextArg = append(nextArg, buf[0])
-	
+
 					// handle strings
 					if buf[0] == '"' || buf[0] == '\'' || buf[0] == '`' {
 						q := buf[0]
@@ -648,7 +647,7 @@ func compileMarkdown(reader *liveread.Reader[uint8], write *func(b []byte, raw .
 
 						nextArg = append(nextArg, q)
 					}
-	
+
 					ind++
 					buf, err = reader.Get(ind, 1)
 				}
@@ -656,17 +655,17 @@ func compileMarkdown(reader *liveread.Reader[uint8], write *func(b []byte, raw .
 				if err != nil || buf[0] != '}' {
 					ind = back
 					buf, err = reader.Get(ind, 1)
-				}else{
+				} else {
 					ind++
 					buf, err = reader.Get(ind, 1)
 
 					if len(nextArg) != 0 {
 						if argMode == 0 {
 							args[strconv.Itoa(argInd)] = nextArg
-						}else if argMode == 1 {
+						} else if argMode == 1 {
 							args[key] = nextArg
 							argKeys = append(argKeys, key)
-						}else if argMode == 2 {
+						} else if argMode == 2 {
 							css[key] = nextArg
 							cssKeys = append(cssKeys, key)
 						}
@@ -677,16 +676,16 @@ func compileMarkdown(reader *liveread.Reader[uint8], write *func(b []byte, raw .
 						if v, ok := args["style"]; !ok || v == nil {
 							args["style"] = []byte{}
 							argKeys = append(argKeys, "style")
-						}else if args["style"][len(args["style"])-1] != ';' {
+						} else if args["style"][len(args["style"])-1] != ';' {
 							args["style"] = append(args["style"], ';')
 						}
 						args["style"] = regex.Comp(`^(["'\'])(.*)\1$`).RepStrComp(args["style"], []byte("$2"))
-	
+
 						sortStrings(&cssKeys)
 						for _, key := range cssKeys {
 							args["style"] = append(args["style"], regex.JoinBytes(key, ':', css[key], ';')...)
 						}
-	
+
 						args["style"] = regex.JoinBytes('"', goutil.HTML.EscapeArgs(args["style"], '"'), '"')
 					}
 
@@ -699,7 +698,7 @@ func compileMarkdown(reader *liveread.Reader[uint8], write *func(b []byte, raw .
 
 						if regex.Comp(`^[0-9]+$`).Match([]byte(key)) {
 							htmlArgs = append(htmlArgs, regex.JoinBytes(args[key])...)
-						}else{
+						} else {
 							htmlArgs = append(htmlArgs, regex.JoinBytes(key, '=', args[key])...)
 						}
 					}
@@ -716,7 +715,7 @@ func compileMarkdown(reader *liveread.Reader[uint8], write *func(b []byte, raw .
 						d2 := data(3)
 						if len(data(1)) != 0 {
 							return mdHandleEmbed(&d1, &d2, nil)
-						}else{
+						} else {
 							return mdHandleLink(&d1, &d2, nil)
 						}
 					})
@@ -724,10 +723,10 @@ func compileMarkdown(reader *liveread.Reader[uint8], write *func(b []byte, raw .
 
 				if isEmbed {
 					(*write)(mdHandleEmbed(&data1, &data2, &htmlArgs))
-				}else{
+				} else {
 					(*write)(mdHandleLink(&data1, &data2, &htmlArgs))
 				}
-			}else if data1 != nil {
+			} else if data1 != nil {
 				(*write)(mdHandleInput(&data1, &htmlArgs))
 			}
 
@@ -751,16 +750,15 @@ func compileMarkdown(reader *liveread.Reader[uint8], write *func(b []byte, raw .
 // markdownCompilerNextLine runs when the main compiler finds a line break
 //
 // note: this method only runs if this is not already set to the firstChar, but is transitioning to the firstChar
-func compileMarkdownNextLine(reader *liveread.Reader[uint8], write *func(b []byte, raw ...bool), firstChar *bool, spaces *uint, mdStore *map[string]interface{}){
+func compileMarkdownNextLine(reader *liveread.Reader[uint8], write *func(b []byte, raw ...bool), firstChar *bool, spaces *uint, mdStore *map[string]interface{}) {
 	*firstChar = false
 	*spaces = 0
-	
+
 	if (*mdStore)["inBlockquote"] == 2 {
 		(*mdStore)["inBlockquote"] = 0
 		(*write)([]byte("</blockquote>"))
 	}
 }
-
 
 func mdHandleLink(name *[]byte, url *[]byte, htmlArgs *[]byte) []byte {
 	return regex.JoinBytes([]byte("<a href=\""), goutil.HTML.EscapeArgs(*url, '"'), '"', *htmlArgs, '>', *name, []byte("</a>"))
@@ -782,9 +780,9 @@ func mdHandleFonts(data []byte) []byte {
 	data = regex.Comp(`(\*{1,3})(?![\s*])([^\r\n]+?)(?<![\s*])\1`).RepFuncRef(&data, func(data func(int) []byte) []byte {
 		if len(data(1)) == 3 {
 			return regex.JoinBytes([]byte("<strong><em>"), data(2), []byte("</em></strong>"))
-		}else if len(data(1)) == 2 {
+		} else if len(data(1)) == 2 {
 			return regex.JoinBytes([]byte("<strong>"), data(2), []byte("</strong>"))
-		}else if len(data(1)) == 1 {
+		} else if len(data(1)) == 1 {
 			return regex.JoinBytes([]byte("<em>"), data(2), []byte("</em>"))
 		}
 

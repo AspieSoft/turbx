@@ -10,7 +10,7 @@ import (
 	"github.com/AspieSoft/turbx/v2/compiler"
 )
 
-func Test(t *testing.T){
+func Test(t *testing.T) {
 	defer compiler.Close()
 
 	compiler.SetConfig(compiler.Config{
@@ -47,7 +47,6 @@ func Test(t *testing.T){
 
 	endTime := time.Now().UnixNano()
 
-
 	if path != "" {
 		html, err = os.ReadFile(path)
 		if err != nil {
@@ -61,7 +60,7 @@ func Test(t *testing.T){
 			compiler.LogErr(err)
 			return
 		}
-	}else if comp == 2 {
+	} else if comp == 2 {
 		if html, err = goutil.GZIP.UnZip(html); err != nil {
 			compiler.LogErr(err)
 			return
@@ -72,5 +71,5 @@ func Test(t *testing.T){
 	fmt.Println(string(html))
 	fmt.Println("----------")
 
-	fmt.Println(float64(endTime - startTime) / float64(time.Millisecond), "ms")
+	fmt.Println(float64(endTime-startTime)/float64(time.Millisecond), "ms")
 }
