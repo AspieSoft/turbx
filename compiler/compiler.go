@@ -4,8 +4,11 @@ import (
 	"bufio"
 	"bytes"
 	"compress/gzip"
+	"crypto/md5"
+	"encoding/base64"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -255,6 +258,30 @@ func InitDefault() {
 								cachePath = append(cachePath, staticPath+".html")
 							}
 
+							if len(cachePath) == 0 {
+								continue
+							}
+
+							sumPath := string(regex.Comp(`\.html(\.(?:cache|gz|br)|)$`).RepStr([]byte(cachePath[0]), []byte(".cache.md5sum")))
+							sum, err := os.ReadFile(sumPath)
+							if err != nil {
+								for _, cPath := range cachePath {
+									os.Remove(cPath)
+								}
+								os.Remove(sumPath)
+								continue
+							}
+
+							sumData := bytes.SplitN(sum, []byte{'\n'}, 2)
+
+							if resSum, err := getCheckSumMD5(string(sumData[0])); err != nil || !bytes.Equal(sumData[1], resSum) {
+								for _, cPath := range cachePath {
+									os.Remove(cPath)
+								}
+								os.Remove(sumPath)
+								continue
+							}
+
 							htmlPreCache.Set(path, cacheObj{
 								cachePath: cachePath,
 								static:    true,
@@ -354,6 +381,8 @@ var keepCommentRE *regex.Regexp = regex.Comp(`(?i)(^\s*(?:\!|\([cr]\))|^\s*\[?[\
 
 var runningCompiler bool = true
 
+var cacheFileReloader chan []string
+
 func init() {
 	root, err := filepath.Abs("views")
 	if err != nil {
@@ -384,6 +413,7 @@ func init() {
 					os.Remove(file)
 				}
 			}
+			os.Remove(string(regex.Comp(`\.html(\.(?:cache|gz|br)|)$`).RepStr([]byte(data.cachePath[0]), []byte(".cache.md5sum"))))
 		}
 	}
 	cacheWatcher.OnRemove = func(path, op string) bool {
@@ -394,6 +424,7 @@ func init() {
 					os.Remove(file)
 				}
 			}
+			os.Remove(string(regex.Comp(`\.html(\.(?:cache|gz|br)|)$`).RepStr([]byte(data.cachePath[0]), []byte(".cache.md5sum"))))
 		}
 		return true
 	}
@@ -435,6 +466,8 @@ func init() {
 		DebugMode:       false,
 	}
 
+	cacheFileReloader = make(chan []string)
+
 	// clear cache items as needed
 	go func() {
 		lastRun := 0
@@ -464,6 +497,7 @@ func init() {
 							os.Remove(file)
 						}
 					}
+					os.Remove(string(regex.Comp(`\.html(\.(?:cache|gz|br)|)$`).RepStr([]byte(data.cachePath[0]), []byte(".cache.md5sum"))))
 				}
 				return true
 			})
@@ -489,12 +523,32 @@ func init() {
 			})
 		}
 	}()
+
+	go func() {
+		for {
+			data := <- cacheFileReloader
+			if data == nil {
+				break
+			}
+
+			if regex.Comp(`[\r\n]`).Match([]byte(data[0])) {
+				continue
+			}
+
+			data[1] = string(regex.Comp(`\.html(\.(?:cache|gz|br)|)$`).RepStr([]byte(data[1]), []byte(".cache.md5sum")))
+
+			if sum, err := getCheckSumMD5(data[0]); err == nil {
+				os.WriteFile(data[1], regex.JoinBytes([]byte(data[0]), '\n', sum), 0775)
+			}
+		}
+	}()
 }
 
 func Close() {
 	runningCompiler = false
 	cacheWatcher.CloseWatcher("*")
 	staticWatcher.CloseWatcher("*")
+	cacheFileReloader <-nil
 }
 
 func LogErr(err error) {
@@ -1625,6 +1679,7 @@ func PreCompile(path string, opts map[string]interface{}) error {
 						os.Remove(file)
 					}
 				}
+				os.Remove(string(regex.Comp(`\.html(\.(?:cache|gz|br)|)$`).RepStr([]byte(oldCache.cachePath[0]), []byte(".cache.md5sum"))))
 			}
 
 			htmlPreCache.Set(origCachePath, cacheObj{
@@ -1632,6 +1687,8 @@ func PreCompile(path string, opts map[string]interface{}) error {
 				static:    true,
 				accessed:  int(time.Now().UnixMilli() / 60000),
 			})
+
+			cacheFileReloader <-[]string{origCachePath, cachePath[0]}
 		}
 	} else {
 		// cache dynamic html file
@@ -1663,6 +1720,7 @@ func PreCompile(path string, opts map[string]interface{}) error {
 						os.Remove(file)
 					}
 				}
+				os.Remove(string(regex.Comp(`\.html(\.(?:cache|gz|br)|)$`).RepStr([]byte(oldCache.cachePath[0]), []byte(".cache.md5sum"))))
 			}
 
 			htmlPreCache.Set(origCachePath, cacheObj{
@@ -1670,6 +1728,8 @@ func PreCompile(path string, opts map[string]interface{}) error {
 				static:    false,
 				accessed:  int(time.Now().UnixMilli() / 60000),
 			})
+
+			cacheFileReloader <-[]string{origCachePath, cachePath[0]}
 		}
 	}
 
@@ -3478,4 +3538,22 @@ func cloneArr[T any](list []T) []T {
 		clone[i] = v
 	}
 	return clone
+}
+
+
+func getCheckSumMD5(path string) ([]byte, error) {
+	file, err := os.Open(path)
+ 	if err != nil {
+ 		return []byte{}, err
+ 	}
+
+ 	defer file.Close()
+
+ 	hash := md5.New()
+ 	_, err = io.Copy(hash, file)
+ 	if err != nil {
+ 		return []byte{}, err
+ 	}
+
+ 	return []byte(base64.StdEncoding.EncodeToString(hash.Sum(nil))), nil
 }
