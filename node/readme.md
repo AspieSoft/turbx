@@ -12,6 +12,9 @@
 
 A Fast and Easy To Use View Engine, Compiled In Go.
 
+> Note: this is the info for the NodeJS module.
+> Click [here](https://github.com/AspieSoft/turbx) to find info on the Go module.
+
 ## Whats New
 
 - Compiler will auto compress to gzip or brotli if the browser supports it

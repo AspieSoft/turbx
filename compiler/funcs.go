@@ -4,929 +4,758 @@ import (
 	"bytes"
 	"errors"
 	"reflect"
-	"sort"
 	"strconv"
 
 	"github.com/AspieSoft/go-regex/v4"
-	"github.com/AspieSoft/goutil/v4"
+	"github.com/AspieSoft/goutil/v5"
 	lorem "github.com/drhodes/golorem"
 )
 
-type compFN struct {}
-
-var funcs compFN = compFN{}
-
-var userFuncList map[string]func(args *map[string][]byte, cont *[]byte, opts *map[string]interface{}, pre bool, addVars *[]KeyVal)(interface{}, error) = map[string]func(args *map[string][]byte, cont *[]byte, opts *map[string]interface{}, pre bool, addVars *[]KeyVal)(interface{}, error){}
-
-
-// KeyVal is used to allow key:value lists to be sorted in an array
-type KeyVal struct {
-	Key []byte
-	Val interface{}
+type tagFuncs struct {
+	list map[string]func(opts *map[string]interface{}, args *htmlArgs, eachArgs *[]EachArgs, precomp bool) []byte
 }
 
-type eachList struct {
-	List *[]KeyVal
-	As []byte
-	Of []byte
+var TagFuncs tagFuncs = tagFuncs{}
+
+// AddFN adds a new function to the compiler
+//
+// @name: the name of your function
+//
+// @cb: a callback function where you can return a []byte with html to be added to the file
+//
+// cb - @opts: contains the list of options that were passed into the compiler (recommended: use `turbx.GetOpt` when retrieving an option)
+//
+// cb - @args: arguments that the template passed into the function (you may want to pass some of these into the `@name` arg for `turbx.GetOpt`)
+//
+// cb - @eachArgs: a list of arguments that were defined by an each loop (the last eachAre should take priority over the first one)
+//
+// cb - @precompile: returns true if the function was called by the precompiler, false if called by the final compiler
+//
+// cb - @return: nil = no content
+//
+// cb - @return: []byte("html") = html result
+//
+// cb - @return: append([]byte{0}, []byte("args")...) = pass to compiler
+//
+// cb - @return: append([]byte{1}, []byte("error msg")...) = return error
+//
+// @useSync (optional): by default all functions run concurrently, if you need the compiler to wait for your function to finish, you can set this to `true`
+func (funcs *tagFuncs) AddFN(name string, cb func(opts *map[string]interface{}, args *htmlArgs, eachArgs *[]EachArgs, precomp bool) []byte, useSync ...bool) error {
+	if _, _, err := getCoreTagFunc([]byte(name)); err != nil {
+		return errors.New("the method '" + name + "' is already in use by the core system")
+	}
+
+	if _, ok := funcs.list[name]; ok {
+		return errors.New("the method '" + name + "' is already in use")
+	} else if _, ok := funcs.list[name+"_SYNC"]; ok {
+		return errors.New("the method '" + name + "' is already in use")
+	}
+
+	if len(useSync) != 0 && useSync[0] {
+		name += "_SYNC"
+	}
+
+	funcs.list[name] = cb
+
+	return nil
 }
 
+// note: the method 'If', is a unique tag func, with different args and return values than normal tag funcs
+func (funcs *tagFuncs) If(opts *map[string]interface{}, args *htmlArgs, eachArgs *[]EachArgs, precomp bool) ([]byte, bool) {
+	passCompArgs := map[int][]byte{}
 
-// compiler funcs
-func (t *compFN) If(args *[][]byte, cont *[]byte, opts *map[string]interface{}, pre bool, addVars *[]KeyVal) (interface{}, error) {
-	pass := []bool{true}
-	inv := []bool{false}
-	mode := []uint8{0}
-	grp := 0
+	res := []uint8{}
 
-	lastArg := []byte{}
+	newArgs := map[string][]byte{}
+	newArgsInd := []string{}
+	ind := 0
+	grpLevel := 0
 
-	unsolved := [][][]byte{{}}
+	inv := false
 
-	for i := 0; i < len(*args); i++ {
-		if len((*args)[i]) == 1 {
-			if (*args)[i][0] == '^' {
-				inv[grp] = !inv[grp]
-				continue
-			}else if (*args)[i][0] == '&' {
-				mode[grp] = 0
-				continue
-			}else if (*args)[i][0] == '|' {
-				mode[grp] = 1
-				continue
-			}else if (*args)[i][0] == '(' {
-				pass = append(pass, true)
-				inv = append(inv, false)
-				mode = append(mode, 0)
-				unsolved = append(unsolved, [][]byte{})
-				grp++
-				continue
-			}else if (*args)[i][0] == ')' {
-				if grp == 0 {
+	for _, key := range args.ind {
+		arg := args.args[key]
+		if len(arg) < 2 {
+			if len(arg) == 0 {
+				res = append(res, 0)
+			} else {
+				val := GetOpt(arg, opts, eachArgs, 0, precomp, false)
+				if reflect.TypeOf(val) == goutil.VarType["[]byte"] && len(val.([]byte)) != 0 && val.([]byte)[0] == 0 {
+					retArg := args.args[key]
+					if inv {
+						retArg = append([]byte{'!', ' '}, retArg...)
+					}
+					passCompArgs[len(res)] = retArg
+					if (!inv && precomp) || (inv && !precomp) {
+						res = append(res, 5)
+					} else {
+						res = append(res, 4)
+					}
 					continue
 				}
 
-				if !inv[grp] {
-					if mode[grp-1] == 0 && !pass[grp] {
-						pass[grp-1] = false
-					}else if mode[grp-1] == 1 && pass[grp] {
-						pass[grp-1] = true
-					}
-				}else{
-					if mode[grp-1] == 0 && pass[grp] {
-						pass[grp-1] = false
-					}else if mode[grp-1] == 1 && !pass[grp] {
-						pass[grp-1] = true
-					}
-					// inv[grp-1] = false
+				if (!inv && !goutil.IsZeroOfUnderlyingType(val)) || (inv && goutil.IsZeroOfUnderlyingType(val)) {
+					res = append(res, 1)
+				} else {
+					res = append(res, 0)
 				}
-
-				pass = pass[:grp]
-				mode = mode[:grp]
-				// grp--
-
-				// handle the unsolved list
-
-				var modeB []byte
-				switch mode[grp-1] {
-					case 0:
-						modeB = []byte{'&'}
-					case 1:
-						modeB = []byte{'|'}
-				}
-
-				if (!pass[grp-1] && unsolved[grp][0][0] == '&') || (pass[grp-1] && unsolved[grp][0][0] == '|') {
-					unsolved[grp] = unsolved[grp][1:]
-				}
-
-				if inv[grp-1] {
-					unsolved[grp-1] = append(unsolved[grp-1], modeB, []byte{'^', '('})
-					inv[grp-1] = false
-				}else{
-					unsolved[grp-1] = append(unsolved[grp-1], modeB, []byte{'('})
-				}
-
-				if len(unsolved[grp][0]) == 1 && unsolved[grp][0][0] == '&' {
-					unsolved[grp] = unsolved[grp][1:]
-				}
-
-				unsolved[grp-1] = append(unsolved[grp-1], unsolved[grp]...)
-				unsolved[grp-1] = append(unsolved[grp-1], []byte{')'})
-				unsolved = unsolved[:grp]
-
-				inv = inv[:grp]
-
-				grp--
-				continue
 			}
+			continue
 		}
 
-		arg1 := (*args)[i]
-		var sign uint8
-		var arg2 []byte
+		if arg[0] == 5 && arg[1] == '(' {
+			if grpLevel != 0 {
+				s := strconv.Itoa(ind)
+				newArgs[s] = arg
+				newArgsInd = append(newArgsInd, s)
+				ind++
+			}
+			grpLevel++
+		} else if grpLevel != 0 {
+			if arg[0] == 5 && arg[1] == ')' {
+				grpLevel--
+				if grpLevel != 0 {
+					s := strconv.Itoa(ind)
+					newArgs[s] = arg
+					newArgsInd = append(newArgsInd, s)
+					ind++
+				} else {
+					passComp, ok := TagFuncs.If(opts, &htmlArgs{args: newArgs, ind: newArgsInd}, eachArgs, precomp)
 
-		hasArg2 := false
-		if len(arg1) == 1 {
-			if arg1[0] == '=' {
-				sign = 0
-				hasArg2 = true
-			}else if arg1[0] == '!' {
+					newArgs = map[string][]byte{}
+					newArgsInd = []string{}
+
+					if inv {
+						res = append(res, 8)
+					}
+					if passComp != nil && len(passComp) != 0 {
+						passCompArgs[len(res)] = passComp
+					}
+					if !precomp && passComp != nil && len(passComp) != 0 {
+						if !inv {
+							res = append(res, 6)
+						} else {
+							res = append(res, 7)
+						}
+					} else if (!inv && ok) || (inv && !ok) {
+						res = append(res, 7)
+					} else {
+						res = append(res, 6)
+					}
+				}
+			} else {
+				if _, err := strconv.Atoi(key); err == nil {
+					s := strconv.Itoa(ind)
+					newArgs[s] = arg
+					newArgsInd = append(newArgsInd, s)
+					ind++
+				} else {
+					newArgs[key] = arg
+					newArgsInd = append(newArgsInd, key)
+				}
+			}
+		} else if arg[0] == 5 && arg[1] == '!' {
+			inv = !inv
+		} else if arg[0] == 5 && arg[1] == '&' {
+			res = append(res, 2)
+			inv = false
+		} else if arg[0] == 5 && arg[1] == '|' {
+			res = append(res, 3)
+			inv = false
+		} else if arg[0] != 5 {
+			if arg[0] != 0 && arg[0] <= 5 {
+				arg = arg[1:]
+				arg = regex.Comp(`^\{\{\{?[=:]?(.*)\}\}\}?$`).RepStrCompRef(&arg, []byte("$1"))
+			} else if arg[0] == 0 {
+				arg = arg[1:]
+			}
+
+			sign := uint8(0)
+			if arg[0] == '=' {
+				arg = arg[1:]
+			} else if arg[0] == '!' {
 				sign = 1
-				hasArg2 = true
-			}else if arg1[0] == '<' {
+				arg = arg[1:]
+			} else if arg[0] == '<' {
 				sign = 2
-				hasArg2 = true
-			}else if arg1[0] == '>' {
-				sign = 3
-				hasArg2 = true
-			}else if arg1[0] == '~' {
-				sign = 6
-				hasArg2 = true
-			}
-		}else if len(arg1) == 2 && arg1[1] == '=' {
-			if arg1[0] == '<' {
-				sign = 4
-				hasArg2 = true
-			}else if arg1[0] == '>' {
-				sign = 5
-				hasArg2 = true
-			}
-		}
-
-		if hasArg2 {
-			arg1 = lastArg
-		}else{
-			lastArg = arg1
-
-			if len(*args) > i+1 {
-				if len((*args)[i+1]) == 1 {
-					if (*args)[i+1][0] == '=' {
-						sign = 0
-						hasArg2 = true
-					}else if (*args)[i+1][0] == '!' {
-						sign = 1
-						hasArg2 = true
-					}else if (*args)[i+1][0] == '<' {
-						sign = 2
-						hasArg2 = true
-					}else if (*args)[i+1][0] == '>' {
+				arg = arg[1:]
+				if len(arg) != 0 {
+					if arg[0] == '=' {
 						sign = 3
-						hasArg2 = true
-					}else if (*args)[i+1][0] == '~' {
-						sign = 6
-						hasArg2 = true
+						arg = arg[1:]
 					}
-				}else if len((*args)[i+1]) == 2 && (*args)[i+1][1] == '=' {
-					if (*args)[i+1][0] == '<' {
-						sign = 4
-						hasArg2 = true
-					}else if (*args)[i+1][0] == '>' {
+				}
+			} else if arg[0] == '>' {
+				sign = 4
+				arg = arg[1:]
+				if len(arg) != 0 {
+					if arg[0] == '=' {
 						sign = 5
-						hasArg2 = true
+						arg = arg[1:]
 					}
 				}
-			}
-			// i++
-		}
-
-		if hasArg2 && len(*args) > i+2 {
-			arg2 = (*args)[i+2]
-			// i++
-			i += 2
-		}
-
-		if !hasArg2 {
-			arg1Val, arg1ok := GetOpt(arg1, opts, pre, addVars)
-
-			if !arg1ok {
-				// add to unsolved list
-				var modeB []byte
-				switch mode[grp] {
-					case 0:
-						modeB = []byte{'&'}
-					case 1:
-						modeB = []byte{'|'}
-				}
-
-				if inv[grp] {
-					unsolved[grp] = append(unsolved[grp], modeB, []byte{'^'}, arg1)
-					inv[grp] = false
-				}else{
-					unsolved[grp] = append(unsolved[grp], modeB, arg1)
-				}
-
-				continue
-			}
-
-			if (!inv[grp] && !goutil.IsZeroOfUnderlyingType(arg1Val)) || (inv[grp] && goutil.IsZeroOfUnderlyingType(arg1Val)) {
-				if mode[grp] == 1 {
-					pass[grp] = true
-				}
-			}else if mode[grp] == 0 {
-				pass[grp] = false
-			}
-			inv[grp] = false
-		}else{
-			arg1Val, arg1ok := GetOpt(arg1, opts, pre, addVars)
-
-			var arg2Val interface{} = nil
-			arg2ok := false
-
-			if sign == 6 {
-				arg2Val = goutil.ToString[string](arg2)
-				arg2ok = true
-			}else{
-				arg2Val, arg2ok = GetOpt(arg2, opts, pre, addVars)
-			}
-
-			if !arg1ok || !arg2ok {
-				// add to unsolved list
-				var modeB []byte
-				switch mode[grp] {
-					case 0:
-						modeB = []byte{'&'}
-					case 1:
-						modeB = []byte{'|'}
-				}
-
-				var signB []byte
-				switch sign {
-					case 0:
-						signB = []byte{'='}
-					case 1:
-						signB = []byte{'!'}
-					case 2:
-						signB = []byte{'<'}
-					case 3:
-						signB = []byte{'>'}
-					case 4:
-						signB = []byte{'<', '='}
-					case 5:
-						signB = []byte{'>', '='}
-					case 6:
-						signB = []byte{'~'}
-				}
-
-				// unsolved[grp] = append(unsolved[grp], arg1, signB, arg2)
-				if inv[grp] {
-					unsolved[grp] = append(unsolved[grp], modeB, []byte{'^'}, arg1, signB, regex.JoinBytes('"', goutil.EscapeHTMLArgs(arg2, '"'), '"'))
-					inv[grp] = false
-				}else{
-					unsolved[grp] = append(unsolved[grp], modeB, arg1, signB, regex.JoinBytes('"', goutil.EscapeHTMLArgs(arg2, '"'), '"'))
-				}
-
-				continue
-			}
-
-			p := false
-			t := uint8(0)
-
-			if sign != 6 {
-				if reflect.TypeOf(arg1Val) == goutil.VarType["byteArray"] {
-					arg1Val = string(arg1Val.([]byte))
-				}
-				if reflect.TypeOf(arg2Val) == goutil.VarType["byteArray"] {
-					arg2Val = string(arg2Val.([]byte))
-				}
-			}
-
-			if sign == 6 {
-				// regex
-				arg1Val = goutil.ToString[[]byte](arg1Val)
-				arg2Val = goutil.ToString[string](arg2Val)
-				t = 6
-			}else if reflect.TypeOf(arg1Val) != reflect.TypeOf(arg2Val) {
-				if reflect.TypeOf(arg1Val) == goutil.VarType["string"] {
-					arg2Val = goutil.ToString[string](arg2Val)
-					t = 1
-				}else if reflect.TypeOf(arg1Val) == goutil.VarType["bool"] {
-					if v, err := strconv.ParseBool(goutil.ToString[string](arg2Val)); err == nil {
-						arg2Val = v
-						t = 2
+			} else if arg[0] == '/' && regex.Comp(`^/(.*)/([ismxISMX]*)$`).MatchRef(&arg) { // regex
+				sign = 6
+				arg = regex.Comp(`^/(.*)/([ismxISMX]*)$`).RepFuncRef(&arg, func(data func(int) []byte) []byte {
+					if len(data(2)) != 0 {
+						flags := []byte("(?)")
+						for _, f := range data(2) {
+							fl := bytes.ToLower([]byte{f})[0]
+							if f == fl {
+								flags = append(flags, f)
+							} else {
+								flags = append(flags, '-', f)
+							}
+						}
+						return regex.JoinBytes('(', '?', flags, ')', data(1))
 					}
-				}else if reflect.TypeOf(arg1Val) == goutil.VarType["int"] {
-					if v, err := strconv.Atoi(goutil.ToString[string](arg2Val)); err == nil {
-						arg2Val = v
-						t = 3
-					}
-				}else if reflect.TypeOf(arg1Val) == goutil.VarType["float"] {
-					if v, err := strconv.ParseFloat(goutil.ToString[string](arg2Val), 64); err == nil {
-						arg2Val = v
-						t = 4
-					}
-				}
-			}else if reflect.TypeOf(arg1Val) == goutil.VarType["string"]{
-				t = 1
-			}else if reflect.TypeOf(arg1Val) == goutil.VarType["bool"]{
-				t = 2
-			}else if reflect.TypeOf(arg1Val) == goutil.VarType["int"]{
-				t = 3
-			}else if reflect.TypeOf(arg1Val) == goutil.VarType["float"]{
-				t = 4
-			}else if arg1Val == nil {
-				t = 5
+					return data(1)
+				})
 			}
 
-			if t != 0 {
-				if sign == 0 && arg1Val == arg2Val {
-					p = true
-				} else if sign == 1 && arg1Val != arg2Val {
-					p = true
-				} else if sign == 2 {
-					if t == 1 && arg1Val.(string) < arg2Val.(string) {
-						p = true
-					}else if t == 2 && !arg1Val.(bool) && arg2Val.(bool) {
-						p = true
-					}else if t == 3 && arg1Val.(int) < arg2Val.(int) {
-						p = true
-					}else if t == 4 && arg1Val.(float64) < arg2Val.(float64) {
-						p = true
-					}
-				} else if sign == 3 {
-					if t == 1 && arg1Val.(string) > arg2Val.(string) {
-						p = true
-					}else if t == 2 && arg1Val.(bool) && !arg2Val.(bool) {
-						p = true
-					}else if t == 3 && arg1Val.(int) > arg2Val.(int) {
-						p = true
-					}else if t == 4 && arg1Val.(float64) > arg2Val.(float64) {
-						p = true
-					}
-				} else if sign == 4 {
-					if t == 1 && arg1Val.(string) <= arg2Val.(string) {
-						p = true
-					}else if t == 2 {
-						p = true
-					}else if t == 3 && arg1Val.(int) <= arg2Val.(int) {
-						p = true
-					}else if t == 4 && arg1Val.(float64) <= arg2Val.(float64) {
-						p = true
-					}
-				}else if sign == 5 {
-					if t == 1 && arg1Val.(string) >= arg2Val.(string) {
-						p = true
-					}else if t == 2 {
-						p = true
-					}else if t == 3 && arg1Val.(int) >= arg2Val.(int) {
-						p = true
-					}else if t == 4 && arg1Val.(float64) >= arg2Val.(float64) {
-						p = true
-					}
-				}else if sign == 6 && t == 6 {
-					if regex.Compile(arg2Val.(string)).Match(arg1Val.([]byte)) {
-						p = true
-					}
-				}
-			}
-
-			if inv[grp] {
-				p = !p
-				inv[grp] = false
-			}
-
-			if p && mode[grp] == 1 {
-				pass[grp] = true
-			}else if !p && mode[grp] == 0 {
-				pass[grp] = false
-			}
-		}
-	}
-
-	if len(unsolved[grp]) != 0 {
-		if !pass[0] && unsolved[grp][0][0] == '&' {
-			return false, nil
-		}else if pass[0] && unsolved[grp][0][0] == '|' {
-			return true, nil
-		}else{
-			unsolved[grp] = unsolved[grp][1:]
-			return bytes.Join(unsolved[0], []byte{' '}), nil
-		}
-	}
-
-	return pass[0], nil
-}
-
-func (t *compFN) Each(args *map[string][]byte, cont *[]byte, opts *map[string]interface{}, pre bool, addVars *[]KeyVal) (interface{}, error) {
-	var from int
-	var to int
-	if (*args)["range"] != nil && len((*args)["range"]) != 0 {
-		r := regex.Compile(`[^0-9\-]+`).Split((*args)["range"])
-		if i, err := strconv.Atoi(string(bytes.TrimSpace(r[0]))); err == nil {
-			from = i
-		}
-		if i, err := strconv.Atoi(string(bytes.TrimSpace(r[1]))); err == nil {
-			to = i
-		}
-	}else{
-		if (*args)["from"] != nil && len((*args)["from"]) != 0 {
-			if i, err := strconv.Atoi(string(bytes.TrimSpace((*args)["from"]))); err == nil {
-				from = i
-			}
-		}
-	
-		if (*args)["to"] != nil && len((*args)["to"]) != 0 {
-			if i, err := strconv.Atoi(string(bytes.TrimSpace((*args)["to"]))); err == nil {
-				to = i
-			}
-		}
-	}
-
-	if (*args)["1"] == nil || len((*args)["1"]) == 0 {
-		res := []KeyVal{}
-		if from <= to {
-			for i := from; i <= to; i++ {
-				res = append(res, KeyVal{[]byte(strconv.Itoa(i)), i})
-			}
-		}else{
-			for i := from; i >= to; i-- {
-				res = append(res, KeyVal{[]byte(strconv.Itoa(i)), i})
-			}
-		}
-
-		resData := eachList{List: &res}
-
-		if (*args)["as"] != nil && len((*args)["as"]) != 0 {
-			resData.As = (*args)["as"]
-		}
-		if (*args)["of"] != nil && len((*args)["of"]) != 0 {
-			resData.Of = (*args)["of"]
-		}
-
-		return resData, nil
-	}
-
-	list, ok := GetOpt((*args)["1"], opts, pre, addVars)
-	if !ok {
-		if bytes.HasPrefix((*args)["1"], []byte{'$'}) {
-			return nil, nil
-		}
-
-		res := (*args)["1"]
-		if (*args)["as"] != nil && len((*args)["as"]) != 0 {
-			res = regex.JoinBytes(res, []byte(" as "), (*args)["as"])
-		}
-		if (*args)["of"] != nil && len((*args)["of"]) != 0 {
-			res = regex.JoinBytes(res, []byte(" of "), (*args)["of"])
-		}
-
-		return res, nil
-	}
-
-	var res *[]KeyVal
-
-	lt := reflect.TypeOf(list)
-	if lt == goutil.VarType["map"] {
-		resList := make([]KeyVal, len(list.(map[string]interface{})))
-		res = &resList
-		ind := 0
-
-		for k, v := range list.(map[string]interface{}) {
-			(*res)[ind] = KeyVal{[]byte(k), v}
-			ind++
-		}
-
-		sort.Slice(*res, func(i, j int) bool {
-			k1 := []byte((*res)[i].Key)
-			k2 := []byte((*res)[j].Key)
-			l := len(k1)
-			if len(k2) < l {
-				l = len(k2)
-			}
-
-			r := 0
-			for i := 0; i < l; i++ {
-				if k1[i] < k2[i] {
-					r = 1
-					break
-				}else if k1[i] > k2[i] {
-					r = -1
-					break
-				}
-			}
-
-			if from > to {
-				if r == 0 {
-					return len(k1) > len(k2)
-				}
-				return r == -1
-			}
-
-			if r == 0 {
-				return len(k1) < len(k2)
-			}
-			return r == 1
-		})
-
-	}else if lt == goutil.VarType["array"] {
-		resList := make([]KeyVal, len(list.([]interface{})))
-		res = &resList
-		ind := 0
-		for i, v := range list.([]interface{}) {
-			(*res)[ind] = KeyVal{[]byte(strconv.Itoa(i)), v}
-			ind++
-		}
-
-		if from > to {
-			sort.Slice(*res, func(i, j int) bool {
-				return i > j
+			var isStr byte
+			arg = regex.Comp(`^(["'\'])(.*)\1$`).RepFuncRef(&arg, func(data func(int) []byte) []byte {
+				isStr = data(1)[0]
+				return data(2)
 			})
+
+			// if lone arg key
+			if _, err := strconv.Atoi(key); err == nil {
+				t := inv
+				if sign == 1 {
+					t = !t
+				}
+				if isStr != 0 {
+					if (!t && len(arg) != 0) || (t && len(arg) == 0) {
+						res = append(res, 1)
+					} else {
+						res = append(res, 0)
+					}
+				} else {
+					val := GetOpt(arg, opts, eachArgs, 0, precomp, false)
+					if reflect.TypeOf(val) == goutil.VarType["[]byte"] && len(val.([]byte)) != 0 && val.([]byte)[0] == 0 {
+						retArg := args.args[key]
+						if t {
+							if sign == 2 {
+								retArg = append([]byte{'>'}, retArg...)
+							} else if sign == 3 {
+								retArg = append([]byte{'>', '='}, retArg...)
+							} else if sign == 4 {
+								retArg = append([]byte{'<'}, retArg...)
+							} else if sign == 5 {
+								retArg = append([]byte{'<', '='}, retArg...)
+							} else {
+								retArg = append([]byte{'!', ' '}, retArg...)
+							}
+						} else {
+							if sign == 2 {
+								retArg = append([]byte{'<'}, retArg...)
+							} else if sign == 3 {
+								retArg = append([]byte{'<', '='}, retArg...)
+							} else if sign == 4 {
+								retArg = append([]byte{'>'}, retArg...)
+							} else if sign == 5 {
+								retArg = append([]byte{'>', '='}, retArg...)
+							}
+						}
+						if sign == 6 {
+							retArg = regex.JoinBytes('/', retArg, '/')
+						}
+						passCompArgs[len(res)] = retArg
+						if (!t && precomp) || (t && !precomp) {
+							res = append(res, 5)
+						} else {
+							res = append(res, 4)
+						}
+						continue
+					}
+
+					if (!t && !goutil.IsZeroOfUnderlyingType(val)) || (t && goutil.IsZeroOfUnderlyingType(val)) {
+						res = append(res, 1)
+					} else {
+						res = append(res, 0)
+					}
+				}
+				continue
+			}
+
+			// if comparing arg
+			val1 := GetOpt([]byte(key), opts, eachArgs, 0, precomp, false)
+			if reflect.TypeOf(val1) == goutil.VarType["[]byte"] && len(val1.([]byte)) != 0 && val1.([]byte)[0] == 0 {
+				retArg := arg
+				if isStr != 0 {
+					retArg = regex.JoinBytes(isStr, retArg, isStr)
+				}
+				if sign == 1 {
+					retArg = append([]byte{'!'}, retArg...)
+				} else if sign == 2 {
+					retArg = append([]byte{'<'}, retArg...)
+				} else if sign == 3 {
+					retArg = append([]byte{'<', '='}, retArg...)
+				} else if sign == 4 {
+					retArg = append([]byte{'>'}, retArg...)
+				} else if sign == 5 {
+					retArg = append([]byte{'>', '='}, retArg...)
+				} else if sign == 6 {
+					retArg = regex.JoinBytes('/', retArg, '/')
+				}
+				if inv {
+					retArg = regex.Comp(`^([!<>]|)`).RepFuncRef(&retArg, func(data func(int) []byte) []byte {
+						if len(data(1)) != 0 {
+							if data(1)[0] == '<' {
+								return []byte{'>'}
+							} else if data(1)[0] == '>' {
+								return []byte{'<'}
+							}
+							return []byte{}
+						}
+						return []byte{'!'}
+					})
+				}
+				passCompArgs[len(res)] = regex.JoinBytes(key, '=', '"', goutil.HTML.EscapeArgs(retArg, '"'), '"')
+				if (!inv && precomp) || (inv && !precomp) {
+					res = append(res, 5)
+				} else {
+					res = append(res, 4)
+				}
+				continue
+			}
+
+			var val2 interface{}
+			if isStr != 0 || sign == 6 /* regex */ {
+				val2 = arg
+			} else {
+				val2 = GetOpt(arg, opts, eachArgs, 0, precomp, false)
+				if reflect.TypeOf(val2) == goutil.VarType["[]byte"] && len(val2.([]byte)) != 0 && val2.([]byte)[0] == 0 {
+					retArg := args.args[key]
+					if isStr != 0 {
+						retArg = regex.JoinBytes(isStr, retArg, isStr)
+					}
+					if sign == 1 {
+						retArg = append([]byte{'!'}, retArg...)
+					} else if sign == 2 {
+						retArg = append([]byte{'<'}, retArg...)
+					} else if sign == 3 {
+						retArg = append([]byte{'<', '='}, retArg...)
+					} else if sign == 4 {
+						retArg = append([]byte{'>'}, retArg...)
+					} else if sign == 5 {
+						retArg = append([]byte{'>', '='}, retArg...)
+					} else if sign == 6 {
+						retArg = regex.JoinBytes('/', retArg, '/')
+					}
+					if inv {
+						retArg = regex.Comp(`^([!<>]|)`).RepFuncRef(&retArg, func(data func(int) []byte) []byte {
+							if len(data(1)) != 0 {
+								if data(1)[0] == '<' {
+									return []byte{'>'}
+								} else if data(1)[0] == '>' {
+									return []byte{'<'}
+								}
+								return []byte{}
+							}
+							return []byte{'!'}
+						})
+					}
+					passCompArgs[len(res)] = regex.JoinBytes(key, '=', '"', goutil.HTML.EscapeArgs(retArg, '"'), '"')
+					if (!inv && precomp) || (inv && !precomp) {
+						res = append(res, 5)
+					} else {
+						res = append(res, 4)
+					}
+					continue
+				}
+			}
+
+			if sign == 0 {
+				if (!inv && goutil.TypeEqual(val1, val2)) || (inv && !goutil.TypeEqual(val1, val2)) {
+					res = append(res, 1)
+				} else {
+					res = append(res, 0)
+				}
+			} else if sign == 1 {
+				if (!inv && !goutil.TypeEqual(val1, val2)) || (inv && goutil.TypeEqual(val1, val2)) {
+					res = append(res, 1)
+				} else {
+					res = append(res, 0)
+				}
+			} else if sign == 2 {
+				val2 = goutil.ToVarTypeInterface(val2, val1)
+				if val1 == nil {
+					if (!inv && val2 == nil) || (inv && val2 != nil) {
+						res = append(res, 0)
+					} else {
+						res = append(res, 1)
+					}
+				} else if val2 == nil {
+					if (!inv && val1 == nil) || (inv && val1 != nil) {
+						res = append(res, 0)
+					} else {
+						res = append(res, 0)
+					}
+				} else {
+					//todo: handle <
+					if goutil.Conv.ToFloat(val1) < goutil.Conv.ToFloat(val2) {
+						res = append(res, 1)
+					} else {
+						res = append(res, 0)
+					}
+				}
+			} else if sign == 3 {
+				val2 = goutil.ToVarTypeInterface(val2, val1)
+				if val1 == nil {
+					if (!inv && val2 == nil) || (inv && val2 != nil) {
+						res = append(res, 1)
+					} else {
+						res = append(res, 1)
+					}
+				} else if val2 == nil {
+					if (!inv && val1 == nil) || (inv && val1 != nil) {
+						res = append(res, 1)
+					} else {
+						res = append(res, 0)
+					}
+				} else {
+					//todo: handle <=
+					if goutil.Conv.ToFloat(val1) <= goutil.Conv.ToFloat(val2) {
+						res = append(res, 1)
+					} else {
+						res = append(res, 0)
+					}
+				}
+			} else if sign == 4 {
+				val2 = goutil.ToVarTypeInterface(val2, val1)
+				if val1 == nil {
+					if (!inv && val2 == nil) || (inv && val2 != nil) {
+						res = append(res, 0)
+					} else {
+						res = append(res, 0)
+					}
+				} else if val2 == nil {
+					if (!inv && val1 == nil) || (inv && val1 != nil) {
+						res = append(res, 0)
+					} else {
+						res = append(res, 1)
+					}
+				} else {
+					//todo: handle >
+					if goutil.Conv.ToFloat(val1) > goutil.Conv.ToFloat(val2) {
+						res = append(res, 1)
+					} else {
+						res = append(res, 0)
+					}
+				}
+			} else if sign == 5 {
+				val2 = goutil.ToVarTypeInterface(val2, val1)
+				if val1 == nil {
+					if (!inv && val2 == nil) || (inv && val2 != nil) {
+						res = append(res, 1)
+					} else {
+						res = append(res, 0)
+					}
+				} else if val2 == nil {
+					if (!inv && val1 == nil) || (inv && val1 != nil) {
+						res = append(res, 1)
+					} else {
+						res = append(res, 1)
+					}
+				} else {
+					//todo: handle >=
+					if goutil.Conv.ToFloat(val1) >= goutil.Conv.ToFloat(val2) {
+						res = append(res, 1)
+					} else {
+						res = append(res, 0)
+					}
+				}
+			} else if sign == 6 {
+				if regex.IsValidRef(&arg) {
+					rB := regex.Comp(string(arg)).Match(goutil.Conv.ToBytes(val1))
+					if (!inv && rB) || (inv && !rB) {
+						res = append(res, 1)
+					} else {
+						res = append(res, 0)
+					}
+				} else {
+					res = append(res, 0)
+				}
+			}
 		}
-	}else{
-		return nil, nil
 	}
 
-	resData := eachList{List: res}
+	modeAND := true
+	r := true
+	preCompRes := []byte{}
 
-	if (*args)["as"] != nil && len((*args)["as"]) != 0 {
-		resData.As = (*args)["as"]
-	}
-	if (*args)["of"] != nil && len((*args)["of"]) != 0 {
-		resData.Of = (*args)["of"]
-	}
-
-	return resData, nil
-}
-
-func (t *compFN) Json(args *map[string][]byte, cont *[]byte, opts *map[string]interface{}, pre bool, addVars *[]KeyVal) (interface{}, error) {
-	if val, ok := GetOpt((*args)["1"], opts, pre, addVars); ok {
-		json, err := goutil.StringifyJSON(val, 0, 2)
-		if err != nil {
-			return nil, err
-		}
-
-		return json, nil
-	}
-
-	return nil, errors.New("var not found")
-}
-
-func (t *compFN) Lorem(args *map[string][]byte, cont *[]byte, opts *map[string]interface{}, pre bool, addVars *[]KeyVal) (interface{}, error) {
-	wType := byte('p')
-	if (*args)["type"] != nil && len((*args)["type"]) != 0 {
-		wType = (*args)["type"][0]
-	}else{
-		for i := 1; i < len(*args); i++ {
-			iStr := strconv.Itoa(i)
-			if (*args)[iStr] != nil && len((*args)[iStr]) != 0 && !regex.Compile(`^[0-9]+$`).Match((*args)[iStr]) {
-				wType = (*args)[iStr][0]
+	for i, v := range res {
+		if v == 1 || v == 5 || v == 7 {
+			r = true
+			if v == 5 || v == 7 {
+				if a, ok := passCompArgs[i]; ok {
+					if i != 0 {
+						if res[i-1] == 2 {
+							preCompRes = append(preCompRes, ' ', '&')
+						} else if res[i-1] == 3 {
+							preCompRes = append(preCompRes, ' ', '|')
+						} else if res[i-1] == 8 {
+							if i > 1 {
+								if res[i-2] == 2 {
+									preCompRes = append(preCompRes, ' ', '&')
+								} else if res[i-2] == 3 {
+									preCompRes = append(preCompRes, ' ', '|')
+								}
+							}
+							preCompRes = append(preCompRes, ' ', '!')
+						}
+						if v == 7 {
+							preCompRes = append(preCompRes, ' ', '(', ' ')
+						}
+						preCompRes = append(preCompRes, ' ')
+					} else if v == 7 {
+						preCompRes = append(preCompRes, '(', ' ')
+					}
+					preCompRes = append(preCompRes, a...)
+					if v == 7 {
+						preCompRes = append(preCompRes, ' ', ')')
+					}
+				}
+			}
+			if !modeAND && (!precomp || v == 1) {
 				break
 			}
+		} else if v == 0 || v == 4 || v == 6 {
+			r = false
+			if v == 4 || v == 6 {
+				if a, ok := passCompArgs[i]; ok {
+					if i != 0 {
+						if res[i-1] == 2 {
+							preCompRes = append(preCompRes, ' ', '&')
+						} else if res[i-1] == 3 {
+							preCompRes = append(preCompRes, ' ', '|')
+						} else if res[i-1] == 8 {
+							if i > 1 {
+								if res[i-2] == 2 {
+									preCompRes = append(preCompRes, ' ', '&')
+								} else if res[i-2] == 3 {
+									preCompRes = append(preCompRes, ' ', '|')
+								}
+							}
+							preCompRes = append(preCompRes, ' ', '!')
+						}
+						if v == 6 {
+							preCompRes = append(preCompRes, ' ', '(', ' ')
+						}
+						preCompRes = append(preCompRes, ' ')
+					} else if v == 6 {
+						preCompRes = append(preCompRes, '(', ' ')
+					}
+					preCompRes = append(preCompRes, a...)
+					if v == 6 {
+						preCompRes = append(preCompRes, ' ', ')')
+					}
+				}
+			}
+			if modeAND && (!precomp || v == 0) {
+				break
+			}
+		} else if v == 2 {
+			modeAND = true
+		} else if v == 3 {
+			modeAND = false
+		}
+	}
+
+	if precomp && len(preCompRes) != 0 {
+		return preCompRes, true
+	}
+
+	// return nil, false (absolute false)
+	// return nil, true (absolute true)
+	// return []byte("args"), true (push to compiler)
+	// @[]byte: precomp result, @bool: if true
+	return nil, r
+}
+
+// Rand sets a var option to crypto random bytes
+//
+// note: this method needs to be in sync
+//
+// add "_SYNC" if this function should run in sync, rather than running async on a seperate channel
+func (funcs *tagFuncs) Rand_SYNC(opts *map[string]interface{}, args *htmlArgs, eachArgs *[]EachArgs, precomp bool) []byte {
+	// args.args first byte:
+	// 0 = normal arg "arg"
+	// 1 = escaped option {{arg}}
+	// 2 = raw option {{{arg}}}
+
+	if len(args.args["0"]) != 0 && args.args["0"][0] == 0 {
+		varName := args.args["0"][1:]
+
+		if !regex.Comp(`^[\w_\-\$]+$`).MatchRef(&varName) {
+			return nil
+		}
+
+		if precomp && varName[0] != '$' {
+			return append([]byte{0}, regex.JoinBytes('0', '=', '"', varName, '"')...)
+		}
+
+		size := 64
+		if len(args.args["size"]) != 0 && args.args["size"][0] == 0 {
+			size = goutil.Conv.ToInt(args.args["size"][1:])
+			if size == 0 {
+				size = 64
+			}
+		}
+
+		var exclude []byte = nil
+		if len(args.args["exclude"]) != 0 && args.args["exclude"][0] == 0 {
+			exclude = goutil.Conv.ToBytes(args.args["exclude"][1:])
+		}
+
+		var r []byte
+		if exclude != nil {
+			r = goutil.Crypt.RandBytes(size, exclude)
+		} else {
+			r = goutil.Crypt.RandBytes(size)
+		}
+
+		(*opts)[string(varName)] = r
+	}
+
+	// return nil = return nothing
+	// []byte("result html") = return basic html
+	// append([]byte{0}, []byte("args")...) = pass function to compiler
+	// append([]byte{1}, []byte("error message")...) = return error
+	return nil
+}
+
+// Json returns an option as a json string
+func (funcs *tagFuncs) Json(opts *map[string]interface{}, args *htmlArgs, eachArgs *[]EachArgs, precomp bool) []byte {
+	// args.args first byte:
+	// 0 = normal arg "arg"
+	// 1 = escaped option {{arg}}
+	// 2 = raw option {{{arg}}}
+
+	if len(args.args["0"]) != 0 && args.args["0"][0] == 0 {
+		varName := args.args["0"][1:]
+
+		if !regex.Comp(`^[\w_\-\$]+$`).MatchRef(&varName) {
+			return nil
+		}
+
+		if hasVarOpt(varName, opts, eachArgs, 0, precomp) {
+			val := GetOpt(varName, opts, eachArgs, 0, precomp, false)
+			if b, ok := val.([]byte); ok && len(b) != 0 {
+				if b[0] == 0 {
+					b = b[1:]
+				}
+				return b
+			} else if !goutil.IsZeroOfUnderlyingType(val) {
+				if v, ok := val.(string); ok {
+					return regex.JoinBytes('"', goutil.HTML.EscapeArgs([]byte(v), '"'), '"')
+				}
+				return toBytesOrJson(val)
+			}
+		} else {
+			return append([]byte{0}, regex.JoinBytes('0', '=', '"', varName, '"')...)
+		}
+	}
+
+	// return nil = return nothing
+	// []byte("result html") = return basic html
+	// append([]byte{0}, []byte("args")...) = pass function to compiler
+	// append([]byte{1}, []byte("error message")...) = return error
+	return nil
+}
+
+func (funcs *tagFuncs) Lorem(opts *map[string]interface{}, args *htmlArgs, eachArgs *[]EachArgs, precomp bool) []byte {
+	// args.args first byte:
+	// 0 = normal arg "arg"
+	// 1 = escaped option {{arg}}
+	// 2 = raw option {{{arg}}}
+
+	argInd := 0
+
+	wType := byte('p')
+	if len(args.args["type"]) != 0 && args.args["type"][0] == 0 {
+		wType = goutil.ToType[byte](args.args["type"][1:])
+		if wType == 0 {
+			wType = 'p'
+		}
+	} else if strI := strconv.Itoa(argInd); len(args.args[strI]) != 0 && args.args[strI][0] == 0 && !regex.Compile(`^[0-9]+$`).Match(args.args[strI][1:]) {
+		wType = goutil.ToType[byte](args.args[strI][1:])
+		if wType == 0 {
+			wType = 'p'
+		} else {
+			argInd++
 		}
 	}
 
 	rep := 1
 	minLen := 2
 	maxLen := 10
-	used := 0
 	minSet := false
 
-	if (*args)["rep"] != nil && regex.Compile(`^[0-9]+$`).Match((*args)["rep"]) {
-		if n, err := strconv.Atoi(string((*args)["rep"])); err == nil {
-			rep = n
-		}
-	}else{
-		for i := used + 1; i < len(*args); i++ {
-			iStr := strconv.Itoa(i)
-			if (*args)[iStr] != nil && len((*args)[iStr]) != 0 && regex.Compile(`^[0-9]+$`).Match((*args)[iStr]) {
-				if n, err := strconv.Atoi(string((*args)[iStr])); err == nil {
-					used = i
-					rep = n
-					break
-				}
-			}
-		}
+	if len(args.args["rep"]) != 0 && args.args["rep"][0] == 0 {
+		rep = goutil.Conv.ToInt(args.args["rep"][1:])
+	} else if strI := strconv.Itoa(argInd); len(args.args[strI]) != 0 && args.args[strI][0] == 0 && regex.Comp(`^[0-9]+$`).Match(args.args[strI][1:]) {
+		rep = goutil.Conv.ToInt(args.args[strI][1:])
+		argInd++
 	}
 
-	if (*args)["min"] != nil && regex.Compile(`^[0-9]+$`).Match((*args)["min"]) {
-		if n, err := strconv.Atoi(string((*args)["min"])); err == nil {
-			minSet = true
-			minLen = n
-		}
-	}else{
-		for i := used + 1; i < len(*args); i++ {
-			iStr := strconv.Itoa(i)
-			if (*args)[iStr] != nil && len((*args)[iStr]) != 0 && regex.Compile(`^[0-9]+$`).Match((*args)[iStr]) {
-				if n, err := strconv.Atoi(string((*args)[iStr])); err == nil {
-					used = i
-					minSet = true
-					minLen = n
-					break
-				}
-			}
-		}
+	if len(args.args["min"]) != 0 && args.args["min"][0] == 0 {
+		minLen = goutil.Conv.ToInt(args.args["min"][1:])
+	} else if strI := strconv.Itoa(argInd); len(args.args[strI]) != 0 && args.args[strI][0] == 0 && regex.Comp(`^[0-9]+$`).Match(args.args[strI][1:]) {
+		minLen = goutil.Conv.ToInt(args.args[strI][1:])
+		argInd++
+		minSet = true
 	}
 
-	if (*args)["max"] != nil && regex.Compile(`^[0-9]+$`).Match((*args)["max"]) {
-		if n, err := strconv.Atoi(string((*args)["max"])); err == nil {
-			maxLen = n
-		}
-	}else{
-		maxSet := false
-		for i := used + 1; i < len(*args); i++ {
-			iStr := strconv.Itoa(i)
-			if (*args)[iStr] != nil && len((*args)[iStr]) != 0 && regex.Compile(`^[0-9]+$`).Match((*args)[iStr]) {
-				if n, err := strconv.Atoi(string((*args)[iStr])); err == nil {
-					used = i
-					maxSet = true
-					maxLen = n
-					break
-				}
-			}
-		}
-
-		if !maxSet && minSet {
-			maxLen = minLen
-		}
+	if len(args.args["max"]) != 0 && args.args["max"][0] == 0 {
+		maxLen = goutil.Conv.ToInt(args.args["max"][1:])
+	} else if strI := strconv.Itoa(argInd); len(args.args[strI]) != 0 && args.args[strI][0] == 0 && regex.Comp(`^[0-9]+$`).Match(args.args[strI][1:]) {
+		maxLen = goutil.Conv.ToInt(args.args[strI][1:])
+		argInd++
+	} else if minSet {
+		maxLen = minLen
 	}
 
+	if minLen > maxLen {
+		minLen, maxLen = maxLen, minLen
+	}
+
+	res := []byte{}
 	if wType == 'p' {
-		res := [][]byte{}
+		resList := [][]byte{}
 		for i := 0; i < rep; i++ {
-			res = append(res, []byte("<p>"+lorem.Paragraph(minLen, maxLen)+"</p>"))
+			resList = append(resList, []byte("<p>"+lorem.Paragraph(minLen, maxLen)+"</p>"))
 		}
-		return bytes.Join(res, []byte("\n\n")), nil
+		res = bytes.Join(resList, []byte("\n\n"))
 	} else if wType == 'w' {
-		res := [][]byte{}
+		resList := [][]byte{}
 		for i := 0; i < rep; i++ {
-			res = append(res, []byte(lorem.Word(minLen, maxLen)))
+			resList = append(resList, []byte(lorem.Word(minLen, maxLen)))
 		}
-		return bytes.Join(res, []byte(" ")), nil
+		res = bytes.Join(resList, []byte(" "))
 	} else if wType == 's' {
-		res := [][]byte{}
+		resList := [][]byte{}
 		for i := 0; i < rep; i++ {
-			res = append(res, []byte(lorem.Sentence(minLen, maxLen)))
+			resList = append(resList, []byte(lorem.Sentence(minLen, maxLen)))
 		}
-		return bytes.Join(res, []byte(" ")), nil
+		res = bytes.Join(resList, []byte(" "))
 	} else if wType == 'h' {
-		return []byte(lorem.Host()), nil
+		res = []byte(lorem.Host())
 	} else if wType == 'e' {
-		return []byte(lorem.Email()), nil
+		res = []byte(lorem.Email())
 	} else if wType == 'u' {
-		return []byte(lorem.Url()), nil
+		res = []byte(lorem.Url())
 	}
 
-	res := [][]byte{}
-	for i := 0; i < rep; i++ {
-		res = append(res, []byte("<p>"+lorem.Paragraph(minLen, maxLen)+"</p>"))
-	}
-	return bytes.Join(res, []byte("\n\n")), nil
-}
-
-
-// handle opts
-func convertOpt(arg []byte, opts *map[string]interface{}, pre *bool, addVars *[]KeyVal) (interface{}, bool) {
-	if regex.Compile(`^(["'\'])(.*)\1$`).MatchRef(&arg) {
-		arg = regex.Compile(`^(["'\'])(.*)\1$`).RepStrComplexRef(&arg, []byte("$2"))
-		
-		if bytes.Equal(arg, []byte("true")) {
-			return true, true
-		}else if bytes.Equal(arg, []byte("false")) {
-			return false, true
-		}else if bytes.Equal(arg, []byte("nil")) || bytes.Equal(arg, []byte("null")) || bytes.Equal(arg, []byte("undefined")) {
-			return nil, true
-		}else if v, err := strconv.Atoi(string(arg)); err == nil {
-			return v, true
-		}else if v, err := strconv.ParseFloat(string(arg), 64); err == nil {
-			return v, true
-		}
-
-		return []byte(arg), true
+	if len(res) != 0 {
+		return res
 	}
 
-	// handle additional vars
-	for i := len(*addVars)-1; i >= 0; i-- {
-		if bytes.Equal((*addVars)[i].Key, arg) {
-			return (*addVars)[i].Val, true
-		}
-	}
-
-	if *pre {
-		if arg[0] == '$' {
-			if val, ok := (*opts)[string(arg)]; ok {
-				return val, true
-			}else if val, ok := (*opts)[string(arg[1:])]; ok {
-				return val, true
-			}
-		}else if val, ok := (*opts)["$"+string(arg)]; ok {
-			return val, true
-		}
-
-		// first param true with a false 2nd param is used to break the loop in the getOpt method that calls this method because a const var did not exist in pre compile mode
-		return true, false
-	}
-
-	if val, ok := (*opts)[string(arg)]; ok {
-		return val, true
-	}else if arg[0] == '$' {
-		if val, ok := (*opts)[string(arg[1:])]; ok {
-			return val, true
-		}
-	}else{
-		if val, ok := (*opts)["$"+string(arg)]; ok {
-			return val, true
-		}
-	}
-
-	return nil, false
-}
-
-func getOptObj(arg []byte, opts *map[string]interface{}, pre *bool, addVars *[]KeyVal) (interface{}, bool) {
-	args := regex.Compile(`\.|(\[(?:"(?:\\[\\"]|.)*?"|'(?:\\[\\']|.)*?'|\'(?:\\[\\\']|.)*?\'|.)*?\])`).SplitRef(&arg)
-	// args := regex.Compile(`(\[[\w_]+\])|\.`).SplitRef(&arg)
-
-	res, ok := convertOpt(args[0], opts, pre, addVars)
-	if !ok {
-		return res, false
-	}
-	args = args[1:]
-
-	for _, arg := range args {
-		if bytes.HasPrefix(arg, []byte{'['}) && bytes.HasSuffix(arg, []byte{']'}) {
-			arg = arg[1:len(arg)-1]
-			v, ok := GetOpt(arg, opts, *pre, addVars)
-			if !ok {
-				return v, false
-			}
-			arg = goutil.ToString[[]byte](v)
-			if arg == nil || len(arg) == 0 {
-				if *pre {
-					return true, false
-				}
-				return nil, false
-			}
-		}
-
-		rType := reflect.TypeOf(res)
-		if rType == goutil.VarType["map"] {
-			r := (res.(map[string]interface{}))
-			val, ok := convertOpt(arg, &r, pre, addVars)
-			if !ok {
-				return val, false
-			}
-			res = val
-		}else if rType == goutil.VarType["array"] {
-			r := map[string]interface{}{}
-			for i, v := range res.([]interface{}) {
-				r[strconv.Itoa(i)] = v
-			}
-			val, ok := convertOpt(arg, &r, pre, addVars)
-			if !ok {
-				return val, false
-			}
-			res = val
-		}else if rType == goutil.VarType["byteArray"] || rType == goutil.VarType["string"] {
-			if rType == goutil.VarType["string"] {
-				res = []byte(res.(string))
-			}
-			r := map[string]interface{}{}
-			for i, v := range res.([]byte) {
-				r[strconv.Itoa(i)] = v
-			}
-			val, ok := convertOpt(arg, &r, pre, addVars)
-			if !ok {
-				return val, false
-			}
-			res = val
-		}else{
-			return nil, false
-		}
-	}
-
-	return res, true
-}
-
-// GetOpt is used to handle grabing an option from the user options that were passed
-//
-// this method accepts the arg as a simple text like []byte("myOption")
-//
-// this method can also handle complex options like {{this|'that'}} (with optional or statements) and even {{class="myClass"}} vars
-func GetOpt(arg []byte, opts *map[string]interface{}, pre bool, addVars *[]KeyVal) (interface{}, bool) {
-	var key []byte
-	arg = regex.Compile(`^{{{?([\w_-]+)=(["'\']|)(.*)\2}}}?$`).RepFuncRef(&arg, func(data func(int) []byte) []byte {
-		key = data(1)
-		return data(3)
-	})
-
-	arg = bytes.TrimLeft(arg, "{")
-	arg = bytes.TrimRight(arg, "}")
-	// arg = regex.RepStrComplexRef(&arg, regex.Compile(`^{{{?(.*)}}}?$`), []byte("$1"))
-
-	b := []byte{}
-	for i := 0; i < len(arg); i++ {
-		if arg[i] == '|' {
-			if len(b) == 0 {
-				continue
-			}
-
-			val, ok := getOptObj(b, opts, &pre, addVars)
-			if ok {
-				if key != nil {
-					return KeyVal{key, val}, true
-				}
-				return val, true
-			}
-			b = []byte{}
-
-			if pre && val == true {
-				break
-			}
-			continue
-		}else if arg[i] == '"' || arg[i] == '\'' || arg[i] == '`' {
-			q := arg[i]
-			i++
-			b = append(b, q)
-			for ; i < len(arg); i++ {
-				if arg[i] == q {
-					b = append(b, q)
-					i++
-					break
-				}else if arg[i] == '\\' {
-					if regex.Compile(`[A-Za-z]`).MatchRef(&[]byte{arg[i]}) {
-						b = append(b, arg[i])
-					}
-					i++
-				}
-
-				b = append(b, arg[i])
-			}
-			continue
-		}else if arg[i] == '[' {
-			i++
-			b = append(b, '[')
-			for ; i < len(arg); i++ {
-				if arg[i] == ']' {
-					b = append(b, ']')
-					i++
-					break
-				}else if arg[i] == '"' || arg[i] == '\'' || arg[i] == '`' {
-					q := arg[i]
-					i++
-					b = append(b, q)
-					for ; i < len(arg); i++ {
-						if arg[i] == q {
-							b = append(b, q)
-							i++
-							break
-						}else if arg[i] == '\\' {
-							if regex.Compile(`[A-Za-z]`).MatchRef(&[]byte{arg[i]}) {
-								b = append(b, arg[i])
-							}
-							i++
-						}
-		
-						b = append(b, arg[i])
-					}
-					// continue
-				}else if arg[i] == '\\' {
-					if regex.Compile(`[A-Za-z]`).MatchRef(&[]byte{arg[i]}) {
-						b = append(b, arg[i])
-					}
-					i++
-				}
-
-				b = append(b, arg[i])
-			}
-
-			continue
-		}
-
-		b = append(b, arg[i])
-	}
-
-	if len(b) != 0 {
-		if val, ok := getOptObj(b, opts, &pre, addVars); ok {
-			if key != nil {
-				return KeyVal{key, val}, true
-			}
-			return val, true
-		}
-	}
-
-	return nil, false
-}
-
-
-// other methods
-
-// NewFunc can be used to create custom functions for the compiler
-//
-// these user defined functions will only run after the default functions have been resolved
-func NewFunc(name string, fn func(args *map[string][]byte, cont *[]byte, opts *map[string]interface{}, pre bool, addVars *[]KeyVal)(interface{}, error)) error {
-	name = string(regex.Compile(`[^\w_]`).RepStr([]byte(name), []byte{}))
-
-	if name == "If" || name == "Else" || name == "Elif" || name == "Each" {
-		return errors.New("the function '"+name+"' is one of the major core functions set by the compiler")
-	}
-
-	m := reflect.ValueOf(&funcs).MethodByName(name)
-	if !goutil.IsZeroOfUnderlyingType(m) {
-		return errors.New("the function '"+name+"' has already been set by the compiler")
-	}
-
-	if _, ok := userFuncList[name]; !ok {
-		userFuncList[name] = fn
-		return nil
-	}
-
-	return errors.New("you cannot set 2 functions with the same name")
+	// return nil = return nothing
+	// []byte("result html") = return basic html
+	// append([]byte{0}, []byte("args")...) = pass function to compiler
+	// append([]byte{1}, []byte("error message")...) = return error
+	return nil
 }

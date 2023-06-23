@@ -1,567 +1,804 @@
 package compiler
 
 import (
-	"bufio"
 	"bytes"
-	"fmt"
-	"reflect"
+	"strconv"
 
+	"github.com/AspieSoft/go-liveread"
 	"github.com/AspieSoft/go-regex/v4"
-	"github.com/AspieSoft/goutil/v4"
+	"github.com/AspieSoft/goutil/v5"
 )
 
-var leyoutHead = regex.Compile(`\n\s+`).RepStr(bytes.TrimSpace([]byte(`
-	<script src="https://instant.page/5.1.1" type="module" integrity="sha384-MWfCL6g1OTGsbSwfuMHc8+8J2u71/LA8dzlIN3ycajckxuZZmF+DNjdm7O6H3PSq"></script>
-`)), []byte{'\n'})
+var reLinkMD *regex.Regexp = regex.Comp(`(\!|)\[((?:"(?:\\[\\"'\']|\.)*"|'(?:\\[\\"'\']|\.)*'|\'(?:\\[\\"'\']|\.)*\'|.)*?)\]\(((?:"(?:\\[\\"'\']|\.)*"|'(?:\\[\\"'\']|\.)*'|\'(?:\\[\\"'\']|\.)*\'|.)*?)\)`)
 
-// an optional head to add to a layout
-func addLayoutHead(opts *map[string]interface{}) []byte {
-	publicOpts := []byte{}
-	if (*opts)["public"] != nil && reflect.TypeOf((*opts)["public"]) == goutil.VarType["map"] {
-		public := (*opts)["public"].(map[string]interface{})
-		
-		// add public js options
-		if public["js"] != nil && reflect.TypeOf(public["js"]) == goutil.VarType["map"] {
-			if json, err := goutil.StringifyJSON(public["js"]); err == nil {
-				publicOpts = regex.JoinBytes([]byte("<script>;const OPTS = "), json, []byte(";</script>"))
+type mdListData struct {
+	tab      uint
+	listType byte
+}
+
+func compileMarkdown(reader *liveread.Reader[uint8], write *func(b []byte, raw ...bool), firstChar *bool, spaces *uint, mdStore *map[string]interface{}) bool {
+	buf, err := reader.Peek(1)
+	if err == nil {
+
+		// note: when another markdown selector shares common chars with a `*firstChar` selector, it may need to be run ahead of time, and set `*firstChar = false` before returning
+		if buf[0] == '*' || buf[0] == '_' || buf[0] == '~' || buf[0] == '-' {
+			firstByte := buf[0]
+
+			ind := uint(1)
+			level := []byte{buf[0]}
+			buf, err = reader.Get(ind, 1)
+			for err == nil && (buf[0] == '*' || buf[0] == '_' || buf[0] == '~' || buf[0] == '-') {
+				level = append(level, buf[0])
+				ind++
+				buf, err = reader.Get(ind, 1)
+			}
+
+			if firstByte == '*' || len(level) > 1 {
+				*firstChar = false
+
+				buf, err = reader.Get(ind, 1)
+
+				levelEnd := level
+				cont := []byte{}
+				for err == nil && buf[0] != '\n' {
+					if len(levelEnd) == 0 {
+						break
+					} else if buf[0] == levelEnd[len(levelEnd)-1] {
+						levelEnd = levelEnd[:len(levelEnd)-1]
+					}
+
+					cont = append(cont, buf[0])
+					ind++
+					buf, err = reader.Get(ind, 1)
+				}
+
+				(*write)(levelEnd)
+				reader.Discard(uint(len(levelEnd)))
+
+				if len(levelEnd) != len(level) {
+					level = level[len(levelEnd):]
+
+					(*write)(mdHandleFonts(append(level, cont...)))
+
+					reader.Discard(uint(len(cont) + len(level)))
+					return true
+				}
+				return false
+			} else {
+				buf, err = reader.Peek(1)
 			}
 		}
 
-		// add public css options
-		if public["css"] != nil && reflect.TypeOf(public["css"]) == goutil.VarType["map"] {
-			publicOpts = append(publicOpts, []byte("<style>:root{")...)
-			for key, val := range public["css"].(map[string]interface{}) {
-				publicOpts = append(publicOpts, regex.JoinBytes([]byte("--"), key, ':', bytes.ReplaceAll(goutil.ToString[[]byte](val), []byte(";"), []byte{}), ';')...)
+		if *firstChar {
+			if buf[0] == '#' {
+				level := uint(1)
+				buf, err = reader.Get(level, 1)
+				for err == nil && buf[0] == '#' && level < 6 {
+					level++
+					buf, err = reader.Get(level, 1)
+				}
+				reader.Discard(level)
+
+				buf, err = reader.Peek(1)
+				if err == nil && buf[0] == ' ' {
+					reader.Discard(1)
+					buf, err = reader.Peek(1)
+				}
+
+				cont := []byte{}
+				for err == nil && buf[0] != '\n' {
+					cont = append(cont, buf[0])
+					reader.Discard(1)
+					buf, err = reader.Peek(1)
+				}
+
+				(*write)(regex.JoinBytes([]byte("<h"), int(level), '>', mdHandleFonts(cont), []byte("</h"), int(level), '>'))
+
+				return true
+			} else if buf[0] == '-' {
+				//todo: fix <hr/> not being seen as a first char bu the compiler
+
+				level := uint(0)
+				buf, err = reader.Get(level, 10)
+
+				for err == nil && buf[0] == '-' {
+					level++
+					buf, err = reader.Get(level, 1)
+				}
+
+				if level >= 3 && (err != nil || buf[0] == '\r' || buf[0] == '\n') {
+					reader.Discard(level)
+					(*write)([]byte("<hr/>"))
+					return true
+				}
+
+				buf, err = reader.Peek(1)
 			}
-			publicOpts = append(publicOpts, []byte("}</style>")...)
-		}
 
-	}
-	return append(leyoutHead, publicOpts...)
-}
+			// handle list
+			if buf[0] == '-' || buf[0] == '*' || buf[0] == '~' || regex.Comp(`^[0-9]`).MatchRef(&buf) {
+				ind := uint(1)
 
-func escapeChar(char byte) []byte {
-	if char == '<' {
-		return []byte("&lt;")
-	}else if char == '>' {
-		return []byte("&gt;")
-	}else if char == '&' {
-		return []byte("&amp;")
-	}else if char == '$' {
-		return []byte("&cent;")
-	}
+				skipList := false
+				listType := uint8(0)
+				listInd := 1
+				if regex.Comp(`^[0-9]`).MatchRef(&buf) {
+					listType = 1
 
-	return []byte{char}
-}
+					listKey := []byte{buf[0]}
+					buf, err = reader.Get(ind, 1)
+					for err == nil && regex.Comp(`^[0-9]`).MatchRef(&buf) {
+						listKey = append(listKey, buf[0])
+						ind++
+						buf, err = reader.Get(ind, 1)
+					}
 
+					if buf[0] != '.' {
+						skipList = true
+						buf, err = reader.Peek(1)
+					} else {
+						ind++
+						buf, err = reader.Get(ind, 1)
 
-// markdown funcs
-func getFormInput(args *map[string][]byte) []byte {
-	//todo: handle form inputs
-	return nil
-}
-
-func getLinkEmbed(args *map[string][]byte) []byte {
-	htmlArgs := []byte{}
-	css := []byte{}
-	compArgs := (*args)["args"]
-
-	noCtrl := false
-
-	key := []byte{}
-	for i := 0; i < len(compArgs); i++ {
-		if regex.Compile(`[\s\r\n]`).MatchRef(&[]byte{compArgs[i]}) {
-			if bytes.Equal(key, []byte("no-controls")) {
-				noCtrl = true
-			}else if len(key) != 0 {
-				htmlArgs = append(htmlArgs, regex.JoinBytes(' ', key)...)
-			}
-			key = []byte{}
-			continue
-		}
-		
-		if compArgs[i] == '=' {
-			i++
-
-			val := []byte{}
-			if i < len(compArgs) && compArgs[i] == '"' || compArgs[i] == '\'' || compArgs[i] == '`' {
-				q := compArgs[i]
-				i++
-				for i < len(compArgs) && compArgs[i] != q {
-					if compArgs[i] == '\\' && i+1 < len(compArgs) {
-						if regex.Compile(`[A-Za-z]`).MatchRef(&[]byte{compArgs[i]}) {
-							val = append(val, compArgs[i], compArgs[i+1])
-						}else{
-							val = append(val, compArgs[i+1])
+						if i, e := strconv.Atoi(string(listKey)); e == nil {
+							listInd = i
 						}
-
-						i += 2
-					}else{
-						val = append(val, compArgs[i])
-						i++
 					}
 				}
 
-				i++
-			}else{
-				for i < len(compArgs) && !regex.Compile(`[\s\r\n]`).MatchRef(&[]byte{compArgs[i]}) {
-					val = append(val, compArgs[i])
-				}
-			}
+				if !skipList {
+					// reader.Discard(ind)
+					ind++
+					buf, err = reader.Get(ind, 1)
 
-			if bytes.Equal(key, []byte("no-controls")) {
-				noCtrl = true
-			}else{
-				if len(val) != 0 {
-					htmlArgs = append(htmlArgs, regex.JoinBytes(' ', key, '=', '"', goutil.EscapeHTMLArgs(val, '"'), '"')...)
-				}else if len(key) != 0{
-					htmlArgs = append(htmlArgs, regex.JoinBytes(' ', key)...)
-				}
-			}
+					if buf[0] == ' ' {
+						// reader.Discard(1)
+						ind++
+						buf, err = reader.Get(ind, 1)
+					}
 
-			key = []byte{}
-		}else if compArgs[i] == ':' {
-			i++
+					cont := []byte{}
+					for err == nil && buf[0] != '\n' {
+						cont = append(cont, buf[0])
+						// reader.Discard(1)
+						ind++
+						buf, err = reader.Get(ind, 1)
+					}
 
-			val := []byte{}
-			for i < len(compArgs) && compArgs[i] != ';' {
-				if compArgs[i] == '"' || compArgs[i] == '\'' || compArgs[i] == '`' {
-					q := compArgs[i]
-					val = append(val, q)
-					i++
-					for i < len(compArgs) && compArgs[i] != q {
-						if compArgs[i] == '\\' && i+1 < len(compArgs) {
-							if compArgs[i] == q || regex.Compile(`[A-Za-z]`).MatchRef(&[]byte{compArgs[i]}) {
-								val = append(val, compArgs[i], compArgs[i+1])
-							}else{
-								val = append(val, compArgs[i+1])
+					if len(bytes.TrimSpace(cont)) == 0 {
+						return false
+					}
+					reader.Discard(ind)
+
+					cont = mdHandleFonts(cont)
+
+					closing := uint8(0)
+					ind = 1
+					buf, err = reader.Get(ind, 1)
+
+					for regex.Comp(`^[ \t]`).MatchRef(&buf) {
+						ind++
+						buf, err = reader.Get(ind, 1)
+					}
+
+					if err != nil || !(buf[0] == '-' || buf[0] == '*' || buf[0] == '~' || regex.Comp(`^[0-9]`).MatchRef(&buf)) {
+						closing = 1
+					}
+
+					if (*mdStore)["listTab"] == nil {
+						(*mdStore)["listTab"] = []mdListData{}
+					}
+
+					if len((*mdStore)["listTab"].([]mdListData)) == 0 || (*mdStore)["listTab"].([]mdListData)[len((*mdStore)["listTab"].([]mdListData))-1].tab < *spaces {
+						if closing == 0 && listType == 1 {
+							sp := uint(0)
+							for err == nil && buf[0] != '\n' {
+								if sp > *spaces {
+									for err == nil && buf[0] != '\n' {
+										ind++
+										buf, err = reader.Get(ind, 1)
+									}
+									ind++
+									buf, err = reader.Get(ind, 1)
+									if err != nil {
+										closing = 1
+										break
+									}
+
+									sp = 0
+									continue
+								} else if regex.Comp(`^[0-9]`).MatchRef(&buf) {
+									break
+								}
+
+								sp++
+								ind++
+								buf, err = reader.Get(ind, 1)
 							}
 
-							i += 2
-						}else{
-							val = append(val, compArgs[i])
-							i++
+							if closing == 0 {
+								if err != nil || buf[0] == '\n' {
+									closing = 1
+								} else if sp < *spaces {
+									closing = 2
+								} else {
+									key := []byte{}
+									for err == nil && regex.Comp(`^[0-9]`).MatchRef(&buf) {
+										key = append(key, buf[0])
+										ind++
+										buf, err = reader.Get(ind, 1)
+									}
+									if err == nil {
+										if i, e := strconv.Atoi(string(key)); e == nil && i < listInd {
+											listType = 2
+										}
+									}
+								}
+							}
 						}
+
+						(*mdStore)["listTab"] = append((*mdStore)["listTab"].([]mdListData), mdListData{
+							tab:      *spaces,
+							listType: listType,
+						})
+
+						if listType == 0 {
+							(*write)([]byte("<ul>"))
+						} else if listType == 1 {
+							(*write)([]byte("<ol>"))
+						} else if listType == 0 {
+							(*write)([]byte("<ol reversed>"))
+						}
+
+						(*write)(regex.JoinBytes([]byte("<li>"), cont, []byte("</li>")))
+					} else {
+						for (*mdStore)["listTab"].([]mdListData)[len((*mdStore)["listTab"].([]mdListData))-1].tab > *spaces {
+							if (*mdStore)["listTab"].([]mdListData)[len((*mdStore)["listTab"].([]mdListData))-1].listType == 0 {
+								(*write)([]byte("</ul>"))
+							} else {
+								(*write)([]byte("</ol>"))
+							}
+							(*mdStore)["listTab"] = (*mdStore)["listTab"].([]mdListData)[:len((*mdStore)["listTab"].([]mdListData))-1]
+						}
+
+						(*write)(regex.JoinBytes([]byte("<li>"), cont, []byte("</li>")))
 					}
 
-					val = append(val, q)
-					i++
-				}else{
-					val = append(val, compArgs[i])
-					i++
+					if closing == 1 {
+						for len((*mdStore)["listTab"].([]mdListData)) != 0 {
+							if (*mdStore)["listTab"].([]mdListData)[len((*mdStore)["listTab"].([]mdListData))-1].listType == 0 {
+								(*write)([]byte("</ul>"))
+							} else {
+								(*write)([]byte("</ol>"))
+							}
+							(*mdStore)["listTab"] = (*mdStore)["listTab"].([]mdListData)[:len((*mdStore)["listTab"].([]mdListData))-1]
+						}
+					} else if closing == 2 {
+						if (*mdStore)["listTab"].([]mdListData)[len((*mdStore)["listTab"].([]mdListData))-1].listType == 0 {
+							(*write)([]byte("</ul>"))
+						} else {
+							(*write)([]byte("</ol>"))
+						}
+						(*mdStore)["listTab"] = (*mdStore)["listTab"].([]mdListData)[:len((*mdStore)["listTab"].([]mdListData))-1]
+					}
+
+					return true
 				}
+
+				buf, err = reader.Peek(1)
 			}
 
-			css = append(css, regex.JoinBytes(key, ':', val, ';')...)
-			key = []byte{}
-		} else {
-			key = append(key, compArgs[i])
-		}
-	}
+			//todo: handle tables
+			if buf[0] == '|' {
 
-	if len(key) != 0 {
-		if bytes.Equal(key, []byte("no-controls")) {
-			noCtrl = true
-		}else{
-			htmlArgs = append(htmlArgs, regex.JoinBytes(' ', key)...)
-		}
-	}
-
-	if len(css) != 0 {
-		htmlArgs = append(htmlArgs, regex.JoinBytes(' ', []byte("style=\""), css, '"')...)
-	}
-
-	if (*args)["emb"] == nil {
-		// normal link
-
-		//todo: prevent url from being a non http link
-
-		return regex.JoinBytes([]byte("<a href=\""), (*args)["url"], []byte("\""), htmlArgs, '>', (*args)["name"], []byte("</a>"))
-	}
-
-	url := (*args)["url"]
-
-	if regex.Compile(`(?i)\.(a?png|jpe?g|webp|avif|gif|jfif|pjpeg|pjp|svg|bmp|ico|cur|tiff?)$`).MatchRef(&url) {
-		return regex.JoinBytes([]byte("<img src=\""), goutil.EscapeHTMLArgs(url, '"'), []byte("\" alt=\""), goutil.EscapeHTMLArgs((*args)["name"], '"'), []byte("\""), htmlArgs, []byte("/>"))
-	}else if regex.Compile(`(?i)\.(mp4|mov|webm|avi|mpeg|ogv|ts|3gp2?)$`).MatchRef(&url) {
-		//todo: may have videos use an optional lazy loading feature with an image until clicked
-
-		if !noCtrl {
-			htmlArgs = append(htmlArgs, []byte(" controls")...)
-		}
-
-		if bytes.ContainsRune(url, '|') {
-			list := []byte{}
-			for _, val := range bytes.Split(url, []byte("|")) {
-				list = append(list, regex.JoinBytes([]byte("<source src=\""), goutil.EscapeHTMLArgs(val, '"'), []byte("\" type=\"video/"), regex.Compile(`^.*\.([\w_-]+)$`).RepStrComplexRef(&val, []byte("$1")), []byte("\"/>\n"))...)
 			}
 
-			return regex.JoinBytes([]byte("<video"), htmlArgs, '>', list, (*args)["name"], []byte("\n</video>"))
-		}else{
-			return regex.JoinBytes([]byte("<video"), htmlArgs, []byte(">\n<source src=\""), goutil.EscapeHTMLArgs(url, '"'), []byte("\" type=\"video/"), regex.Compile(`^.*\.([\w_-]+)$`).RepStrComplexRef(&url, []byte("$1")), []byte("\"/>\n"), (*args)["name"], []byte("\n</video>"))
-		}
-	}else if regex.Compile(`(?i)\.(mp3|wav|weba|ogg|oga|aac|midi?|opus|3gpp2?)$`).MatchRef(&url) {
-		//todo: may have audio use an optional lazy loading feature with an image until clicked
+			// handle blockquotes
+			if buf[0] == '>' {
+				*firstChar = false
 
-		if !noCtrl {
-			htmlArgs = append(htmlArgs, []byte(" controls")...)
-		}
+				if (*mdStore)["inBlockquote"] == nil || (*mdStore)["inBlockquote"] == 0 {
+					(*mdStore)["inBlockquote"] = 1
+					(*write)([]byte("<blockquote>"))
+				}
 
-		if bytes.ContainsRune(url, '|') {
-			list := []byte{}
-			for _, val := range bytes.Split(url, []byte("|")) {
-				list = append(list, regex.JoinBytes([]byte("<source src=\""), goutil.EscapeHTMLArgs(val, '"'), []byte("\" type=\"audio/"), regex.Compile(`^.*\.([\w_-]+)$`).RepStrComplexRef(&val, []byte("$1")), []byte("\"/>\n"))...)
-			}
-			return regex.JoinBytes([]byte("<audio"), htmlArgs, '>', list, (*args)["name"], []byte("\n</audio>"))
-		}else{
-			return regex.JoinBytes([]byte("<audio"), htmlArgs, []byte(">\n<source src=\""), goutil.EscapeHTMLArgs(url, '"'), []byte("\" type=\"audio/"), regex.Compile(`^.*\.([\w_-]+)$`).RepStrComplexRef(&url, []byte("$1")), []byte("\"/>\n"), (*args)["name"], []byte("\n</audio>"))
-		}
-	}else{
-		//todo: may have embeds use an optional lazy loading feature with an image until clicked
-		//todo: may add special case for youtube.com urls
-
-		//todo: new idea - may have all embeds use an optional lazy loading feature
-		return regex.JoinBytes([]byte("<iframe src=\""), goutil.EscapeHTMLArgs(url, '"'), []byte("\" alt=\""), (*args)["name"], '"', htmlArgs, []byte("></iframe>"))
-	}
-}
-
-
-func hasClosingChar(char []byte, offset int, reader *bufio.Reader, b *[]byte, err *error, allowLineBreaks ...bool) bool {
-	offset++
-	*b, *err = reader.Peek(offset+1)
-
-	for *err == nil && (len(allowLineBreaks) != 0 || !((*b)[offset] == '\n' || (*b)[offset] == '\r')) {
-		if len(*b) >= len(char) && bytes.Equal((*b)[len(*b)-len(char):], char) {
-			break
-		}
-
-		offset++
-		*b, *err = reader.Peek(offset+1)
-	}
-
-	return bytes.Equal((*b)[len(*b)-len(char):], char)
-}
-
-
-// returning true will run the "continue" function on the pre compiler loop
-func compileMarkdown(reader *bufio.Reader, write *func([]byte), b *[]byte, err *error, linePos *int, fnCont *[]fnData) bool {
-	// handle http links
-	if (*b)[0] == 'h' {
-		*b, *err = reader.Peek(8)
-		if *err == nil && regex.Compile(`^https?://`).MatchRef(b) {
-			link := []byte("http")
-			if (*b)[4] == 's' {
-				link = append(link, 's')
-			}
-			link = append(link, ':', '/', '/')
-			reader.Discard(len(link))
-			*b, *err = reader.Peek(1)
-
-			for *err == nil && !regex.Compile(`[\s\r\n<]|[^\w_\-\.~:/?#\[\]@!$&"'\'\(\)\*\+,;%=]`).MatchRef(b) {
-				link = append(link, (*b)[0])
 				reader.Discard(1)
-				*b, *err = reader.Peek(1)
-			}
+				buf, err = reader.Peek(1)
+				if buf[0] == ' ' {
+					reader.Discard(1)
+					buf, err = reader.Peek(1)
+				}
 
-			if len(*fnCont) != 0 && bytes.HasPrefix((*fnCont)[len(*fnCont)-1].tag, []byte("@md")) {
-				(*write)(link)
+				ind := uint(0)
+				for err == nil && buf[0] != '\n' {
+					ind++
+					buf, err = reader.Get(ind, 1)
+				}
+				ind++
+				buf, err = reader.Get(ind, 1)
+
+				for regex.Comp(`^[ \t]`).MatchRef(&buf) {
+					ind++
+					buf, err = reader.Get(ind, 1)
+				}
+
+				if buf[0] != '>' {
+					(*mdStore)["inBlockquote"] = 2
+				}
+
 				return true
 			}
-
-			(*write)(regex.JoinBytes([]byte("<a href=\""), goutil.EscapeHTMLArgs(link, '"'), []byte("\">"), link, []byte("</a>")))
-
-			fmt.Println("debug:", string(*b))
-			return true
-		}
-	}
-
-	offset := 0
-	if (*b)[0] == '!' {
-		offset++
-		*b, *err = reader.Peek(offset+1)
-	}
-
-	if (*b)[offset] == '[' && hasClosingChar([]byte{']'}, offset, reader, b, err) {
-		offset = 1
-
-		args := map[string][]byte{}
-		if (*b)[0] == '!' {
-			args["emb"] = []byte{1}
-			offset++
 		}
 
-		*fnCont = append(*fnCont, fnData{tag: []byte("@md:link-name"), args: args, cont: []byte{}})
+		*firstChar = false
+		*spaces = 0
 
-		reader.Discard(offset)
-		*b, *err = reader.Peek(1)
-		return true
-	}
+		if buf[0] == '`' {
+			buf, err := reader.Peek(3)
+			if err == nil && buf[1] == '`' && buf[2] == '`' {
+				reader.Discard(3)
 
-	if (*b)[0] == ']' && len(*fnCont) != 0 && bytes.Equal((*fnCont)[len(*fnCont)-1].tag, []byte("@md:link-name")) {
-		(*fnCont)[len(*fnCont)-1].args["name"] = (*fnCont)[len(*fnCont)-1].cont
-		(*fnCont)[len(*fnCont)-1].cont = []byte{}
-
-		reader.Discard(1)
-		*b, *err = reader.Peek(1)
-
-		if (*b)[0] == '(' && hasClosingChar([]byte{')'}, offset, reader, b, err) {
-			(*fnCont)[len(*fnCont)-1].tag = []byte("@md:link-url")
-			reader.Discard(1)
-			*b, *err = reader.Peek(1)
-		}else if (*b)[0] == '{' && hasClosingChar([]byte{'}'}, offset, reader, b, err, true) {
-			(*fnCont)[len(*fnCont)-1].tag = []byte("@md:link-args")
-			(*fnCont)[len(*fnCont)-1].args["form"] = []byte{1}
-			reader.Discard(1)
-			*b, *err = reader.Peek(1)
-		}else{
-			if res := getFormInput(&(*fnCont)[len(*fnCont)-1].args); res != nil {
-				*fnCont = (*fnCont)[:len(*fnCont)-1]
-				(*write)(res)
-			}else{
-				res := []byte{}
-				if (*fnCont)[len(*fnCont)-1].args["emb"] != nil {
-					res = []byte{'!'}
+				buf, err = reader.Peek(1)
+				lang := []byte{}
+				for err == nil && regex.Comp(`^[\w_\- ]`).MatchRef(&buf) {
+					lang = append(lang, buf[0])
+					reader.Discard(1)
+					buf, err = reader.Peek(1)
 				}
-				res = append(res, regex.JoinBytes('[', (*fnCont)[len(*fnCont)-1].args["name"], ']')...)
-				*fnCont = (*fnCont)[:len(*fnCont)-1]
-				(*write)(res)
-			}
-		}
 
-		return true
-	}
-
-	if (*b)[0] == ')' && len(*fnCont) != 0 && bytes.Equal((*fnCont)[len(*fnCont)-1].tag, []byte("@md:link-url")) {
-		(*fnCont)[len(*fnCont)-1].args["url"] = (*fnCont)[len(*fnCont)-1].cont
-		(*fnCont)[len(*fnCont)-1].cont = []byte{}
-
-		reader.Discard(1)
-		*b, *err = reader.Peek(1)
-
-		if (*b)[0] == '{' && hasClosingChar([]byte{'}'}, offset, reader, b, err, true) {
-			(*fnCont)[len(*fnCont)-1].tag = []byte("@md:link-args")
-			reader.Discard(1)
-			*b, *err = reader.Peek(1)
-		}else{
-			if res := getLinkEmbed(&(*fnCont)[len(*fnCont)-1].args); res != nil {
-				*fnCont = (*fnCont)[:len(*fnCont)-1]
-				(*write)(res)
-			}else{
-				res := []byte{}
-				if (*fnCont)[len(*fnCont)-1].args["emb"] != nil {
-					res = []byte{'!'}
+				cont := []byte{}
+				buf, err = reader.Peek(3)
+				for err == nil && !(buf[0] == '`' && buf[1] == '`' && buf[2] == '`') {
+					cont = append(cont, buf[0])
+					reader.Discard(1)
+					buf, err = reader.Peek(3)
 				}
-				res = append(res, regex.JoinBytes('[', (*fnCont)[len(*fnCont)-1].args["name"], ']', '(', (*fnCont)[len(*fnCont)-1].args["url"], ')')...)
-				*fnCont = (*fnCont)[:len(*fnCont)-1]
-				(*write)(res)
-			}
-		}
 
-		return true
-	}
+				if err == nil {
+					reader.Discard(3)
+				}
 
-	if (*b)[0] == '}' && len(*fnCont) != 0 && bytes.Equal((*fnCont)[len(*fnCont)-1].tag, []byte("@md:link-args")) {
-		(*fnCont)[len(*fnCont)-1].args["args"] = (*fnCont)[len(*fnCont)-1].cont
-		(*fnCont)[len(*fnCont)-1].cont = []byte{}
+				if len(lang) == 0 {
+					(*write)(regex.JoinBytes([]byte("<pre>"), cont, []byte("</pre>")), true)
+				} else {
+					(*write)(regex.JoinBytes([]byte("<code lang=\""), lang, []byte("\">"), cont, []byte("</code>")), true)
+				}
 
-		reader.Discard(1)
-		*b, *err = reader.Peek(1)
-
-		if (*fnCont)[len(*fnCont)-1].args["form"] != nil {
-			if res := getFormInput(&(*fnCont)[len(*fnCont)-1].args); res != nil {
-				*fnCont = (*fnCont)[:len(*fnCont)-1]
-				(*write)(res)
 				return true
-			}
-		}else if res := getLinkEmbed(&(*fnCont)[len(*fnCont)-1].args); res != nil{
-			*fnCont = (*fnCont)[:len(*fnCont)-1]
-			(*write)(res)
-			return true
-		}
-
-		res := []byte{}
-		if (*fnCont)[len(*fnCont)-1].args["emb"] != nil {
-			res = []byte{'!'}
-		}
-		res = append(res, regex.JoinBytes('[', (*fnCont)[len(*fnCont)-1].args["name"], ']', '(', (*fnCont)[len(*fnCont)-1].args["url"], ')', '{', (*fnCont)[len(*fnCont)-1].args["args"], '}')...)
-		*fnCont = (*fnCont)[:len(*fnCont)-1]
-		(*write)(res)
-
-		return true
-	}
-
-	// handle bold and italic text
-	if (*b)[0] == '*' {
-		*b, *err = reader.Peek(4)
-		if *err == nil {
-			size := 1
-			if (*b)[1] == '*' {
-				size++
-				if (*b)[2] == '*' {
-					size++
+			} else {
+				ind := uint(1)
+				buf, err = reader.Get(ind, 1)
+				cont := []byte{}
+				for err == nil && !(buf[0] == '`' || buf[0] == '\n') {
+					cont = append(cont, buf[0])
+					ind++
+					buf, err = reader.Get(ind, 1)
 				}
-			}
-	
-			if (*b)[size] != '*' {
-				offset := size
-				*b, *err = reader.Peek(offset+size)
-				
-				text := []byte{}
-				for *err == nil && !(bytes.Equal((*b)[offset:], bytes.Repeat([]byte{'*'}, size)) || (*b)[offset] == '\n' || (*b)[offset] == '\r') {
-					text = append(text, (*b)[offset])
-	
-					offset++
-					*b, *err = reader.Peek(offset+size)
-				}
-	
-				*b, *err = reader.Peek(offset+size)
-				if bytes.Equal((*b)[offset:], bytes.Repeat([]byte{'*'}, size)) {
-					if size == 1 {
-						(*write)(regex.JoinBytes([]byte("<em>"), text, []byte("</em>")))
-					}else if size == 2 {
-						(*write)(regex.JoinBytes([]byte("<strong>"), text, []byte("</strong>")))
-					}else if size == 3 {
-						(*write)(regex.JoinBytes([]byte("<em><strong>"), text, []byte("</strong></em>")))
-					}
-	
-					reader.Discard(offset+size)
-					*b, *err = reader.Peek(1)
+
+				if err == nil && buf[0] == '`' {
+					(*write)(regex.JoinBytes([]byte("<pre>"), cont, []byte("</pre>")))
+
+					reader.Discard(ind + 1)
 					return true
 				}
 			}
+
+			return false
 		}
-	}
 
-	// handle underline text
-	if (*b)[0] == '_' {
-		*b, *err = reader.Peek(3)
-		if *err == nil && (*b)[1] == '_' && (*b)[2] != '_' {
-			offset := 2
-			*b, *err = reader.Peek(offset+2)
+		// handle links
+		if buf[0] == 'h' {
+			buf, err = reader.Peek(8)
+			if err == nil && regex.Compile(`^https?://`).MatchRef(&buf) {
+				link := []byte("http")
+				if buf[4] == 's' {
+					link = append(link, 's')
+				}
+				link = append(link, ':', '/', '/')
+				reader.Discard(uint(len(link)))
+				buf, err = reader.Peek(1)
 
-			text := []byte{}
-			for *err == nil && !(bytes.Equal((*b)[offset:], []byte("__")) || (*b)[offset] == '\n' || (*b)[offset] == '\r') {
-				text = append(text, (*b)[offset])
-
-				offset++
-				*b, *err = reader.Peek(offset+2)
-			}
-
-			*b, *err = reader.Peek(offset+2)
-			if bytes.Equal((*b)[offset:], []byte("__")) {
-				(*write)(regex.JoinBytes([]byte("<span style=\"text-decoration: underline;\">"), text, []byte("</span>")))
-
-				reader.Discard(offset+2)
-				*b, *err = reader.Peek(1)
-				return true
-			}
-		}
-	}
-
-	// handle strikeout text
-	if (*b)[0] == '~' {
-		*b, *err = reader.Peek(3)
-		if *err == nil && (*b)[1] == '~' && (*b)[2] != '~' {
-			offset := 2
-			*b, *err = reader.Peek(offset+2)
-
-			text := []byte{}
-			for *err == nil && !(bytes.Equal((*b)[offset:], []byte("~~")) || (*b)[offset] == '\n' || (*b)[offset] == '\r') {
-				text = append(text, (*b)[offset])
-
-				offset++
-				*b, *err = reader.Peek(offset+2)
-			}
-
-			*b, *err = reader.Peek(offset+2)
-			if bytes.Equal((*b)[offset:], []byte("~~")) {
-				(*write)(regex.JoinBytes([]byte("<del>"), text, []byte("</del>")))
-
-				reader.Discard(offset+2)
-
-
-				// check for insert text
-				offset := 0
-				*b, *err = reader.Peek(offset+2)
-
-				text := []byte{}
-				for *err == nil && !(bytes.Equal((*b)[offset:], []byte("~~")) || (*b)[offset] == '\n' || (*b)[offset] == '\r') {
-					text = append(text, (*b)[offset])
-
-					offset++
-					*b, *err = reader.Peek(offset+2)
+				for err == nil && !regex.Compile(`[\s\r\n<]|[^\w_\-\.~:/?#\[\]@!$&"'\'\(\)\*\+,;%=]`).MatchRef(&buf) {
+					link = append(link, buf[0])
+					reader.Discard(1)
+					buf, err = reader.Peek(1)
 				}
 
-				*b, *err = reader.Peek(offset+2)
-				if bytes.Equal((*b)[offset:], []byte("~~")) {
-					if text[0] == ' ' {
-						(*write)([]byte{' '})
-						text = text[1:]
-					}
-					(*write)(regex.JoinBytes([]byte("<ins>"), text, []byte("</ins>")))
-
-					reader.Discard(offset+2)
+				// check for xss
+				if regex.Comp(`(?i)(\b)(on\S+)(\s*)=|(javascript|data|vbscript):|(<\s*)(\/*)script|style(\s*)=|(<\s*)meta|\*(.*?)[\r\n]*(.*?)\*`).MatchRef(&link) {
+					(*write)([]byte("<!--{{#warning: xss injection was detected}}-->"))
+					return true
 				}
 
+				(*write)(regex.JoinBytes([]byte("<a href=\""), goutil.HTML.EscapeArgs(link, '"'), []byte("\">"), link, []byte("</a>")))
 
-				*b, *err = reader.Peek(1)
 				return true
 			}
+
+			buf, err = reader.Peek(1)
 		}
-	}
 
-	// handle headers
-	if *linePos == 0 && (*b)[0] == '#' {
-		*b, *err = reader.Peek(7)
-		if *err == nil {
-			size := 1
-			for size < 7 && (*b)[size] == '#' {
-				size++
+		ind := uint(0)
+		isEmbed := false
+		if buf[0] == '!' {
+			isEmbed = true
+
+			ind++
+			buf, err = reader.Get(ind, 1)
+			if err != nil {
+				return false
 			}
+		}
 
-			if size < 7 {
-				offset := size
-				*b, *err = reader.Peek(offset+size)
-				
-				text := []byte{}
-				for *err == nil && !((*b)[offset] == '\n' || (*b)[offset] == '\r') {
-					if len(text) != 0 || !(len(text) == 0 && regex.Compile(`[\s\r\n]`).MatchRef(&[]byte{(*b)[offset]})) {
-						text = append(text, (*b)[offset])
+		if buf[0] == '[' {
+			data1 := []byte{}
+			innerLink := uint(0)
+			ind++
+			buf, err = reader.Get(ind, 1)
+			for err == nil && (buf[0] != ']' || innerLink != 0) {
+				if buf[0] == '\n' {
+					break
+				}
+
+				data1 = append(data1, buf[0])
+
+				// handle strings
+				if buf[0] == '"' || buf[0] == '\'' || buf[0] == '`' {
+					q := buf[0]
+					ind++
+					buf, err = reader.Get(ind, 1)
+					for err == nil && buf[0] != q {
+						data1 = append(data1, buf[0])
+						if buf[0] == '\\' {
+							ind++
+							buf, err = reader.Get(ind, 1)
+							data1 = append(data1, buf[0])
+						}
+						ind++
+						buf, err = reader.Get(ind, 1)
 					}
 
-					offset++
-					*b, *err = reader.Peek(offset+1)
+					data1 = append(data1, q)
+				} else if buf[0] == '[' {
+					innerLink++
+				} else if innerLink != 0 && buf[0] == ']' {
+					innerLink--
 				}
 
-				(*write)(regex.JoinBytes([]byte("<h"), size, '>', text, []byte("</h"), size, '>', '\n'))
-				
-				reader.Discard(offset+1)
-				*b, *err = reader.Peek(1)
-				return true
+				ind++
+				buf, err = reader.Get(ind, 1)
 			}
+
+			if err != nil || buf[0] != ']' {
+				if isEmbed {
+					(*write)([]byte{'!', '['})
+					reader.Discard(2)
+					return true
+				}
+				return false
+			}
+
+			ind++
+			buf, err = reader.Get(ind, 1)
+
+			var data2 []byte = nil
+			if buf[0] == '(' {
+				back := ind
+				data2 = []byte{}
+				ind++
+				buf, err = reader.Get(ind, 1)
+				for err == nil && buf[0] != ')' {
+					if buf[0] == '\n' {
+						break
+					}
+
+					data2 = append(data2, buf[0])
+
+					// handle strings
+					if buf[0] == '"' || buf[0] == '\'' || buf[0] == '`' {
+						q := buf[0]
+						ind++
+						buf, err = reader.Get(ind, 1)
+						for err == nil && buf[0] != q {
+							data2 = append(data2, buf[0])
+							if buf[0] == '\\' {
+								ind++
+								buf, err = reader.Get(ind, 1)
+								data2 = append(data2, buf[0])
+							}
+							ind++
+							buf, err = reader.Get(ind, 1)
+						}
+
+						data2 = append(data2, q)
+					}
+
+					ind++
+					buf, err = reader.Get(ind, 1)
+				}
+
+				if err != nil || buf[0] != ')' {
+					data2 = nil
+					ind = back
+					buf, err = reader.Get(ind, 1)
+				} else {
+					ind++
+					buf, err = reader.Get(ind, 1)
+				}
+			}
+
+			var htmlArgs []byte = nil
+
+			buf, err = reader.Get(ind, 3)
+			if buf[0] == '{' && buf[1] != '{' && !(buf[1] == '\\' && buf[2] == '{') {
+				back := ind
+				args := map[string][]byte{}
+				css := map[string][]byte{}
+				argKeys := []string{}
+				cssKeys := []string{}
+
+				ind++
+				buf, err = reader.Get(ind, 1)
+
+				nextArg := []byte{}
+				key := ""
+				argMode := uint8(0)
+				argInd := 0
+				for err == nil && buf[0] != '}' {
+					if argMode == 0 && buf[0] == '=' {
+						key = string(nextArg)
+						nextArg = []byte{}
+						argMode = 1
+
+						if key == "" {
+							key = strconv.Itoa(argInd)
+							argInd++
+						}
+
+						ind++
+						buf, err = reader.Get(ind, 1)
+						continue
+					} else if argMode == 0 && buf[0] == ':' {
+						key = string(nextArg)
+						nextArg = []byte{}
+						argMode = 2
+
+						if key == "" {
+							key = strconv.Itoa(argInd)
+							argInd++
+						}
+
+						ind++
+						buf, err = reader.Get(ind, 1)
+
+						for err == nil && regex.Comp(`^[ \t]`).MatchRef(&buf) {
+							ind++
+							buf, err = reader.Get(ind, 1)
+						}
+						continue
+					} else if argMode == 0 && regex.Comp(`^[ \t]`).MatchRef(&buf) {
+						key = strconv.Itoa(argInd)
+						argInd++
+
+						args[key] = nextArg
+						argKeys = append(argKeys, key)
+						key = ""
+						nextArg = []byte{}
+						argMode = 0
+
+						ind++
+						buf, err = reader.Get(ind, 1)
+						continue
+					} else if argMode == 1 && regex.Comp(`^[\s;]`).MatchRef(&buf) {
+						args[key] = nextArg
+						argKeys = append(argKeys, key)
+						key = ""
+						nextArg = []byte{}
+						argMode = 0
+
+						ind++
+						buf, err = reader.Get(ind, 1)
+						continue
+					} else if argMode == 2 && buf[0] == ';' {
+						css[key] = nextArg
+						cssKeys = append(cssKeys, key)
+						key = ""
+						nextArg = []byte{}
+						argMode = 0
+
+						ind++
+						buf, err = reader.Get(ind, 1)
+						continue
+					} else if argMode == 2 && regex.Comp(`^[\r\n]`).MatchRef(&buf) {
+						if buf[0] != '\r' {
+							nextArg = append(nextArg, ' ')
+						}
+						ind++
+						buf, err = reader.Get(ind, 1)
+						continue
+					}
+
+					nextArg = append(nextArg, buf[0])
+
+					// handle strings
+					if buf[0] == '"' || buf[0] == '\'' || buf[0] == '`' {
+						q := buf[0]
+						ind++
+						buf, err = reader.Get(ind, 1)
+						for err == nil && buf[0] != q {
+							if argMode == 2 && regex.Comp(`^[\r\n]`).MatchRef(&buf) {
+								if buf[0] != '\r' {
+									nextArg = append(nextArg, '\\', 'n')
+								}
+								ind++
+								buf, err = reader.Get(ind, 1)
+								continue
+							}
+
+							nextArg = append(nextArg, buf[0])
+							if buf[0] == '\\' {
+								ind++
+								buf, err = reader.Get(ind, 1)
+								nextArg = append(nextArg, buf[0])
+							}
+							ind++
+							buf, err = reader.Get(ind, 1)
+						}
+
+						nextArg = append(nextArg, q)
+					}
+
+					ind++
+					buf, err = reader.Get(ind, 1)
+				}
+
+				if err != nil || buf[0] != '}' {
+					ind = back
+					buf, err = reader.Get(ind, 1)
+				} else {
+					ind++
+					buf, err = reader.Get(ind, 1)
+
+					if len(nextArg) != 0 {
+						if argMode == 0 {
+							args[strconv.Itoa(argInd)] = nextArg
+						} else if argMode == 1 {
+							args[key] = nextArg
+							argKeys = append(argKeys, key)
+						} else if argMode == 2 {
+							css[key] = nextArg
+							cssKeys = append(cssKeys, key)
+						}
+					}
+
+					// sort css and args
+					if len(cssKeys) != 0 {
+						if v, ok := args["style"]; !ok || v == nil {
+							args["style"] = []byte{}
+							argKeys = append(argKeys, "style")
+						} else if args["style"][len(args["style"])-1] != ';' {
+							args["style"] = append(args["style"], ';')
+						}
+						args["style"] = regex.Comp(`^(["'\'])(.*)\1$`).RepStrComp(args["style"], []byte("$2"))
+
+						sortStrings(&cssKeys)
+						for _, key := range cssKeys {
+							args["style"] = append(args["style"], regex.JoinBytes(key, ':', css[key], ';')...)
+						}
+
+						args["style"] = regex.JoinBytes('"', goutil.HTML.EscapeArgs(args["style"], '"'), '"')
+					}
+
+					htmlArgs = []byte{}
+					sortStrings(&argKeys)
+					for i, key := range argKeys {
+						if i != 0 {
+							htmlArgs = append(htmlArgs, ' ')
+						}
+
+						if regex.Comp(`^[0-9]+$`).Match([]byte(key)) {
+							htmlArgs = append(htmlArgs, regex.JoinBytes(args[key])...)
+						} else {
+							htmlArgs = append(htmlArgs, regex.JoinBytes(key, '=', args[key])...)
+						}
+					}
+
+					htmlArgs = append([]byte{' '}, bytes.TrimLeft(htmlArgs, " ")...)
+				}
+			}
+
+			// [data1](data2){htmlArgs}
+			if data1 != nil && data2 != nil {
+				if reLinkMD.MatchRef(&data1) {
+					data1 = reLinkMD.RepFuncRef(&data1, func(data func(int) []byte) []byte {
+						d1 := data(2)
+						d2 := data(3)
+						if len(data(1)) != 0 {
+							return mdHandleEmbed(&d1, &d2, nil)
+						} else {
+							return mdHandleLink(&d1, &d2, nil)
+						}
+					})
+				}
+
+				if isEmbed {
+					(*write)(mdHandleEmbed(&data1, &data2, &htmlArgs))
+				} else {
+					(*write)(mdHandleLink(&data1, &data2, &htmlArgs))
+				}
+			} else if data1 != nil {
+				(*write)(mdHandleInput(&data1, &htmlArgs))
+			}
+
+			reader.Discard(ind)
+			return true
+		}
+
+		if isEmbed {
+			(*write)([]byte{'!'})
+			reader.Discard(1)
+			buf, err = reader.Peek(1)
+			return true
 		}
 	}
 
-	if *linePos == 0 && (*b)[0] == '-' {
-		*b, *err = reader.Peek(3)
-		if (*b)[1] == '-' && (*b)[2] == '-' {
-			offset := 3
-			*b, *err = reader.Peek(offset+1)
-			for *err == nil && ((*b)[offset] == '-' || (*b)[offset] == ' ') {
-				offset++
-				*b, *err = reader.Peek(offset+1)
-			}
-
-			if (*b)[offset] == '\n' || (*b)[offset] == '\r' {
-				reader.Discard(offset+1)
-				*b, *err = reader.Peek(1)
-				(*write)([]byte("<hr/>"))
-				return true
-			}
-		}
-	}
-
-	//todo: compile markdown while reading file
-
+	// return true to continue if markdown found
+	// return false to allow precompiler to handle as default
 	return false
+}
+
+// markdownCompilerNextLine runs when the main compiler finds a line break
+//
+// note: this method only runs if this is not already set to the firstChar, but is transitioning to the firstChar
+func compileMarkdownNextLine(reader *liveread.Reader[uint8], write *func(b []byte, raw ...bool), firstChar *bool, spaces *uint, mdStore *map[string]interface{}) {
+	*firstChar = false
+	*spaces = 0
+
+	if (*mdStore)["inBlockquote"] == 2 {
+		(*mdStore)["inBlockquote"] = 0
+		(*write)([]byte("</blockquote>"))
+	}
+}
+
+func mdHandleLink(name *[]byte, url *[]byte, htmlArgs *[]byte) []byte {
+	return regex.JoinBytes([]byte("<a href=\""), goutil.HTML.EscapeArgs(*url, '"'), '"', *htmlArgs, '>', *name, []byte("</a>"))
+}
+
+func mdHandleEmbed(embedType *[]byte, url *[]byte, htmlArgs *[]byte) []byte {
+	//todo: handle embed
+
+	return []byte{}
+}
+
+func mdHandleInput(data *[]byte, htmlArgs *[]byte) []byte {
+	//todo: handle form input
+
+	return []byte{}
+}
+
+func mdHandleFonts(data []byte) []byte {
+	data = regex.Comp(`(\*{1,3})(?![\s*])([^\r\n]+?)(?<![\s*])\1`).RepFuncRef(&data, func(data func(int) []byte) []byte {
+		if len(data(1)) == 3 {
+			return regex.JoinBytes([]byte("<strong><em>"), data(2), []byte("</em></strong>"))
+		} else if len(data(1)) == 2 {
+			return regex.JoinBytes([]byte("<strong>"), data(2), []byte("</strong>"))
+		} else if len(data(1)) == 1 {
+			return regex.JoinBytes([]byte("<em>"), data(2), []byte("</em>"))
+		}
+
+		return data(0)
+	})
+
+	data = regex.Comp(`(__)(?![\s_])([^\r\n]+?)(?<![\s_])\1`).RepFuncRef(&data, func(data func(int) []byte) []byte {
+		return regex.JoinBytes([]byte("<u>"), data(2), []byte("</u>"))
+	})
+
+	data = regex.Comp(`(--|~~)(?![\s\-~])([^\r\n]+?)(?<![\s\-~])\1`).RepFuncRef(&data, func(data func(int) []byte) []byte {
+		if data(1)[0] == '-' {
+			return regex.JoinBytes([]byte("<del>"), data(2), []byte("</del>"))
+		}
+		return regex.JoinBytes([]byte("<s>"), data(2), []byte("</s>"))
+	})
+
+	return data
 }

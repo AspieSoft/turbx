@@ -253,7 +253,7 @@ function setupExpress(app){
         }
 
         if(gzip || gzip === 0){
-          res.set('Content-Type', 'text/html');
+          res.set('Content-Type', 'text/html; charset=utf-8');
         }
       };
 
@@ -264,6 +264,9 @@ function setupExpress(app){
 
       // fix input to prevent crashing
       view = clean(view);
+      if(typeof view !== 'string'){
+        throw new Error('turbx: view must be of type "string"');
+      }
       if(!options){
         options = {};
       }
@@ -285,6 +288,7 @@ function setupExpress(app){
         options.cacheID = data[1];
       }
 
+      // file deepcode ignore GlobalReplacementRegex: non global replace functions are used on purpose in js
       let ext = (view.includes('.') ? view.substring(view.lastIndexOf('.')).replace('.', '') : undefined);
       if(ext && !options.ext){
         options.ext = ext
@@ -470,6 +474,9 @@ async function runCompile(method, path, opts){
 
 async function engine(path, opts, cb){
   path = clean(path);
+  if(typeof path !== 'string'){
+    throw new Error('turbx: path must be of type "string"');
+  }
   if(!opts){
     opts = {};
   }
@@ -684,10 +691,16 @@ function renderPages(app, opts){
     return;
   }
 
+  // deepcode ignore NoRateLimitingForExpensiveWebOperation: Rate Limiting is added by the user
   app.use((req, res, next) => {
-    const url = clean(req.url)
-      .replace(/^[\\\/]+/, '')
-      .replace(/\?.*/, '').replace(/[^\w_-]/g, '').toLowerCase();
+    // deepcode ignore reDOS: this is an input sanitizing function
+    let url = clean(req.url);
+    if(typeof url !== 'string'){
+      next();
+      return;
+    }
+    url = url.replace(/^[\\\/]+/, '').replace(/\?.*/, '').replace(/[^\w_-]/g, '').toLowerCase();
+
     if (url === OPTS.layout || url.match(/^(errors?\/|)[0-9]{3}$/)) {
       next();
       return;
