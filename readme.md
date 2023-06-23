@@ -24,7 +24,7 @@ A Fast and Easy To Use View Engine, Compiled In Go.
 
 ## Whats New
 
-- Rebuild to module to replace my old spaghetti code (and created new spaghetti code)
+- New rebuild of the compiler to replace my old spaghetti code (and create new spaghetti code)
 - Performance and Stability improvements.
 
 ## Installation
@@ -33,7 +33,7 @@ A Fast and Easy To Use View Engine, Compiled In Go.
 
 sudo apt-get install libpcre3-dev
 
-go get github.com/AspieSoft/turbx
+go get github.com/AspieSoft/turbx/v2
 
 ```
 
@@ -44,13 +44,13 @@ go get github.com/AspieSoft/turbx
 package main
 
 import (
-  "github.com/AspieSoft/turbx/v2/compiler"
+  turbx "github.com/AspieSoft/turbx/v2/compiler"
 )
 
 func Test(t *testing.T){
-  defer compiler.Close()
+  defer turbx.Close()
 
-  compiler.SetConfig(compiler.Config{
+  turbx.SetConfig(turbx.Config{
     Root: "views",
     Static: "public",
     Ext: "html",
@@ -58,9 +58,13 @@ func Test(t *testing.T){
     DebugMode: true,
   })
 
+  // note: if 'turbx.SetConfig' is never called, you will need to run 'turbx.InitDefault' in its place
+  // this runs some initial code that cannot run before the config is set
+  turbx.InitDefault()
+
   startTime := time.Now().UnixNano()
 
-  html, path, comp, err := compiler.Compile("index", map[string]interface{}{
+  html, path, comp, err := turbx.Compile("index", map[string]interface{}{
     "@compress": []string{"br", "gz"}, // pass the browser compression options from the client
     "@cache": true,
 
@@ -80,7 +84,7 @@ func Test(t *testing.T){
 
   if err != nil {
     // this method will only log errors if debug mode is enabled
-    compiler.LogErr(err)
+    turbx.LogErr(err)
     return
   }
 
@@ -93,19 +97,19 @@ func Test(t *testing.T){
   if path != "" {
     html, err = os.ReadFile(path)
     if err != nil {
-      compiler.LogErr(err)
+      turbx.LogErr(err)
       return
     }
   }
 
   if comp == 1 {
     if html, err = goutil.BROTLI.UnZip(html); err != nil {
-      compiler.LogErr(err)
+      turbx.LogErr(err)
       return
     }
   }else if comp == 2 {
     if html, err = goutil.GZIP.UnZip(html); err != nil {
-      compiler.LogErr(err)
+      turbx.LogErr(err)
       return
     }
   }
