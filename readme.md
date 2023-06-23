@@ -15,6 +15,13 @@ A Fast and Easy To Use View Engine, Compiled In Go.
 > Note: this is the info for the Go module.
 > Click [here](https://github.com/AspieSoft/turbx/tree/master/node) to find info on the NodeJS module.
 
+---
+
+> Notice: the Go module v2 is ready, but the NodeJS module v2 has Not been setup yet.
+> The html templates between v1 and v2 are slightly different.
+> For the NodeJS module, you should continue to use v1.
+> This is only a pre-release of v2 for Go.
+
 ## Whats New
 
 - Rebuild to module to replace my old spaghetti code (and created new spaghetti code)
