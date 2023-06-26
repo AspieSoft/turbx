@@ -33,10 +33,15 @@ func Test(t *testing.T) {
 
 		"test": 1,
 		"var": "MyVar",
-		"list": map[string]interface{}{
+		"$list": map[string]interface{}{
 			"key1": "value1",
 			"key2": "value2",
 			"key3": "value3",
+			"sub": map[string]interface{}{
+				"sub1": "val1",
+				"sub2": "val2",
+				"sub3": "val3",
+			},
 		},
 	})
 
