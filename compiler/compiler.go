@@ -1036,8 +1036,8 @@ func compile(path string, options *map[string]interface{}, compType uint8) ([]by
 										} else if bytes.Equal(args.tag, []byte("each")) {
 											if args.close == 3 {
 												if args.args["0"] != nil && len(args.args["0"]) != 0 {
-													if hasVarOpt(args.args["0"], options, &eachArgsList, 0, false) {
-														listArg := GetOpt(args.args["0"], options, &eachArgsList, 0, false, false)
+													listArg := GetOpt(args.args["0"], options, &eachArgsList, 0, false, false)
+													if !goutil.IsZeroOfUnderlyingType(listArg) {
 														if t := reflect.TypeOf(listArg); t == goutil.VarType["map[string]interface{}"] || t == goutil.VarType["[]interface{}"] {
 															eachArgs := EachArgs{}
 															if t == goutil.VarType["map[string]interface{}"] && len(listArg.(map[string]interface{})) != 0 {
@@ -2425,8 +2425,8 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 
 							if args.close == 3 {
 								if args.args["0"] != nil && len(args.args["0"]) != 0 && args.args["0"][0] == 0 {
-									if hasVarOpt(args.args["0"][1:], options, &eachArgsList, 0, true) {
-										listArg := GetOpt(args.args["0"][1:], options, &eachArgsList, 0, true, false)
+									listArg := GetOpt(args.args["0"][1:], options, &eachArgsList, 0, true, false)
+									if !goutil.IsZeroOfUnderlyingType(listArg) {
 										if t := reflect.TypeOf(listArg); t == goutil.VarType["map[string]interface{}"] || t == goutil.VarType["[]interface{}"] {
 											eachArgs := EachArgs{}
 											if t == goutil.VarType["map[string]interface{}"] && len(listArg.(map[string]interface{})) != 0 {
