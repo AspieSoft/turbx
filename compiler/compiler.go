@@ -3264,7 +3264,9 @@ func handleHtmlComponent(htmlData handleHtmlData) {
 		opts = map[string]interface{}{}
 	}
 
-	htmlData.componentList = append(htmlData.componentList, htmlData.arguments.tag)
+	if !goutil.Contains(htmlData.arguments.ind, "ALLOW_RECURSION") {
+		htmlData.componentList = append(htmlData.componentList, htmlData.arguments.tag)
+	}
 
 	// precompile component
 	preCompile(path, &opts, htmlData.arguments, htmlData.html, htmlData.compileError, nil, htmlData.eachArgs, htmlData.componentList)

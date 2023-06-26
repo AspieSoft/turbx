@@ -759,3 +759,33 @@ func (funcs *tagFuncs) Lorem(opts *map[string]interface{}, args *htmlArgs, eachA
 	// append([]byte{1}, []byte("error message")...) = return error
 	return nil
 }
+
+// Set sets a var value to an option
+//
+// note: this method needs to be in sync
+//
+// add "_SYNC" if this function should run in sync, rather than running async on a seperate channel
+//
+// Set also pretends not to be a precomp func
+func (funcs *tagFuncs) Set_SYNC(opts *map[string]interface{}, args *htmlArgs, eachArgs *[]EachArgs, precomp bool) []byte {
+	// args.args first byte:
+	// 0 = normal arg "arg"
+	// 1 = escaped option {{arg}}
+	// 2 = raw option {{{arg}}}
+
+	for _, arg := range args.ind {
+		varName := []byte(arg)
+		
+		if !regex.Comp(`^[\w_\-\$]+$`).MatchRef(&varName) {
+			continue
+		}
+
+		(*opts)[string(varName)] = GetOpt(args.args[arg][1:], opts, eachArgs, 0, false, false)
+	}
+
+	// return nil = return nothing
+	// []byte("result html") = return basic html
+	// append([]byte{0}, []byte("args")...) = pass function to compiler
+	// append([]byte{1}, []byte("error message")...) = return error
+	return nil
+}
