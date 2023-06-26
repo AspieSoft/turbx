@@ -1983,14 +1983,14 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 
 			ind := uint(1)
 			b, e := reader.PeekByte(ind)
-			if b == '/' {
+			if e == nil && b == '/' {
 				args.close = 1
 				ind++
 
 				b, e = reader.PeekByte(ind)
 			}
 
-			if regex.Comp(`[\w_]`).MatchRef(&[]byte{b}) {
+			if e == nil && regex.Comp(`[\w_]`).MatchRef(&[]byte{b}) {
 				args.tag = []byte{b}
 				ind++
 
@@ -1998,7 +1998,7 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 				for e == nil {
 					b, e = reader.PeekByte(ind)
 					ind++
-					if b == 0 {
+					if e != nil || b == 0 {
 						break
 					}
 
@@ -2025,7 +2025,7 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 					for e == nil && args.close == 0 {
 						b, e = reader.PeekByte(ind)
 						ind++
-						if b == 0 {
+						if e != nil || b == 0 {
 							break
 						}
 
@@ -2062,6 +2062,9 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 							if q != 0 && b == '\\' {
 								b, e = reader.PeekByte(ind)
 								ind++
+								if e != nil {
+									break
+								}
 								if b != q && b != '\\' {
 									key = append(key, '\\')
 								}
@@ -2072,7 +2075,11 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 							ind++
 						}
 
-						if b == '>' || b == '/' {
+						if e != nil {
+							break
+						}
+
+						if (b == '>' || b == '/') {
 							ind--
 						}
 
@@ -2102,6 +2109,10 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 						b, e = reader.PeekByte(ind)
 						ind++
 
+						if e != nil {
+							break
+						}
+
 						q = 0
 						if b == '"' || b == '\'' || b == '`' {
 							q = b
@@ -2114,6 +2125,9 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 							if q != 0 && b == '\\' {
 								b, e = reader.PeekByte(ind)
 								ind++
+								if e != nil {
+									break
+								}
 								if b != q && b != '\\' {
 									val = append(val, '\\')
 								}
@@ -2124,7 +2138,11 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 							ind++
 						}
 
-						if b == '>' || b == '/' {
+						if e != nil {
+							break
+						}
+
+						if (b == '>' || b == '/') {
 							ind--
 						}
 
@@ -2905,6 +2923,7 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 		htmlChan.fn <- handleHtmlData{stopChan: true}
 	}
 
+	//todo: consider streaming the tag merge to a file for performance
 	// merge html tags when done
 	htmlTagsInd := 0
 	i := bytes.IndexByte(htmlRes, 0)
