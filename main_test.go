@@ -23,7 +23,8 @@ func Test(t *testing.T) {
 
 	startTime := time.Now().UnixNano()
 
-	html, path, comp, err := compiler.Compile("index", map[string]interface{}{
+	html, path, comp, err := compiler.Compile("basic", map[string]interface{}{
+		"@layout": "null",
 		"@compress": []string{"br", "gz"},
 		"@cache": false,
 		"@tab": 4, // how many spaces does a tab equal (for markdown)
