@@ -815,16 +815,17 @@ func (funcs *tagFuncs) Join_SYNC(opts *map[string]interface{}, args *htmlArgs, e
 	// 1 = escaped option {{arg}}
 	// 2 = raw option {{{arg}}}
 
-	res := []byte{}
 	varName := []byte{}
-	for _, arg := range args.args {
+	res := []byte{}
+
+	for _, key := range args.ind {
 		if len(varName) == 0 {
-			varName = []byte(arg)
+			varName = []byte(args.args[key][1:])
 			if !regex.Comp(`^[\w_\-\$]+$`).MatchRef(&varName) {
 				varName = []byte{}
 			}
 		}else{
-			val := []byte(arg)
+			val := []byte(args.args[key])
 			if len(val) != 0 && (val[0] == 1 || val[0] == 2) {
 				val = goutil.Conv.ToBytes(GetOpt(val[1:], opts, eachArgs, 0, false, true))
 			}
