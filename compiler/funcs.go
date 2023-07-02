@@ -801,3 +801,45 @@ func (funcs *tagFuncs) Set_SYNC(opts *map[string]interface{}, args *htmlArgs, ea
 	// append([]byte{1}, []byte("error message")...) = return error
 	return nil
 }
+
+// Join joins a list of vars and strings, with the first arg as the name for the option to be set
+//
+// note: this method needs to be in sync
+//
+// add "_SYNC" if this function should run in sync, rather than running async on a seperate channel
+//
+// Join also pretends not to be a precomp func
+func (funcs *tagFuncs) Join_SYNC(opts *map[string]interface{}, args *htmlArgs, eachArgs *[]EachArgs, precomp bool) []byte {
+	// args.args first byte:
+	// 0 = normal arg "arg"
+	// 1 = escaped option {{arg}}
+	// 2 = raw option {{{arg}}}
+
+	res := []byte{}
+	varName := []byte{}
+	for _, arg := range args.args {
+		if len(varName) == 0 {
+			varName = []byte(arg)
+			if !regex.Comp(`^[\w_\-\$]+$`).MatchRef(&varName) {
+				varName = []byte{}
+			}
+		}else{
+			val := []byte(arg)
+			if len(val) != 0 && (val[0] == 1 || val[0] == 2) {
+				val = goutil.Conv.ToBytes(GetOpt(val[1:], opts, eachArgs, 0, false, true))
+			}
+
+			res = append(res, val...)
+		}
+	}
+
+	if len(varName) != 0 && len(res) != 0 {
+		(*opts)[string(varName)] = res
+	}
+
+	// return nil = return nothing
+	// []byte("result html") = return basic html
+	// append([]byte{0}, []byte("args")...) = pass function to compiler
+	// append([]byte{1}, []byte("error message")...) = return error
+	return nil
+}
