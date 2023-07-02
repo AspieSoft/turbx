@@ -629,12 +629,7 @@ func (funcs *tagFuncs) Rand_SYNC(opts *map[string]interface{}, args *htmlArgs, e
 			r = goutil.Crypt.RandBytes(size)
 		}
 
-		if varName[0] == '$' {
-			prefix = append([]byte{'$'}, prefix...)
-			varName = varName[1:]
-		}
-
-		(*opts)[string(append(prefix, varName...))] = r
+		(*opts)[string(varName)] = append(prefix, r...)
 	}
 
 	// return nil = return nothing
