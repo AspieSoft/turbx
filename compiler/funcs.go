@@ -593,8 +593,20 @@ func (funcs *tagFuncs) Rand_SYNC(opts *map[string]interface{}, args *htmlArgs, e
 			return nil
 		}
 
+		prefix := []byte{}
+		if len(args.args["1"]) != 0 && args.args["1"][0] == 0 {
+			prefix = args.args["0"][1:]
+			if !regex.Comp(`^[\w_\-\$]+$`).MatchRef(&prefix) {
+				prefix = []byte{}
+			}
+		}
+
 		if precomp && varName[0] != '$' {
-			return append([]byte{0}, regex.JoinBytes('0', '=', '"', varName, '"')...)
+			if len(prefix) != 0 {
+				return append([]byte{0}, regex.JoinBytes('0', '=', '"', varName, '"', '1', '=', '"', prefix, '"')...)
+			}else{
+				return append([]byte{0}, regex.JoinBytes('0', '=', '"', varName, '"')...)
+			}
 		}
 
 		size := 64
@@ -617,7 +629,7 @@ func (funcs *tagFuncs) Rand_SYNC(opts *map[string]interface{}, args *htmlArgs, e
 			r = goutil.Crypt.RandBytes(size)
 		}
 
-		(*opts)[string(varName)] = r
+		(*opts)[string(append(prefix, varName...))] = r
 	}
 
 	// return nil = return nothing
