@@ -83,6 +83,9 @@ type Config struct {
 	// A folder level to consider a root domain, to prevent use of components outside a specific root folder
 	DomainFolder uint
 
+	// Add a limit to component recursion
+	RecursionLimit uint
+
 	// Debug Mode For Developers
 	DebugMode bool
 }
@@ -217,6 +220,10 @@ func SetConfig(config Config) error {
 	compilerConfig.DomainFolder = config.DomainFolder
 
 	compilerConfig.IncludeMD = config.IncludeMD
+
+	if compilerConfig.RecursionLimit != 0 {
+		compilerConfig.RecursionLimit = config.RecursionLimit
+	}
 
 	// ensure directories exist
 	InitDefault()
@@ -463,6 +470,7 @@ func init() {
 		CompileMaxFlush: 100,
 		CacheTime:       120, // minutes: 2 hours
 		DomainFolder:    0,
+		RecursionLimit:  100,
 		DebugMode:       false,
 	}
 
@@ -593,6 +601,7 @@ type handleHtmlData struct {
 	eachArgs      []EachArgs
 	compileError  *error
 	componentList [][]byte
+	componentRecursionList map[string]uint
 
 	fn      *func(opts *map[string]interface{}, args *htmlArgs, eachArgs *[]EachArgs, precomp bool) []byte
 	preComp bool
@@ -1549,7 +1558,7 @@ func PreCompile(path string, opts map[string]interface{}) error {
 	htmlChan := newPreCompileChan()
 
 	html := []byte{0}
-	preCompile(path, &opts, &htmlArgs{}, &html, &err, &htmlChan, nil, nil)
+	preCompile(path, &opts, &htmlArgs{}, &html, &err, &htmlChan, nil, nil, nil)
 	if err != nil || len(html) == 0 || html[0] == 2 {
 		if err == nil {
 			err = errors.New("failed to precompile: '" + path + "'")
@@ -1613,7 +1622,7 @@ func PreCompile(path string, opts map[string]interface{}) error {
 		if stat, err := os.Stat(layoutPath); err == nil && !stat.IsDir() {
 			opts["$body"] = html
 			html = []byte{0}
-			preCompile(layoutPath, &opts, &htmlArgs{}, &html, &err, nil, nil, nil)
+			preCompile(layoutPath, &opts, &htmlArgs{}, &html, &err, nil, nil, nil, nil)
 			if err != nil || len(html) == 0 || html[0] == 2 {
 				if err == nil {
 					err = errors.New("layout - failed to precompile: '" + path + "'")
@@ -1736,7 +1745,7 @@ func PreCompile(path string, opts map[string]interface{}) error {
 	return nil
 }
 
-func preCompile(path string, options *map[string]interface{}, arguments *htmlArgs, html *[]byte, compileError *error, htmlChan *htmlChanList, eachArgsList []EachArgs, componentList [][]byte) {
+func preCompile(path string, options *map[string]interface{}, arguments *htmlArgs, html *[]byte, compileError *error, htmlChan *htmlChanList, eachArgsList []EachArgs, componentList [][]byte, componentRecursionList map[string]uint) {
 	reader, err := liveread.Read[uint8](path)
 	if err != nil {
 		*compileError = err
@@ -1746,6 +1755,10 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 
 	if componentList == nil {
 		componentList = [][]byte{}
+	}
+
+	if componentRecursionList == nil {
+		componentRecursionList = map[string]uint{}
 	}
 
 	if eachArgsList == nil {
@@ -2737,10 +2750,10 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 								htmlTags = append(htmlTags, &htmlCont)
 								htmlTagsErr = append(htmlTagsErr, &compErr)
 
-								if htmlChan != nil {
-									htmlChan.comp <- handleHtmlData{html: &htmlCont, options: options, arguments: &args, eachArgs: cloneArr(eachArgsList), compileError: &compErr, componentList: componentList, hasUnhandledVars: &hasUnhandledVars, localRoot: &localRoot}
+								if htmlChan != nil && !goutil.Contains(args.ind, "SYNC") {
+									htmlChan.comp <- handleHtmlData{html: &htmlCont, options: options, arguments: &args, eachArgs: cloneArr(eachArgsList), compileError: &compErr, componentList: componentList, componentRecursionList: componentRecursionList, hasUnhandledVars: &hasUnhandledVars, localRoot: &localRoot}
 								} else {
-									handleHtmlComponent(handleHtmlData{html: &htmlCont, options: options, arguments: &args, eachArgs: cloneArr(eachArgsList), compileError: &compErr, componentList: componentList, hasUnhandledVars: &hasUnhandledVars, localRoot: &localRoot})
+									handleHtmlComponent(handleHtmlData{html: &htmlCont, options: options, arguments: &args, eachArgs: cloneArr(eachArgsList), compileError: &compErr, componentList: componentList, componentRecursionList: componentRecursionList, hasUnhandledVars: &hasUnhandledVars, localRoot: &localRoot})
 								}
 								write([]byte{0})
 							} else if args.close == 2 {
@@ -2749,10 +2762,10 @@ func preCompile(path string, options *map[string]interface{}, arguments *htmlArg
 								htmlTags = append(htmlTags, &htmlCont)
 								htmlTagsErr = append(htmlTagsErr, &compErr)
 
-								if htmlChan != nil {
-									htmlChan.comp <- handleHtmlData{html: &htmlCont, options: options, arguments: &args, eachArgs: cloneArr(eachArgsList), compileError: &compErr, componentList: componentList, hasUnhandledVars: &hasUnhandledVars, localRoot: &localRoot}
+								if htmlChan != nil && !goutil.Contains(args.ind, "SYNC") {
+									htmlChan.comp <- handleHtmlData{html: &htmlCont, options: options, arguments: &args, eachArgs: cloneArr(eachArgsList), compileError: &compErr, componentList: componentList, componentRecursionList: componentRecursionList, hasUnhandledVars: &hasUnhandledVars, localRoot: &localRoot}
 								} else {
-									handleHtmlComponent(handleHtmlData{html: &htmlCont, options: options, arguments: &args, eachArgs: cloneArr(eachArgsList), compileError: &compErr, componentList: componentList, hasUnhandledVars: &hasUnhandledVars, localRoot: &localRoot})
+									handleHtmlComponent(handleHtmlData{html: &htmlCont, options: options, arguments: &args, eachArgs: cloneArr(eachArgsList), compileError: &compErr, componentList: componentList, componentRecursionList: componentRecursionList, hasUnhandledVars: &hasUnhandledVars, localRoot: &localRoot})
 								}
 								write([]byte{0})
 							}
@@ -3203,7 +3216,7 @@ func handleHtmlFunc(htmlData handleHtmlData) {
 }
 
 func handleHtmlComponent(htmlData handleHtmlData) {
-	//htmlData: html *[]byte, options *map[string]interface{}, arguments *htmlArgs, eachArgs *[]EachArgs, compileError *error, componentList [][]byte
+	//htmlData: html *[]byte, options *map[string]interface{}, arguments *htmlArgs, eachArgs *[]EachArgs, compileError *error, componentList [][]byte, componentRecursionList map[string]uint
 
 	// note: components cannot wait in the same channel as their parents without possibly getting stuck (ie: waiting for a parent that is also waiting for itself)
 
@@ -3213,6 +3226,12 @@ func handleHtmlComponent(htmlData handleHtmlData) {
 			(*htmlData.html)[0] = 2
 			return
 		}
+	}
+
+	if val, ok := htmlData.componentRecursionList[string(htmlData.arguments.tag)]; ok && val >= compilerConfig.RecursionLimit {
+		// do not throw error when limit is reached (silently stop recursion)
+		(*htmlData.html)[0] = 1
+		return
 	}
 
 	// get component filepath
@@ -3266,10 +3285,27 @@ func handleHtmlComponent(htmlData handleHtmlData) {
 
 	if !goutil.Contains(htmlData.arguments.ind, "ALLOW_RECURSION") {
 		htmlData.componentList = append(htmlData.componentList, htmlData.arguments.tag)
+	}else{
+		if val, ok := htmlData.arguments.args["ALLOW_RECURSION"]; ok {
+			if i, err := strconv.Atoi(string(val)); err == nil && i > 0 {
+				size := compilerConfig.RecursionLimit - uint(i)
+				if j, ok := htmlData.componentRecursionList[string(htmlData.arguments.tag)]; !ok {
+					if size > j {
+						htmlData.componentRecursionList[string(htmlData.arguments.tag)] = size
+					}
+				}else{
+					htmlData.componentRecursionList[string(htmlData.arguments.tag)] = size
+				}
+			}
+		}
+		if _, ok := htmlData.componentRecursionList[string(htmlData.arguments.tag)]; !ok {
+			htmlData.componentRecursionList[string(htmlData.arguments.tag)] = 0
+		}
+		htmlData.componentRecursionList[string(htmlData.arguments.tag)]++
 	}
 
 	// precompile component
-	preCompile(path, &opts, htmlData.arguments, htmlData.html, htmlData.compileError, nil, htmlData.eachArgs, htmlData.componentList)
+	preCompile(path, &opts, htmlData.arguments, htmlData.html, htmlData.compileError, nil, htmlData.eachArgs, htmlData.componentList, htmlData.componentRecursionList)
 	if *htmlData.compileError != nil {
 		(*htmlData.html)[0] = 2
 		return
